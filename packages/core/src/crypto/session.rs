@@ -1,9 +1,11 @@
 // Управление сессиями
 // Хранение и управление Double Ratchet сессиями для разных контактов
 
-use crate::crypto::double_ratchet::{DoubleRatchetSession, EncryptedRatchetMessage, SerializableSession};
+use crate::crypto::double_ratchet::{DoubleRatchetSession, SerializableSession};
 use crate::utils::error::{ConstructError, Result};
 use std::collections::HashMap;
+use crate::crypto::CryptoProvider;
+use std::marker::PhantomData;
 
 /// Метаданные сессии
 pub struct SessionMetadata {
@@ -33,26 +35,29 @@ impl SessionMetadata {
 }
 
 /// Хранилище сессий
-pub struct SessionStore {
-    pub session: DoubleRatchetSession,
+pub struct SessionStore<P: CryptoProvider> {
+    pub session: DoubleRatchetSession<P>,
     pub metadata: SessionMetadata,
 }
 
 /// Менеджер Double Ratchet сессий
-pub struct SessionManager {
+pub struct SessionManager<P: CryptoProvider> {
     /// Активные сессии, индексированные по contact_id
-    sessions: HashMap<String, SessionStore>,
+    sessions: HashMap<String, SessionStore<P>>,
 
     /// Максимальное количество сохраненных сессий
     max_sessions: usize,
+
+    _phantom: PhantomData<P>,
 }
 
-impl SessionManager {
+impl<P: CryptoProvider> SessionManager<P> {
     /// Создать новый SessionManager
     pub fn new() -> Self {
         Self {
             sessions: HashMap::new(),
             max_sessions: 100,
+            _phantom: PhantomData,
         }
     }
 
@@ -61,11 +66,12 @@ impl SessionManager {
         Self {
             sessions: HashMap::new(),
             max_sessions,
+            _phantom: PhantomData,
         }
     }
 
     /// Добавить новую сессию
-    pub fn add_session(&mut self, contact_id: String, session: DoubleRatchetSession) -> Result<()> {
+    pub fn add_session(&mut self, contact_id: String, session: DoubleRatchetSession<P>) -> Result<()> {
         // Проверяем лимит сессий
         if self.sessions.len() >= self.max_sessions {
             self.cleanup_old_sessions()?;
@@ -86,12 +92,12 @@ impl SessionManager {
     }
 
     /// Получить сессию по contact_id
-    pub fn get_session(&self, contact_id: &str) -> Option<&DoubleRatchetSession> {
+    pub fn get_session(&self, contact_id: &str) -> Option<&DoubleRatchetSession<P>> {
         self.sessions.get(contact_id).map(|store| &store.session)
     }
 
     /// Получить изменяемую сессию по contact_id
-    pub fn get_session_mut(&mut self, contact_id: &str) -> Option<&mut DoubleRatchetSession> {
+    pub fn get_session_mut(&mut self, contact_id: &str) -> Option<&mut DoubleRatchetSession<P>> {
         self.sessions.get_mut(contact_id).map(|store| {
             store.metadata.update_last_used();
             &mut store.session
@@ -104,7 +110,7 @@ impl SessionManager {
     }
 
     /// Удалить сессию
-    pub fn remove_session(&mut self, contact_id: &str) -> Option<DoubleRatchetSession> {
+    pub fn remove_session(&mut self, contact_id: &str) -> Option<DoubleRatchetSession<P>> {
         self.sessions.remove(contact_id).map(|store| store.session)
     }
 
@@ -162,7 +168,7 @@ impl SessionManager {
         let serializable: SerializableSession = bincode::deserialize(data)
             .map_err(|e| ConstructError::SerializationError(format!("Failed to deserialize session: {}", e)))?;
 
-        let session = DoubleRatchetSession::from_serializable(serializable)
+        let session = DoubleRatchetSession::<P>::from_serializable(serializable)
             .map_err(|e| ConstructError::CryptoError(format!("Failed to restore session: {}", e)))?;
         self.add_session(contact_id, session)?;
 
@@ -198,7 +204,7 @@ impl SessionManager {
     }
 }
 
-impl Default for SessionManager {
+impl<P: CryptoProvider> Default for SessionManager<P> {
     fn default() -> Self {
         Self::new()
     }
@@ -207,21 +213,22 @@ impl Default for SessionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::x3dh::X3DH;
+    use crate::crypto::classic_suite::ClassicSuiteProvider;
     use x25519_dalek::{PublicKey, StaticSecret};
 
     #[test]
     fn test_session_manager_add_get() {
-        let mut manager = SessionManager::new();
+        let mut manager = SessionManager::<ClassicSuiteProvider>::new();
 
         let identity_secret = StaticSecret::random_from_rng(rand::rngs::OsRng);
         let identity_public = PublicKey::from(&identity_secret);
         let root_key = [0u8; 32];
 
-        let session = DoubleRatchetSession::new_x3dh_session(
-            root_key,
-            identity_public,
-            &identity_secret,
+        let session = DoubleRatchetSession::<ClassicSuiteProvider>::new_x3dh_session(
+            1,
+            &root_key,
+            &identity_public.to_bytes().to_vec(),
+            &identity_secret.to_bytes().to_vec(),
             "contact1".to_string(),
         )
         .unwrap();
@@ -234,16 +241,17 @@ mod tests {
 
     #[test]
     fn test_session_manager_remove() {
-        let mut manager = SessionManager::new();
+        let mut manager = SessionManager::<ClassicSuiteProvider>::new();
 
         let identity_secret = StaticSecret::random_from_rng(rand::rngs::OsRng);
         let identity_public = PublicKey::from(&identity_secret);
         let root_key = [0u8; 32];
 
-        let session = DoubleRatchetSession::new_x3dh_session(
-            root_key,
-            identity_public,
-            &identity_secret,
+        let session = DoubleRatchetSession::<ClassicSuiteProvider>::new_x3dh_session(
+            1,
+            &root_key,
+            &identity_public.to_bytes().to_vec(),
+            &identity_secret.to_bytes().to_vec(),
             "contact1".to_string(),
         )
         .unwrap();
@@ -257,16 +265,17 @@ mod tests {
 
     #[test]
     fn test_session_manager_metadata() {
-        let mut manager = SessionManager::new();
+        let mut manager = SessionManager::<ClassicSuiteProvider>::new();
 
         let identity_secret = StaticSecret::random_from_rng(rand::rngs::OsRng);
         let identity_public = PublicKey::from(&identity_secret);
         let root_key = [0u8; 32];
 
-        let session = DoubleRatchetSession::new_x3dh_session(
-            root_key,
-            identity_public,
-            &identity_secret,
+        let session = DoubleRatchetSession::<ClassicSuiteProvider>::new_x3dh_session(
+            1,
+            &root_key,
+            &identity_public.to_bytes().to_vec(),
+            &identity_secret.to_bytes().to_vec(),
             "contact1".to_string(),
         )
         .unwrap();

@@ -1,7 +1,18 @@
 // Валидация входящих данных
 
-use crate::protocol::messages::{ChatMessage, ProtocolMessage, RegistrationBundle};
+use crate::protocol::messages::{ChatMessage, ClientMessage, RegistrationBundle};
 use crate::utils::error::{ConstructError, Result};
+use base64::{engine::general_purpose, Engine as _};
+
+/// Валидация Base64 строки
+pub fn validate_base64(encoded: &str) -> Result<()> {
+    if general_purpose::STANDARD.decode(encoded).is_err() {
+        return Err(ConstructError::ValidationError(
+            "Invalid Base64 string".to_string(),
+        ));
+    }
+    Ok(())
+}
 
 /// Валидация имени пользователя
 pub fn validate_username(username: &str) -> Result<()> {
@@ -65,12 +76,20 @@ pub fn validate_chat_message(msg: &ChatMessage) -> Result<()> {
         ));
     }
 
-    // Проверка timestamp (не должен быть в будущем)
-    let now = crate::utils::time::current_timestamp();
-    if msg.timestamp > now + 60 {
-        // Разрешаем небольшую погрешность в 60 секунд
+    validate_base64(&msg.content)?;
+
+    // Проверка timestamp (не должен быть в будущем или слишком старым)
+    let now = crate::utils::time::now();
+    if msg.timestamp > now + 300 {
+        // 5 минут в будущем
         return Err(ConstructError::ValidationError(
-            "Message timestamp is in the future".to_string(),
+            "Message timestamp is too far in the future".to_string(),
+        ));
+    }
+    if msg.timestamp < now.saturating_sub(3600) {
+        // 1 час в прошлом
+        return Err(ConstructError::ValidationError(
+            "Message timestamp is too old".to_string(),
         ));
     }
 
@@ -109,32 +128,56 @@ pub fn validate_registration_bundle(bundle: &RegistrationBundle) -> Result<()> {
     Ok(())
 }
 
-/// Валидация ProtocolMessage
-pub fn validate_protocol_message(msg: &ProtocolMessage) -> Result<()> {
+/// Валидация ClientMessage (клиент → сервер)
+pub fn validate_client_message(msg: &ClientMessage) -> Result<()> {
     match msg {
-        ProtocolMessage::Register { username, bundle } => {
-            validate_username(username)?;
-            validate_registration_bundle(bundle)?;
-        }
-        ProtocolMessage::Login { username } => {
-            validate_username(username)?;
-        }
-        ProtocolMessage::SendMessage(chat_msg) | ProtocolMessage::ReceiveMessage(chat_msg) => {
-            validate_chat_message(chat_msg)?;
-        }
-        ProtocolMessage::RequestKeyBundle { user_id } => {
-            validate_uuid(user_id)?;
-        }
-        ProtocolMessage::KeyBundleResponse(bundle_data) => {
-            validate_uuid(&bundle_data.user_id)?;
-            // Проверка ключей
-            if bundle_data.identity_public.len() != 44 {
+        ClientMessage::Register(data) => {
+            validate_username(&data.username)?;
+            if data.password.len() < 8 {
                 return Err(ConstructError::ValidationError(
-                    "Invalid identity public key length".to_string(),
+                    "Password too short (min 8 chars)".to_string(),
+                ));
+            }
+            // Декодируем и валидируем бандл
+            let msgpack_bytes = general_purpose::STANDARD
+                .decode(&data.public_key)
+                .map_err(|_| {
+                    ConstructError::ValidationError("Invalid Base64 in public_key".to_string())
+                })?;
+            let bundle: RegistrationBundle = rmp_serde::from_slice(&msgpack_bytes).map_err(
+                |_| ConstructError::ValidationError("Invalid MessagePack in public_key".to_string()),
+            )?;
+            validate_registration_bundle(&bundle)?;
+        }
+        ClientMessage::Login(data) => {
+            validate_username(&data.username)?;
+            if data.password.len() < 8 {
+                return Err(ConstructError::ValidationError(
+                    "Password too short".to_string(),
                 ));
             }
         }
-        // Ping, Pong, Ack, Error не требуют специальной валидации
+        ClientMessage::Connect(data) => {
+            if data.session_token.is_empty() {
+                return Err(ConstructError::ValidationError(
+                    "Session token is required".to_string(),
+                ));
+            }
+        }
+        ClientMessage::SendMessage(chat_msg) => {
+            validate_chat_message(chat_msg)?;
+        }
+        ClientMessage::GetPublicKey(data) => {
+            validate_uuid(&data.user_id)?;
+        }
+        ClientMessage::SearchUsers(data) => {
+            if data.query.is_empty() {
+                return Err(ConstructError::ValidationError(
+                    "Search query cannot be empty".to_string(),
+                ));
+            }
+        }
+        // Logout, RotatePrekey не требуют специальной валидации на этом уровне
         _ => {}
     }
 
@@ -169,7 +212,7 @@ mod tests {
             ephemeral_public_key: vec![0u8; 32],
             message_number: 1,
             content: "encrypted_content".to_string(),
-            timestamp: crate::utils::time::current_timestamp(),
+            timestamp: crate::utils::time::current_timestamp() as u64,
         };
 
         assert!(validate_chat_message(&msg).is_ok());

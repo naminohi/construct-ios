@@ -9,7 +9,11 @@ import './DesktopApp.css';
 
 type Screen = 'contacts' | 'chats' | 'settings';
 
-const DesktopApp: React.FC = () => {
+interface DesktopAppProps {
+  onLogout: () => void;
+}
+
+const DesktopApp: React.FC<DesktopAppProps> = ({ onLogout }) => {
   const [currentScreen, setCurrentScreen] = useState<Screen>('chats');
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
 
@@ -24,7 +28,7 @@ const DesktopApp: React.FC = () => {
         listComponent = <ContactsScreen />;
         break;
       case 'settings':
-        listComponent = <SettingsScreen />;
+        listComponent = <SettingsScreen onLogout={onLogout} />;
         break;
       case 'chats':
       default:

@@ -3,19 +3,19 @@ import ChatListScreen from './components/ChatListScreen';
 import ContactsScreen from './components/ContactsScreen';
 import SettingsScreen from './components/SettingsScreen';
 import ChatScreen from './components/ChatScreen';
-import CryptoDemo from './components/CryptoDemo';
 import NavigationBar from './components/NavigationBar';
 import './MobileApp.css';
-import { useDeviceType } from './hooks/useDeviceType';
-import DesktopLayout from './components/layouts/DesktopLayout';
 import MobileLayout from './components/layouts/MobileLayout';
 
 type Screen = 'contacts' | 'chats' | 'settings' | 'chat';
 
-function App() {
+interface MobileAppProps {
+  onLogout: () => void;
+}
+
+const MobileApp: React.FC<MobileAppProps> = ({ onLogout }) => {
   const [currentScreen, setCurrentScreen] = useState<Screen>('chats');
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
-  const deviceType = useDeviceType();
 
   const navigateToChat = (chatId: string) => {
     setSelectedChatId(chatId);
@@ -34,7 +34,7 @@ function App() {
       case 'chats':
         return <ChatListScreen onChatSelect={navigateToChat} />;
       case 'settings':
-        return <SettingsScreen />;
+        return <SettingsScreen onLogout={onLogout} />;
       case 'chat':
         return <ChatScreen chatId={selectedChatId!} onBack={navigateBack} />;
       default:
@@ -42,7 +42,7 @@ function App() {
     }
   };
 
-  const Layout = deviceType === 'desktop' ? DesktopLayout : MobileLayout;
+  const Layout = MobileLayout;
 
   return (
     <Layout>
@@ -56,4 +56,4 @@ function App() {
   );
 }
 
-export default App;
+export default MobileApp;

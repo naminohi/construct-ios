@@ -3,8 +3,6 @@
 use wasm_bindgen::prelude::*;
 use crate::crypto::ClientCrypto;
 use crate::api::{crypto, messaging, contacts};
-use crate::protocol::messages::{ProtocolMessage, ChatMessage};
-use crate::protocol::wire::{pack_message, unpack_message};
 use crate::protocol::validation;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -385,33 +383,16 @@ pub fn current_timestamp() -> i64 {
     crate::utils::time::current_timestamp()
 }
 
-/// Pack protocol message to MessagePack
-#[wasm_bindgen]
-pub fn pack_protocol_message(message_json: String) -> Result<Vec<u8>, JsValue> {
-    let message: ProtocolMessage = serde_json::from_str(&message_json)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-    pack_message(&message)
-        .map_err(|e| JsValue::from_str(&e.to_string()))
-}
-
-/// Unpack MessagePack to protocol message JSON
-#[wasm_bindgen]
-pub fn unpack_protocol_message(data: Vec<u8>) -> Result<String, JsValue> {
-    let message = unpack_message(&data)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-    serde_json::to_string(&message)
-        .map_err(|e| JsValue::from_str(&e.to_string()))
-}
+// Note: pack/unpack protocol messages is now encapsulated inside AppState
+// and doesn't require direct access from JavaScript
 
 // ===== AppState WASM API =====
 
 /// Создать новый AppState
 #[wasm_bindgen]
-pub async fn create_app_state(db_name: String) -> Result<String, JsValue> {
+pub async fn create_app_state(_db_name: String) -> Result<String, JsValue> {
     #[cfg(target_arch = "wasm32")]
-    let state = crate::state::app::AppState::new(&db_name).await
+    let state = crate::state::app::AppState::new().await
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -427,13 +408,13 @@ pub async fn create_app_state(db_name: String) -> Result<String, JsValue> {
     Ok(state_id)
 }
 
-/// Инициализировать нового пользователя
+/// Инициализировать нового пользователя (только создать ключи, не сохранять)
 #[wasm_bindgen]
 pub async fn app_state_initialize_user(
     state_id: String,
     username: String,
     password: String,
-) -> Result<String, JsValue> {
+) -> Result<(), JsValue> {
     // Получаем Arc<Mutex<AppState>> из thread_local
     let state_arc = APP_STATES.with(|states| {
         states.borrow()
@@ -458,6 +439,40 @@ pub async fn app_state_initialize_user(
             .map_err(|e| JsValue::from_str(&format!("Failed to lock state: {}", e)))?;
 
         state.initialize_user(username, password)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+}
+
+/// Завершить регистрацию после получения UUID от сервера
+#[wasm_bindgen]
+pub async fn app_state_finalize_registration(
+    state_id: String,
+    server_user_id: String,
+    session_token: String,
+    password: String,
+) -> Result<(), JsValue> {
+    let state_arc = APP_STATES.with(|states| {
+        states.borrow()
+            .get(&state_id)
+            .cloned()
+            .ok_or_else(|| JsValue::from_str("AppState not found"))
+    })?;
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mut state = state_arc.lock()
+            .map_err(|e| JsValue::from_str(&format!("Failed to lock state: {}", e)))?;
+
+        state.finalize_registration(server_user_id, session_token, password).await
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut state = state_arc.lock()
+            .map_err(|e| JsValue::from_str(&format!("Failed to lock state: {}", e)))?;
+
+        state.finalize_registration(server_user_id, session_token, password)
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 }
@@ -650,12 +665,15 @@ pub async fn app_state_load_conversation(
     }
 }
 
-/// Подключиться к WebSocket серверу
+/// Подключиться к WebSocket серверу с полной интеграцией callbacks
 #[wasm_bindgen]
 pub async fn app_state_connect(
     state_id: String,
     server_url: String,
 ) -> Result<(), JsValue> {
+    use crate::protocol::transport::WebSocketTransport;
+    use crate::state::app::{AppState, ConnectionState};
+
     let state_arc = APP_STATES.with(|states| {
         states.borrow()
             .get(&state_id)
@@ -665,11 +683,43 @@ pub async fn app_state_connect(
 
     #[cfg(target_arch = "wasm32")]
     {
-        let mut state = state_arc.lock()
-            .map_err(|e| JsValue::from_str(&format!("Failed to lock state: {}", e)))?;
+        // 1. Проверить текущее состояние
+        {
+            let state = state_arc.lock()
+                .map_err(|e| JsValue::from_str(&format!("Failed to lock state: {}", e)))?;
 
-        state.connect(&server_url)
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+            if state.connection_state() == ConnectionState::Connected {
+                return Err(JsValue::from_str("Already connected"));
+            }
+        }
+
+        // 2. Сохранить server_url для автоматического переподключения
+        {
+            let mut state = state_arc.lock()
+                .map_err(|e| JsValue::from_str(&format!("Failed to lock state: {}", e)))?;
+
+            state.set_server_url(server_url.clone());
+        }
+
+        // 3. Создать и подключить WebSocket транспорт
+        let mut transport = WebSocketTransport::new();
+        transport.connect(&server_url)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        // 4. Настроить callbacks с доступом к Arc<Mutex<AppState>>
+        // ✅ Это ключевая часть! Теперь callbacks имеют доступ к AppState
+        AppState::setup_transport_callbacks_with_arc(&mut transport, state_arc.clone())
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        // 5. Сохранить транспорт в AppState
+        {
+            let mut state = state_arc.lock()
+                .map_err(|e| JsValue::from_str(&format!("Failed to lock state: {}", e)))?;
+
+            state.set_transport(transport);
+        }
+
+        Ok(())
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -736,6 +786,76 @@ pub fn app_state_connection_state(state_id: String) -> Result<String, JsValue> {
     };
 
     Ok(state_str.to_string())
+}
+
+/// Включить/выключить автоматическое переподключение
+#[wasm_bindgen]
+pub fn app_state_set_auto_reconnect(state_id: String, enabled: bool) -> Result<(), JsValue> {
+    let state_arc = APP_STATES.with(|states| {
+        states.borrow()
+            .get(&state_id)
+            .cloned()
+            .ok_or_else(|| JsValue::from_str("AppState not found"))
+    })?;
+
+    let mut state = state_arc.lock()
+        .map_err(|e| JsValue::from_str(&format!("Failed to lock state: {}", e)))?;
+
+    state.reconnect_state_mut().set_enabled(enabled);
+
+    Ok(())
+}
+
+/// Получить количество попыток переподключения
+#[wasm_bindgen]
+pub fn app_state_reconnect_attempts(state_id: String) -> Result<u32, JsValue> {
+    let state_arc = APP_STATES.with(|states| {
+        states.borrow()
+            .get(&state_id)
+            .cloned()
+            .ok_or_else(|| JsValue::from_str("AppState not found"))
+    })?;
+
+    let state = state_arc.lock()
+        .map_err(|e| JsValue::from_str(&format!("Failed to lock state: {}", e)))?;
+
+    Ok(state.reconnect_state().attempts())
+}
+
+/// Сбросить счётчик попыток переподключения
+#[wasm_bindgen]
+pub fn app_state_reset_reconnect(state_id: String) -> Result<(), JsValue> {
+    let state_arc = APP_STATES.with(|states| {
+        states.borrow()
+            .get(&state_id)
+            .cloned()
+            .ok_or_else(|| JsValue::from_str("AppState not found"))
+    })?;
+
+    let mut state = state_arc.lock()
+        .map_err(|e| JsValue::from_str(&format!("Failed to lock state: {}", e)))?;
+
+    state.reconnect_state_mut().reset();
+
+    Ok(())
+}
+
+/// Зарегистрировать пользователя на сервере
+/// Отправляет сообщение Register с username, password и registration bundle
+#[wasm_bindgen]
+pub fn app_state_register_on_server(state_id: String, password: String) -> Result<(), JsValue> {
+    let state_arc = APP_STATES.with(|states| {
+        states.borrow()
+            .get(&state_id)
+            .cloned()
+            .ok_or_else(|| JsValue::from_str("AppState not found"))
+    })?;
+
+    let state = state_arc.lock()
+        .map_err(|e| JsValue::from_str(&format!("Failed to lock state: {}", e)))?;
+
+    state.register_on_server(password)
+        .map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
 /// Удалить AppState из памяти

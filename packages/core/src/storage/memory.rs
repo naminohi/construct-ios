@@ -198,7 +198,7 @@ mod tests {
             conversation_id: "conv1".to_string(),
             from: "user1".to_string(),
             to: "user2".to_string(),
-            encrypted_content: vec![1, 2, 3],
+            encrypted_content: "AQID".to_string(),
             timestamp: 100,
             status: MessageStatus::Sent,
         };
@@ -208,7 +208,7 @@ mod tests {
             conversation_id: "conv1".to_string(),
             from: "user2".to_string(),
             to: "user1".to_string(),
-            encrypted_content: vec![4, 5, 6],
+            encrypted_content: "BAUG".to_string(),
             timestamp: 200,
             status: MessageStatus::Read,
         };

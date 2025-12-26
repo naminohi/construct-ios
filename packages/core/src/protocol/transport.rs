@@ -1,10 +1,13 @@
 // WebSocket транспорт
 // Обертка над браузерным WebSocket API для WASM
 
-use crate::protocol::messages::ProtocolMessage;
-use crate::protocol::wire::{pack_message, unpack_message};
 use crate::utils::error::{ConstructError, Result};
 
+#[cfg(target_arch = "wasm32")]
+use crate::protocol::{
+    messages::{ClientMessage, ServerMessage},
+    wire::{pack_client_message, unpack_server_message},
+};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 #[cfg(target_arch = "wasm32")]
@@ -25,31 +28,30 @@ pub enum ConnectionState {
 #[cfg(target_arch = "wasm32")]
 pub struct WebSocketTransport {
     ws: Option<WebSocket>,
-    url: String,
     state: ConnectionState,
 }
 
 #[cfg(target_arch = "wasm32")]
 impl WebSocketTransport {
     /// Создать новый WebSocket транспорт
-    pub fn new(url: &str) -> Self {
+    pub fn new() -> Self {
         Self {
             ws: None,
-            url: url.to_string(),
             state: ConnectionState::Disconnected,
         }
     }
 
     /// Подключиться к серверу
-    pub fn connect(&mut self) -> Result<()> {
+    pub fn connect(&mut self, url: &str) -> Result<()> {
         if self.state == ConnectionState::Connected {
             return Err(ConstructError::NetworkError(
                 "Already connected".to_string(),
             ));
         }
 
-        let ws = WebSocket::new(&self.url)
-            .map_err(|e| ConstructError::NetworkError(format!("Failed to create WebSocket: {:?}", e)))?;
+        let ws = WebSocket::new(url).map_err(|e| {
+            ConstructError::NetworkError(format!("Failed to create WebSocket: {:?}", e))
+        })?;
 
         // Установить binary тип для MessagePack
         ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
@@ -61,23 +63,24 @@ impl WebSocketTransport {
     }
 
     /// Отправить сообщение
-    pub fn send(&self, message: &ProtocolMessage) -> Result<()> {
-        if self.state != ConnectionState::Connected {
-            return Err(ConstructError::NetworkError(
-                "Not connected".to_string(),
-            ));
+    pub fn send(&self, message: &ClientMessage) -> Result<()> {
+        let ws = self
+            .ws
+            .as_ref()
+            .ok_or_else(|| ConstructError::NetworkError("WebSocket not initialized".to_string()))?;
+
+        // Проверить реальное состояние WebSocket (OPEN = 1)
+        if ws.ready_state() != 1 {
+            return Err(ConstructError::NetworkError("Not connected".to_string()));
         }
 
-        let ws = self.ws.as_ref().ok_or_else(|| {
-            ConstructError::NetworkError("WebSocket not initialized".to_string())
-        })?;
-
         // Сериализовать в MessagePack
-        let packed = pack_message(message)?;
+        let packed = pack_client_message(message)?;
 
         // Отправить как ArrayBuffer
-        ws.send_with_u8_array(&packed)
-            .map_err(|e| ConstructError::NetworkError(format!("Failed to send message: {:?}", e)))?;
+        ws.send_with_u8_array(&packed).map_err(|e| {
+            ConstructError::NetworkError(format!("Failed to send message: {:?}", e))
+        })?;
 
         Ok(())
     }
@@ -99,7 +102,10 @@ impl WebSocketTransport {
 
     /// Проверить, подключен ли транспорт
     pub fn is_connected(&self) -> bool {
-        self.state == ConnectionState::Connected
+        self.ws
+            .as_ref()
+            .map(|ws| ws.ready_state() == 1)
+            .unwrap_or(false)
     }
 
     /// Установить callback для onopen
@@ -107,9 +113,10 @@ impl WebSocketTransport {
     where
         F: Fn() + 'static,
     {
-        let ws = self.ws.as_ref().ok_or_else(|| {
-            ConstructError::NetworkError("WebSocket not initialized".to_string())
-        })?;
+        let ws = self
+            .ws
+            .as_ref()
+            .ok_or_else(|| ConstructError::NetworkError("WebSocket not initialized".to_string()))?;
 
         let closure = Closure::wrap(Box::new(move |_event: JsValue| {
             callback();
@@ -121,25 +128,29 @@ impl WebSocketTransport {
         Ok(())
     }
 
-    /// Установить callback для onmessage
+    /// Установить callback для onmessage (принимает ServerMessage от сервера)
     pub fn set_on_message<F>(&self, callback: F) -> Result<()>
     where
-        F: Fn(ProtocolMessage) + 'static,
+        F: Fn(ServerMessage) + 'static,
     {
-        let ws = self.ws.as_ref().ok_or_else(|| {
-            ConstructError::NetworkError("WebSocket not initialized".to_string())
-        })?;
+        let ws = self
+            .ws
+            .as_ref()
+            .ok_or_else(|| ConstructError::NetworkError("WebSocket not initialized".to_string()))?;
 
         let closure = Closure::wrap(Box::new(move |event: MessageEvent| {
             if let Ok(array_buffer) = event.data().dyn_into::<js_sys::ArrayBuffer>() {
                 let uint8_array = js_sys::Uint8Array::new(&array_buffer);
                 let data = uint8_array.to_vec();
 
-                match unpack_message(&data) {
+                match unpack_server_message(&data) {
                     Ok(msg) => callback(msg),
                     Err(e) => {
                         #[cfg(feature = "wasm")]
-                        crate::wasm::console::log(&format!("Failed to unpack message: {:?}", e));
+                        crate::wasm::console::log(&format!(
+                            "Failed to unpack server message: {:?}",
+                            e
+                        ));
                     }
                 }
             }
@@ -156,9 +167,10 @@ impl WebSocketTransport {
     where
         F: Fn(String) + 'static,
     {
-        let ws = self.ws.as_ref().ok_or_else(|| {
-            ConstructError::NetworkError("WebSocket not initialized".to_string())
-        })?;
+        let ws = self
+            .ws
+            .as_ref()
+            .ok_or_else(|| ConstructError::NetworkError("WebSocket not initialized".to_string()))?;
 
         let closure = Closure::wrap(Box::new(move |_event: ErrorEvent| {
             callback("WebSocket error occurred".to_string());
@@ -175,9 +187,10 @@ impl WebSocketTransport {
     where
         F: Fn(u16, String) + 'static,
     {
-        let ws = self.ws.as_ref().ok_or_else(|| {
-            ConstructError::NetworkError("WebSocket not initialized".to_string())
-        })?;
+        let ws = self
+            .ws
+            .as_ref()
+            .ok_or_else(|| ConstructError::NetworkError("WebSocket not initialized".to_string()))?;
 
         let closure = Closure::wrap(Box::new(move |event: CloseEvent| {
             let code = event.code();
@@ -194,27 +207,27 @@ impl WebSocketTransport {
 
 /// Заглушка для не-WASM платформ
 #[cfg(not(target_arch = "wasm32"))]
+use crate::protocol::messages::ClientMessage;
+#[cfg(not(target_arch = "wasm32"))]
 pub struct WebSocketTransport {
-    url: String,
     state: ConnectionState,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl WebSocketTransport {
-    pub fn new(url: &str) -> Self {
+    pub fn new() -> Self {
         Self {
-            url: url.to_string(),
             state: ConnectionState::Disconnected,
         }
     }
 
-    pub fn connect(&mut self) -> Result<()> {
+    pub fn connect(&mut self, _url: &str) -> Result<()> {
         Err(ConstructError::NetworkError(
             "WebSocket transport only available in WASM target".to_string(),
         ))
     }
 
-    pub fn send(&self, _message: &ProtocolMessage) -> Result<()> {
+    pub fn send(&self, _message: &ClientMessage) -> Result<()> {
         Err(ConstructError::NetworkError(
             "WebSocket transport only available in WASM target".to_string(),
         ))
@@ -232,5 +245,12 @@ impl WebSocketTransport {
 
     pub fn is_connected(&self) -> bool {
         false
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Default for WebSocketTransport {
+    fn default() -> Self {
+        Self::new()
     }
 }

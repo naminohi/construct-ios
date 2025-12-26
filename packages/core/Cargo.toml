@@ -8,17 +8,19 @@ license.workspace = true
 description = "Core Rust/WASM engine for Construct Messenger with E2EE"
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["staticlib", "cdylib", "rlib"]
 
 # Feature flags для разных платформ
 [features]
 default = ["wasm"]
+console_error_panic_hook = ["dep:console_error_panic_hook"]
 wasm = [
     "dep:wasm-bindgen",
     "dep:js-sys",
     "dep:web-sys",
     "dep:wasm-bindgen-futures",
     "dep:serde-wasm-bindgen",
+    "console_error_panic_hook",
     # "indexeddb",  # Пока не используем
 ]
 desktop = [
@@ -40,6 +42,8 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
+uniffi = { version = "0.28", features = ["build"] }
+chrono = "0.4"
 
 # Криптография
 x25519-dalek = { workspace = true }
@@ -61,6 +65,9 @@ rmp-serde = { workspace = true }
 bincode = { workspace = true }
 base64 = { workspace = true }
 serde_json = { workspace = true }
+
+# Optional panic hook for wasm
+console_error_panic_hook = { version = "0.1.7", optional = true }
 
 # WASM-specific (optional)
 wasm-bindgen = { workspace = true, optional = true }
@@ -104,6 +111,9 @@ getrandom = { version = "0.2", features = ["js"] }
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
+
+[build-dependencies]
+uniffi = { version = "0.28", features = ["build"] }
 
 [profile.release]
 # Наследуем из workspace но можем переопределить

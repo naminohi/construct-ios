@@ -10,69 +10,16 @@ use wasm_bindgen::JsCast;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_futures::JsFuture;
 #[cfg(target_arch = "wasm32")]
-use web_sys::{IdbDatabase, IdbIndex, IdbObjectStore, IdbRequest, IdbTransaction, IdbTransactionMode};
+use web_sys::{IdbDatabase, IdbRequest, IdbTransactionMode};
 
-const DB_VERSION: u32 = 1;
-
-/// Конвертировать IdbRequest в Promise для использования с JsFuture
-#[cfg(target_arch = "wasm32")]
-fn idb_request_to_promise(request: &IdbRequest) -> js_sys::Promise {
-    use wasm_bindgen::closure::Closure;
-
-    js_sys::Promise::new(&mut |resolve, reject| {
-        let success_cb = Closure::once(Box::new(move |event: web_sys::Event| {
-            let target = event.target().unwrap();
-            let req: IdbRequest = target.dyn_into().unwrap();
-            let _ = resolve.call1(&JsValue::NULL, &req.result().unwrap());
-        }) as Box<dyn FnOnce(_)>);
-
-        let error_cb = Closure::once(Box::new(move |_event: web_sys::Event| {
-            let _ = reject.call1(&JsValue::NULL, &JsValue::from_str("IDB request failed"));
-        }) as Box<dyn FnOnce(_)>);
-
-        request.set_onsuccess(Some(success_cb.as_ref().unchecked_ref()));
-        request.set_onerror(Some(error_cb.as_ref().unchecked_ref()));
-
-        success_cb.forget();
-        error_cb.forget();
-    })
-}
-
-/// Конвертировать IdbOpenDbRequest в Promise для использования с JsFuture
-#[cfg(target_arch = "wasm32")]
-fn idb_open_request_to_promise(request: &web_sys::IdbOpenDbRequest) -> js_sys::Promise {
-    use wasm_bindgen::closure::Closure;
-
-    js_sys::Promise::new(&mut |resolve, reject| {
-        let success_cb = Closure::once(Box::new(move |event: web_sys::Event| {
-            let target = event.target().unwrap();
-            let req: IdbRequest = target.dyn_into().unwrap();
-            let _ = resolve.call1(&JsValue::NULL, &req.result().unwrap());
-        }) as Box<dyn FnOnce(_)>);
-
-        let error_cb = Closure::once(Box::new(move |_event: web_sys::Event| {
-            let _ = reject.call1(&JsValue::NULL, &JsValue::from_str("IDB open request failed"));
-        }) as Box<dyn FnOnce(_)>);
-
-        request.set_onsuccess(Some(success_cb.as_ref().unchecked_ref()));
-        request.set_onerror(Some(error_cb.as_ref().unchecked_ref()));
-
-        success_cb.forget();
-        error_cb.forget();
-    })
-}
-
-/// IndexedDB хранилище
 pub struct IndexedDbStorage {
-    db_name: String,
     #[cfg(target_arch = "wasm32")]
     db: Option<IdbDatabase>,
 }
 
 impl IndexedDbStorage {
-    pub fn new(db_name: &str) -> Self {
+    pub fn new() -> Self {
         Self {
-            db_name: db_name.to_string(),
             #[cfg(target_arch = "wasm32")]
             db: None,
         }
@@ -91,10 +38,9 @@ impl IndexedDbStorage {
 
         // Открыть или создать БД
         let open_request = idb
-            .open_with_u32(&self.db_name, DB_VERSION)
+            .open_with_u32("construct_messenger", 1)
             .map_err(|e| ConstructError::StorageError(format!("Failed to open DB: {:?}", e)))?;
-
-        // Обработчик onupgradeneeded для создания object stores
+        
         let onupgradeneeded = Closure::wrap(Box::new(move |event: web_sys::IdbVersionChangeEvent| {
             let target = event.target().expect("Event should have target");
             let request: IdbRequest = target.dyn_into().expect("Target should be IdbRequest");
@@ -102,22 +48,22 @@ impl IndexedDbStorage {
 
             // Создать object stores (версия БД контролирует создание)
             // Если версия увеличена, создаем все stores заново
-            let mut params = web_sys::IdbObjectStoreParameters::new();
+            let params = web_sys::IdbObjectStoreParameters::new();
             params.set_key_path(&JsValue::from_str("user_id"));
             let _ = db.create_object_store_with_optional_parameters("private_keys", &params);
 
-            let mut params = web_sys::IdbObjectStoreParameters::new();
+            let params = web_sys::IdbObjectStoreParameters::new();
             params.set_key_path(&JsValue::from_str("session_id"));
             if let Ok(store) = db.create_object_store_with_optional_parameters("sessions", &params) {
                 // Индекс по contact_id
                 let _ = store.create_index_with_str("contact_id", "contact_id");
             }
 
-            let mut params = web_sys::IdbObjectStoreParameters::new();
+            let params = web_sys::IdbObjectStoreParameters::new();
             params.set_key_path(&JsValue::from_str("id"));
             let _ = db.create_object_store_with_optional_parameters("contacts", &params);
 
-            let mut params = web_sys::IdbObjectStoreParameters::new();
+            let params = web_sys::IdbObjectStoreParameters::new();
             params.set_key_path(&JsValue::from_str("id"));
             if let Ok(store) = db.create_object_store_with_optional_parameters("messages", &params) {
                 // Индексы для поиска
@@ -125,7 +71,7 @@ impl IndexedDbStorage {
                 let _ = store.create_index_with_str("timestamp", "timestamp");
             }
 
-            let mut params = web_sys::IdbObjectStoreParameters::new();
+            let params = web_sys::IdbObjectStoreParameters::new();
             params.set_key_path(&JsValue::from_str("user_id"));
             let _ = db.create_object_store_with_optional_parameters("metadata", &params);
         }) as Box<dyn FnMut(_)>);
@@ -503,6 +449,47 @@ impl IndexedDbStorage {
     pub async fn load_metadata(&self, _user_id: &str) -> Result<Option<StoredAppMetadata>> {
         Ok(None)
     }
+}
+
+impl Default for IndexedDbStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn idb_request_to_promise(request: &IdbRequest) -> js_sys::Promise {
+    js_sys::Promise::new(&mut |resolve, reject| {
+        let onsuccess = Closure::wrap(Box::new(move |event: web_sys::Event| {
+            let target = event.target().expect("Event target is missing");
+            let req = target.dyn_into::<web_sys::IdbRequest>().unwrap();
+            let result = req.result().unwrap();
+            resolve.call1(&JsValue::NULL, &result).unwrap();
+        }) as Box<dyn FnMut(_)>);
+
+        let onerror = Closure::wrap(Box::new(move |event: web_sys::Event| {
+            // Stop the event from propagating.
+            event.prevent_default();
+            let target = event.target().expect("Event target is missing");
+            let req = target.dyn_into::<web_sys::IdbRequest>().unwrap();
+            if let Some(error) = req.error().unwrap() {
+                 reject.call1(&JsValue::NULL, &error.into()).unwrap();
+            } else {
+                 reject.call1(&JsValue::NULL, &JsValue::from("Unknown IndexedDB Error")).unwrap();
+            }
+        }) as Box<dyn FnMut(_)>);
+
+        request.set_onsuccess(Some(onsuccess.as_ref().unchecked_ref()));
+        request.set_onerror(Some(onerror.as_ref().unchecked_ref()));
+
+        onsuccess.forget();
+        onerror.forget();
+    })
+}
+
+#[cfg(target_arch = "wasm32")]
+fn idb_open_request_to_promise(request: &web_sys::IdbOpenDbRequest) -> js_sys::Promise {
+    idb_request_to_promise(request)
 }
 
 // Для совместимости с существующим кодом

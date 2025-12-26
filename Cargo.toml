@@ -51,7 +51,7 @@ authors = ["Construct Team"]
 edition = "2021"
 rust-version = "1.70"
 license = "MIT"
-repository = "https://github.com/your-org/construct-messenger"
+repository = "https://github.com/maximeliseyev/construct-messenger"
 
 [profile.release]
 lto = true

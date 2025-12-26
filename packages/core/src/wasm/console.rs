@@ -1,5 +1,3 @@
-// Консольное логирование для WASM
-
 #[cfg(target_arch = "wasm32")]
 pub fn init_logging() {
     // Базовая инициализация логирования для WASM

@@ -1,0 +1,15 @@
+{
+  "originHash" : "78151e89a0576a776745c8058e743f6abf738b81d79b8c987cc751627075ca87",
+  "pins" : [
+    {
+      "identity" : "msgpack-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/fumoboy007/msgpack-swift.git",
+      "state" : {
+        "revision" : "fe3101819f4f82b086da5279a9df81f6754798e9",
+        "version" : "2.0.6"
+      }
+    }
+  ],
+  "version" : 3
+}

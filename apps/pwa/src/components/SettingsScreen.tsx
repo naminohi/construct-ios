@@ -1,22 +1,63 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { messenger } from '../services/messenger';
+import { SERVER_URL } from '../config/constants';
+import { validateServerUrl } from '../utils/url';
 import './SettingsScreen.css';
 
-const SettingsScreen: React.FC = () => {
-  const [serverUrl, setServerUrl] = useState('wss://construct.messenger.local');
+interface SettingsScreenProps {
+  onLogout: () => void;
+}
 
-  const handleChangeServer = () => {
-    const newUrl = prompt('Enter server URL:', serverUrl);
-    if (newUrl) {
-      setServerUrl(newUrl);
-      // TODO: Implement actual server connection logic
-      console.log('Server changed to:', newUrl);
+const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
+  const [serverUrl, setServerUrl] = useState('');
+
+  useEffect(() => {
+    // Загрузить сохраненный адрес сервера или использовать дефолтный
+    const savedUrl = localStorage.getItem('construct_server_url') || SERVER_URL;
+    setServerUrl(savedUrl);
+  }, []);
+
+  const handleChangeServer = async () => {
+    const newUrl = prompt(
+      'Enter server URL (supports domain, IPv4, IPv6):\n\n' +
+      'Examples:\n' +
+      '  wss://example.com\n' +
+      '  wss://192.168.1.1:443\n' +
+      '  wss://[2a09:8280:1::b9:e736:0]:443',
+      serverUrl
+    );
+
+    if (newUrl && newUrl !== serverUrl) {
+      // Валидировать URL
+      const validation = validateServerUrl(newUrl);
+      if (!validation.valid) {
+        alert('Invalid server URL: ' + validation.error);
+        return;
+      }
+
+      try {
+        // Отключиться от старого сервера
+        await messenger.disconnect();
+
+        // Подключиться к новому серверу (используем нормализованный URL)
+        const normalizedUrl = validation.normalized!;
+        await messenger.connect(normalizedUrl);
+
+        // Сохранить новый адрес
+        localStorage.setItem('construct_server_url', normalizedUrl);
+        setServerUrl(normalizedUrl);
+
+        console.log('Server changed to:', normalizedUrl);
+      } catch (err) {
+        console.error('Failed to change server:', err);
+        alert('Failed to connect to new server: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      }
     }
   };
 
   const handleLogout = () => {
     if (confirm('Are you sure you want to logout?')) {
-      // TODO: Implement logout logic
-      console.log('Logging out...');
+      onLogout();
     }
   };
 

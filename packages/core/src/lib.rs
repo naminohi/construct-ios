@@ -4,6 +4,18 @@
 #![warn(clippy::all)]
 #![allow(clippy::too_many_arguments)]
 
+// UniFFI bindings for iOS/macOS
+#[cfg(not(target_arch = "wasm32"))]
+pub mod uniffi_bindings;
+
+// Re-export UniFFI types at crate root so scaffolding can find them
+#[cfg(not(target_arch = "wasm32"))]
+pub use uniffi_bindings::{ClassicCryptoCore, CryptoError, RegistrationBundleJson, create_crypto_core};
+
+// Include UniFFI scaffolding generated from construct_core.udl
+#[cfg(not(target_arch = "wasm32"))]
+uniffi::include_scaffolding!("construct_core");
+
 // Модули
 pub mod api;
 pub mod crypto;
@@ -11,6 +23,7 @@ pub mod protocol;
 pub mod storage;
 pub mod state;
 pub mod utils;
+pub mod error;
 
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
@@ -18,7 +31,9 @@ pub mod wasm;
 // Re-exports для удобства
 pub use api::MessengerAPI;
 pub use crypto::ClientCrypto;
-pub use utils::error::Result;
+// pub use utils::error::Result; // Conflict with our new error module, commented out for now
+// Note: CryptoError from error module is for internal use
+// UniFFI CryptoError is exported above for FFI
 
 // WASM экспорты
 #[cfg(target_arch = "wasm32")]
@@ -52,3 +67,4 @@ pub use wasm::bindings::{
     decrypt_message,
     destroy_client,
 };
+

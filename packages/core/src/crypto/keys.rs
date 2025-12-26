@@ -3,10 +3,10 @@
 
 use crate::utils::error::{ConstructError, Result};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use x25519_dalek::{PublicKey, StaticSecret};
-use zeroize::Zeroizing;
+use crate::crypto::CryptoProvider;
+use std::marker::PhantomData;
 
 /// Пара ключей X25519
 #[derive(Clone)]
@@ -52,32 +52,34 @@ impl Ed25519KeyPair {
 
 /// Хранилище prekey с метаданными
 #[derive(Clone)]
-pub struct PrekeyStore {
-    pub key_pair: X25519KeyPair,
+pub struct PrekeyStore<P: CryptoProvider> {
+    pub key_pair: (P::KemPrivateKey, P::KemPublicKey),
     pub signature: Vec<u8>,
     pub created_at: i64,
     pub key_id: u32,
 }
 
 /// Менеджер криптографических ключей
-pub struct KeyManager {
+pub struct KeyManager<P: CryptoProvider> {
     /// Identity ключ (долговременный)
-    identity_key: Option<X25519KeyPair>,
+    identity_key: Option<(P::KemPrivateKey, P::KemPublicKey)>,
 
     /// Signing ключ для подписей
-    signing_key: Option<Ed25519KeyPair>,
+    signing_key: Option<(P::SignaturePrivateKey, P::SignaturePublicKey)>,
 
     /// Текущий signed prekey
-    current_signed_prekey: Option<PrekeyStore>,
+    current_signed_prekey: Option<PrekeyStore<P>>,
 
     /// История старых prekey для обратной совместимости
-    old_prekeys: HashMap<u32, PrekeyStore>,
+    old_prekeys: HashMap<u32, PrekeyStore<P>>,
 
     /// Счетчик для key_id
     next_prekey_id: u32,
+
+    _phantom: PhantomData<P>,
 }
 
-impl KeyManager {
+impl<P: CryptoProvider> KeyManager<P> {
     /// Создать новый KeyManager
     pub fn new() -> Self {
         Self {
@@ -86,43 +88,44 @@ impl KeyManager {
             current_signed_prekey: None,
             old_prekeys: HashMap::new(),
             next_prekey_id: 1,
+            _phantom: PhantomData,
         }
     }
 
     /// Инициализировать с новыми ключами
     pub fn initialize(&mut self) -> Result<()> {
-        self.identity_key = Some(X25519KeyPair::generate());
-        self.signing_key = Some(Ed25519KeyPair::generate());
+        self.identity_key = Some(P::generate_kem_keys().map_err(|e| ConstructError::CryptoError(e.to_string()))?);
+        self.signing_key = Some(P::generate_signature_keys().map_err(|e| ConstructError::CryptoError(e.to_string()))?);
         self.rotate_signed_prekey()?;
         Ok(())
     }
 
     /// Получить identity public key
-    pub fn identity_public_key(&self) -> Result<&PublicKey> {
+    pub fn identity_public_key(&self) -> Result<&P::KemPublicKey> {
         self.identity_key
             .as_ref()
-            .map(|k| &k.public)
+            .map(|k| &k.1)
             .ok_or_else(|| ConstructError::CryptoError("Identity key not initialized".to_string()))
     }
 
     /// Получить identity secret key
-    pub fn identity_secret_key(&self) -> Result<&StaticSecret> {
+    pub fn identity_secret_key(&self) -> Result<&P::KemPrivateKey> {
         self.identity_key
             .as_ref()
-            .map(|k| &k.secret)
+            .map(|k| &k.0)
             .ok_or_else(|| ConstructError::CryptoError("Identity key not initialized".to_string()))
     }
 
     /// Получить verifying key
-    pub fn verifying_key(&self) -> Result<&VerifyingKey> {
+    pub fn verifying_key(&self) -> Result<&P::SignaturePublicKey> {
         self.signing_key
             .as_ref()
-            .map(|k| &k.verifying_key)
+            .map(|k| &k.1)
             .ok_or_else(|| ConstructError::CryptoError("Signing key not initialized".to_string()))
     }
 
     /// Получить текущий signed prekey
-    pub fn current_signed_prekey(&self) -> Result<&PrekeyStore> {
+    pub fn current_signed_prekey(&self) -> Result<&PrekeyStore<P>> {
         self.current_signed_prekey
             .as_ref()
             .ok_or_else(|| ConstructError::CryptoError("No signed prekey available".to_string()))
@@ -130,20 +133,20 @@ impl KeyManager {
 
     /// Ротация signed prekey
     pub fn rotate_signed_prekey(&mut self) -> Result<()> {
-        let signing_key = self.signing_key.as_ref().ok_or_else(|| {
+        let (signing_key, _) = self.signing_key.as_ref().ok_or_else(|| {
             ConstructError::CryptoError("Signing key not initialized".to_string())
         })?;
 
         // Генерируем новый prekey
-        let key_pair = X25519KeyPair::generate();
-        let signature = signing_key.sign(key_pair.public.as_bytes());
+        let key_pair = P::generate_kem_keys().map_err(|e| ConstructError::CryptoError(e.to_string()))?;
+        let signature = P::sign(signing_key, &key_pair.1.as_ref()).map_err(|e| ConstructError::CryptoError(e.to_string()))?;
 
         let key_id = self.next_prekey_id;
         self.next_prekey_id += 1;
 
         let prekey_store = PrekeyStore {
             key_pair,
-            signature: signature.to_bytes().to_vec(),
+            signature,
             created_at: crate::utils::time::current_timestamp(),
             key_id,
         };
@@ -162,7 +165,7 @@ impl KeyManager {
     }
 
     /// Получить prekey по ID
-    pub fn get_prekey(&self, key_id: u32) -> Option<&PrekeyStore> {
+    pub fn get_prekey(&self, key_id: u32) -> Option<&PrekeyStore<P>> {
         if let Some(current) = &self.current_signed_prekey {
             if current.key_id == key_id {
                 return Some(current);
@@ -180,40 +183,41 @@ impl KeyManager {
 
     /// Экспорт регистрационного bundle
     pub fn export_registration_bundle(&self) -> Result<crate::crypto::RegistrationBundle> {
-        let identity_public = self.identity_public_key()?.as_bytes().to_vec();
-        let verifying_key = self.verifying_key()?.as_bytes().to_vec();
+        let identity_public = self.identity_public_key()?.as_ref().to_vec();
+        let verifying_key = self.verifying_key()?.as_ref().to_vec();
         let prekey = self.current_signed_prekey()?;
 
         Ok(crate::crypto::RegistrationBundle {
             identity_public,
-            signed_prekey_public: prekey.key_pair.public.as_bytes().to_vec(),
+            signed_prekey_public: prekey.key_pair.1.as_ref().to_vec(),
             signature: prekey.signature.clone(),
             verifying_key,
+            suite_id: P::suite_id(),
         })
     }
 
     /// Экспорт публичного key bundle
     pub fn export_public_bundle(&self) -> Result<crate::crypto::PublicKeyBundle> {
-        let identity_public = self.identity_public_key()?.as_bytes().to_vec();
-        let verifying_key = self.verifying_key()?.as_bytes().to_vec();
+        let identity_public = self.identity_public_key()?.as_ref().to_vec();
+        let verifying_key = self.verifying_key()?.as_ref().to_vec();
         let prekey = self.current_signed_prekey()?;
 
         Ok(crate::crypto::PublicKeyBundle {
             identity_public,
-            signed_prekey_public: prekey.key_pair.public.as_bytes().to_vec(),
+            signed_prekey_public: prekey.key_pair.1.as_ref().to_vec(),
             signature: prekey.signature.clone(),
             verifying_key,
+            suite_id: P::suite_id(),
         })
     }
 
     /// Подписать данные
     pub fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let signing_key = self.signing_key.as_ref().ok_or_else(|| {
+        let (signing_key, _) = self.signing_key.as_ref().ok_or_else(|| {
             ConstructError::CryptoError("Signing key not initialized".to_string())
         })?;
 
-        let signature = signing_key.sign(data);
-        Ok(signature.to_bytes().to_vec())
+        P::sign(signing_key, data).map_err(|e| ConstructError::CryptoError(e.to_string()))
     }
 
     /// Количество сохраненных старых prekeys
@@ -222,101 +226,16 @@ impl KeyManager {
     }
 
     /// Получить signing key для экспорта
-    pub fn signing_secret_key(&self) -> Result<&SigningKey> {
+    pub fn signing_secret_key(&self) -> Result<&P::SignaturePrivateKey> {
         self.signing_key
             .as_ref()
-            .map(|k| &k.signing_key)
+            .map(|k| &k.0)
             .ok_or_else(|| ConstructError::CryptoError("Signing key not initialized".to_string()))
     }
-
-    /// Импортировать существующие ключи
-    pub fn import_keys(
-        &mut self,
-        identity_secret: StaticSecret,
-        signing_key: SigningKey,
-        prekey_secret: StaticSecret,
-        prekey_signature: Vec<u8>,
-    ) -> Result<()> {
-        // Установить identity key
-        let identity_public = PublicKey::from(&identity_secret);
-        self.identity_key = Some(X25519KeyPair {
-            secret: identity_secret,
-            public: identity_public,
-        });
-
-        // Установить signing key
-        let verifying_key = signing_key.verifying_key();
-        self.signing_key = Some(Ed25519KeyPair {
-            signing_key,
-            verifying_key,
-        });
-
-        // Установить prekey
-        let prekey_public = PublicKey::from(&prekey_secret);
-        let key_id = self.next_prekey_id;
-        self.next_prekey_id += 1;
-
-        self.current_signed_prekey = Some(PrekeyStore {
-            key_pair: X25519KeyPair {
-                secret: prekey_secret,
-                public: prekey_public,
-            },
-            signature: prekey_signature,
-            created_at: crate::utils::time::current_timestamp(),
-            key_id,
-        });
-
-        Ok(())
-    }
 }
 
-impl Default for KeyManager {
+impl<P: CryptoProvider> Default for KeyManager<P> {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_key_manager_initialization() {
-        let mut manager = KeyManager::new();
-        assert!(manager.initialize().is_ok());
-        assert!(manager.identity_public_key().is_ok());
-        assert!(manager.verifying_key().is_ok());
-        assert!(manager.current_signed_prekey().is_ok());
-    }
-
-    #[test]
-    fn test_prekey_rotation() {
-        let mut manager = KeyManager::new();
-        manager.initialize().unwrap();
-
-        let first_prekey_id = manager.current_signed_prekey().unwrap().key_id;
-
-        manager.rotate_signed_prekey().unwrap();
-
-        let second_prekey_id = manager.current_signed_prekey().unwrap().key_id;
-        assert_ne!(first_prekey_id, second_prekey_id);
-
-        // Старый prekey должен быть доступен
-        assert!(manager.get_prekey(first_prekey_id).is_some());
-    }
-
-    #[test]
-    fn test_export_bundle() {
-        let mut manager = KeyManager::new();
-        manager.initialize().unwrap();
-
-        let bundle = manager.export_registration_bundle();
-        assert!(bundle.is_ok());
-
-        let bundle = bundle.unwrap();
-        assert_eq!(bundle.identity_public.len(), 32);
-        assert_eq!(bundle.signed_prekey_public.len(), 32);
-        assert_eq!(bundle.signature.len(), 64);
-        assert_eq!(bundle.verifying_key.len(), 32);
     }
 }

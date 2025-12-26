@@ -130,10 +130,7 @@ impl ConversationsManager {
 
     /// Получить общее количество непрочитанных сообщений
     pub fn total_unread_count(&self) -> u32 {
-        self.conversations
-            .values()
-            .map(|c| c.unread_count)
-            .sum()
+        self.conversations.values().map(|c| c.unread_count).sum()
     }
 
     /// Удалить беседу
@@ -169,17 +166,17 @@ mod tests {
     fn test_conversation_state() {
         let mut conv = ConversationState::new("contact1".to_string());
 
-        let msg = StoredMessage {
+        let msg1 = StoredMessage {
             id: "msg1".to_string(),
             conversation_id: "contact1".to_string(),
             from: "user1".to_string(),
             to: "contact1".to_string(),
-            encrypted_content: vec![1, 2, 3],
+            encrypted_content: "AQID".to_string(),
             timestamp: 100,
             status: MessageStatus::Sent,
         };
 
-        conv.add_message(msg);
+        conv.add_message(msg1);
         assert_eq!(conv.message_count(), 1);
         assert_eq!(conv.get_last_message().unwrap().id, "msg1");
     }
@@ -193,7 +190,7 @@ mod tests {
             conversation_id: "contact1".to_string(),
             from: "user1".to_string(),
             to: "contact1".to_string(),
-            encrypted_content: vec![1, 2, 3],
+            encrypted_content: "AQID".to_string(),
             timestamp: 100,
             status: MessageStatus::Sent,
         };
@@ -213,7 +210,7 @@ mod tests {
             conversation_id: "contact1".to_string(),
             from: "contact1".to_string(),
             to: "user1".to_string(),
-            encrypted_content: vec![1, 2, 3],
+            encrypted_content: "BAUG".to_string(),
             timestamp: 100,
             status: MessageStatus::Delivered,
         };
@@ -223,7 +220,10 @@ mod tests {
 
         assert_eq!(manager.total_unread_count(), 1);
 
-        manager.get_mut("contact1").unwrap().mark_as_read("msg1".to_string());
+        manager
+            .get_mut("contact1")
+            .unwrap()
+            .mark_as_read("msg1".to_string());
         assert_eq!(manager.total_unread_count(), 0);
     }
 }

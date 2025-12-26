@@ -1,5 +1,3 @@
-// Валидация данных
-
 use crate::utils::error::Result;
 
 pub fn validate_public_key(key: &[u8]) -> Result<()> {

@@ -1,6 +1,6 @@
 // API для отправки и получения сообщений
 
-use crate::crypto::ClientCrypto;
+use crate::crypto::{ClientCrypto, CryptoProvider};
 use crate::crypto::double_ratchet::EncryptedRatchetMessage;
 use crate::utils::error::{ConstructError, Result};
 use serde::{Deserialize, Serialize};
@@ -37,19 +37,20 @@ impl From<EncryptedMessage> for EncryptedRatchetMessage {
             nonce: msg.nonce,
             message_number: msg.message_number,
             previous_chain_length: msg.previous_chain_length,
+            suite_id: 1, // Default to classic suite
         }
     }
 }
 
 /// Отправить зашифрованное сообщение
-pub fn encrypt_message(
-    client: &mut ClientCrypto,
+pub fn encrypt_message<P: CryptoProvider>(
+    client: &mut ClientCrypto<P>,
     session_id: &str,
     plaintext: &str,
 ) -> Result<EncryptedMessage> {
     let encrypted = client
         .encrypt_ratchet_message(session_id, plaintext.as_bytes())
-        .map_err(|e| ConstructError::CryptoError(e))?;
+        .map_err(ConstructError::CryptoError)?;
 
     let mut msg: EncryptedMessage = encrypted.into();
     msg.session_id = session_id.to_string();
@@ -57,8 +58,8 @@ pub fn encrypt_message(
 }
 
 /// Получить и расшифровать сообщение
-pub fn decrypt_message(
-    client: &mut ClientCrypto,
+pub fn decrypt_message<P: CryptoProvider>(
+    client: &mut ClientCrypto<P>,
     session_id: &str,
     encrypted: EncryptedMessage,
 ) -> Result<String> {
@@ -66,27 +67,27 @@ pub fn decrypt_message(
 
     let plaintext = client
         .decrypt_ratchet_message(session_id, &ratchet_msg)
-        .map_err(|e| ConstructError::CryptoError(e))?;
+        .map_err(ConstructError::CryptoError)?;
 
     String::from_utf8(plaintext)
         .map_err(|e| ConstructError::SerializationError(format!("Invalid UTF-8: {}", e)))
 }
 
 /// Инициализировать сессию с контактом (отправитель)
-pub fn init_session(
-    client: &mut ClientCrypto,
+pub fn init_session<P: CryptoProvider>(
+    client: &mut ClientCrypto<P>,
     contact_id: &str,
     remote_bundle: &crate::api::crypto::KeyBundle,
 ) -> Result<String> {
     let public_bundle = remote_bundle.clone().into();
     client
         .init_double_ratchet_session(contact_id, &public_bundle)
-        .map_err(|e| ConstructError::SessionError(e))
+        .map_err(ConstructError::SessionError)
 }
 
 /// Инициализировать сессию получателя при получении первого сообщения
-pub fn init_receiving_session(
-    client: &mut ClientCrypto,
+pub fn init_receiving_session<P: CryptoProvider>(
+    client: &mut ClientCrypto<P>,
     contact_id: &str,
     remote_bundle: &crate::api::crypto::KeyBundle,
     first_encrypted_msg: &EncryptedMessage,
@@ -96,7 +97,7 @@ pub fn init_receiving_session(
 
     client
         .init_receiving_session(contact_id, &public_bundle, &ratchet_msg)
-        .map_err(|e| ConstructError::SessionError(e))
+        .map_err(ConstructError::SessionError)
 }
 
 /// Сериализовать зашифрованное сообщение в JSON

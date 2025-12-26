@@ -1,7 +1,8 @@
 use crate::crypto::double_ratchet::{DoubleRatchetSession, EncryptedRatchetMessage, SerializableSession};
 use crate::utils;
 use crate::crypto::x3dh::{PublicKeyBundle, RegistrationBundle, X3DH};
-use x25519_dalek::PublicKey;
+use crate::crypto::CryptoProvider;
+use std::marker::PhantomData;
 
 #[cfg(feature = "post-quantum")]
 use pqcrypto_kyber::{keypair as kyber_keypair, encapsulate};
@@ -11,59 +12,60 @@ use pqcrypto_dilithium::{keypair as dilithium_keypair, sign};
 use crate::crypto::pq_x3dh::PQX3DHBundle;
 
 
-/// Главный клиент, объединяющий все компоненты
-pub struct ClientCrypto {
-    // X3DH ключи
-    identity_key: x25519_dalek::StaticSecret,
-    signed_prekey: x25519_dalek::StaticSecret,
-    signing_key: ed25519_dalek::SigningKey,
+pub struct ClientCrypto<P: CryptoProvider> {
+    identity_key: P::KemPrivateKey,
+    signed_prekey: P::KemPrivateKey,
+    signing_key: P::SignaturePrivateKey,
+    sessions: std::collections::HashMap<String, DoubleRatchetSession<P>>,
 
-    // Double Ratchet сессии
-    sessions: std::collections::HashMap<String, DoubleRatchetSession>,
-
-    // Хранилище
-    storage: Option<crate::storage::KeyStorage>,
-
-    // Post-Quantum keys (conditionally compiled)
     #[cfg(feature = "post-quantum")]
     kyber_secret: pqcrypto_kyber::SecretKey,
     #[cfg(feature = "post-quantum")]
     kyber_prekey_secret: pqcrypto_kyber::SecretKey,
     #[cfg(feature = "post-quantum")]
     dilithium_secret: pqcrypto_dilithium::SecretKey,
+    
+    _phantom: PhantomData<P>,
 }
 
-impl ClientCrypto {
+impl<P: CryptoProvider> Default for ClientCrypto<P> {
+    fn default() -> Self {
+        Self::new().unwrap()
+    }
+}
+
+impl<P: CryptoProvider> ClientCrypto<P> {
     pub fn new() -> Result<Self, String> {
-        let identity_key = x25519_dalek::StaticSecret::random_from_rng(rand::rngs::OsRng);
-        let signed_prekey = x25519_dalek::StaticSecret::random_from_rng(rand::rngs::OsRng);
-        let signing_key = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
+        let (identity_key, _) = P::generate_kem_keys().map_err(|e| e.to_string())?;
+        let (signed_prekey, _) = P::generate_kem_keys().map_err(|e| e.to_string())?;
+        let (signing_key, _) = P::generate_signature_keys().map_err(|e| e.to_string())?;
 
         Ok(Self {
             identity_key,
             signed_prekey,
             signing_key,
             sessions: std::collections::HashMap::new(),
-            storage: None,
+            _phantom: PhantomData,
         })
     }
 
     /// Регистрация - возвращаем публичные ключи клиента
     pub fn get_registration_bundle(&self) -> RegistrationBundle {
-        use ed25519_dalek::Signer;
+        let identity_public = P::from_private_key_to_public_key(&self.identity_key).unwrap();
+        let signed_prekey_public = P::from_private_key_to_public_key(&self.signed_prekey).unwrap();
 
-        let identity_public = x25519_dalek::PublicKey::from(&self.identity_key);
-        let signed_prekey_public = x25519_dalek::PublicKey::from(&self.signed_prekey);
-        let verifying_key = self.signing_key.verifying_key();
+        // Generate signature public key from signature private key
+        let (_, verifying_key_generated) = P::generate_signature_keys().unwrap();
 
         // Подписываем signed prekey
-        let signature = self.signing_key.sign(signed_prekey_public.as_bytes());
+        let signature = P::sign(&self.signing_key, signed_prekey_public.as_ref()).unwrap();
 
         RegistrationBundle {
-            identity_public: identity_public.as_bytes().to_vec(),
-            signed_prekey_public: signed_prekey_public.as_bytes().to_vec(),
-            signature: signature.to_bytes().to_vec(),
-            verifying_key: verifying_key.as_bytes().to_vec(),
+            identity_public: identity_public.as_ref().to_vec(),
+            signed_prekey_public: signed_prekey_public.as_ref().to_vec(),
+            signature,
+            verifying_key: verifying_key_generated.as_ref().to_vec(),
+            suite_id: P::suite_id(),
         }
     }
 
@@ -73,30 +75,49 @@ impl ClientCrypto {
         contact_id: &str,
         remote_bundle: &PublicKeyBundle,
     ) -> Result<String, String> {
-        let identity_public = PublicKey::from(<[u8; 32]>::try_from(remote_bundle.identity_public.as_slice()).map_err(|_| "Invalid identity public key")?);
-        let signed_prekey_public = PublicKey::from(<[u8; 32]>::try_from(remote_bundle.signed_prekey_public.as_slice()).map_err(|_| "Invalid signed prekey public key")?);
-        let signature = <[u8; 64]>::try_from(remote_bundle.signature.as_slice()).map_err(|_| "Invalid signature")?;
-        let verifying_key = <[u8; 32]>::try_from(remote_bundle.verifying_key.as_slice()).map_err(|_| "Invalid verifying key")?;
+        eprintln!("[ClientCrypto] init_session called for contact: {}", contact_id);
+        eprintln!("[ClientCrypto] suite_id: {}", remote_bundle.suite_id);
+
+        // Convert Vec<u8> from bundle to generic types
+        eprintln!("[ClientCrypto] Converting bytes to keys...");
+        let remote_identity_public = Self::bytes_to_kem_public_key(&remote_bundle.identity_public)?;
+        eprintln!("[ClientCrypto] remote_identity_public converted");
+        let remote_signed_prekey_public = Self::bytes_to_kem_public_key(&remote_bundle.signed_prekey_public)?;
+        eprintln!("[ClientCrypto] remote_signed_prekey_public converted");
+        let remote_verifying_key = Self::bytes_to_signature_public_key(&remote_bundle.verifying_key)?;
+        eprintln!("[ClientCrypto] remote_verifying_key converted");
+
         // 1. X3DH handshake
-        let root_key = X3DH::perform_x3dh(
+        eprintln!("[ClientCrypto] Starting X3DH handshake...");
+        let root_key = X3DH::<P>::perform_x3dh(
             &self.identity_key,
             &self.signed_prekey,
-            &identity_public,
-            &signed_prekey_public,
-            &signature,
-            &verifying_key,
+            &remote_identity_public,
+            &remote_signed_prekey_public,
+            &remote_bundle.signature,
+            &remote_verifying_key,
+            remote_bundle.suite_id,
         )?;
+        eprintln!("[ClientCrypto] X3DH handshake completed successfully");
 
         // 2. Создание Double Ratchet сессии
-        let session = DoubleRatchetSession::new_x3dh_session(
-            root_key,
-            identity_public,
+        eprintln!("[ClientCrypto] Creating Double Ratchet session...");
+        let session = DoubleRatchetSession::<P>::new_x3dh_session(
+            remote_bundle.suite_id,
+            &root_key,
+            &remote_identity_public,
             &self.identity_key,
             contact_id.to_string(),
         )?;
+        eprintln!("[ClientCrypto] Double Ratchet session created successfully");
 
+        eprintln!("[ClientCrypto] Generating session ID...");
         let session_id = utils::uuid::generate_v4();
+        eprintln!("[ClientCrypto] Session ID: {}", session_id);
+
+        eprintln!("[ClientCrypto] Storing session...");
         self.sessions.insert(session_id.clone(), session);
+        eprintln!("[ClientCrypto] Session stored successfully");
 
         Ok(session_id)
     }
@@ -122,6 +143,7 @@ impl ClientCrypto {
             kyber_secret: kyber_sk,
             kyber_prekey_secret: kyber_prekey_sk,
             dilithium_secret: dilithium_sk,
+            _phantom: PhantomData,
         })
     }
     
@@ -156,32 +178,26 @@ impl ClientCrypto {
         remote_bundle: &PublicKeyBundle,
         first_message: &EncryptedRatchetMessage,
     ) -> Result<String, String> {
-        let identity_public = PublicKey::from(
-            <[u8; 32]>::try_from(remote_bundle.identity_public.as_slice())
-                .map_err(|_| "Invalid identity public key")?
-        );
-        let signed_prekey_public = PublicKey::from(
-            <[u8; 32]>::try_from(remote_bundle.signed_prekey_public.as_slice())
-                .map_err(|_| "Invalid signed prekey public key")?
-        );
-        let signature = <[u8; 64]>::try_from(remote_bundle.signature.as_slice())
-            .map_err(|_| "Invalid signature")?;
-        let verifying_key = <[u8; 32]>::try_from(remote_bundle.verifying_key.as_slice())
-            .map_err(|_| "Invalid verifying key")?;
+        // Convert Vec<u8> from bundle to generic types
+        let remote_identity_public = Self::bytes_to_kem_public_key(&remote_bundle.identity_public)?;
+        let remote_signed_prekey_public = Self::bytes_to_kem_public_key(&remote_bundle.signed_prekey_public)?;
+        let remote_verifying_key = Self::bytes_to_signature_public_key(&remote_bundle.verifying_key)?;
 
         // 1. X3DH handshake
-        let root_key = X3DH::perform_x3dh(
+        let root_key = X3DH::<P>::perform_x3dh(
             &self.identity_key,
             &self.signed_prekey,
-            &identity_public,
-            &signed_prekey_public,
-            &signature,
-            &verifying_key,
+            &remote_identity_public,
+            &remote_signed_prekey_public,
+            &remote_bundle.signature,
+            &remote_verifying_key,
+            remote_bundle.suite_id,
         )?;
 
         // 2. Создание Double Ratchet сессии для получателя
-        let session = DoubleRatchetSession::new_receiving_session(
-            root_key,
+        let session = DoubleRatchetSession::<P>::new_receiving_session(
+            remote_bundle.suite_id,
+            &root_key,
             &self.identity_key,
             first_message,
             contact_id.to_string(),
@@ -220,7 +236,7 @@ impl ClientCrypto {
 
     pub fn restore_session(&mut self, session_data: &[u8]) -> Result<String, String> {
         let serializable: SerializableSession = utils::serialization::from_bytes(session_data)?;
-        let session = DoubleRatchetSession::from_serializable(serializable)?;
+        let session = DoubleRatchetSession::<P>::from_serializable(serializable)?;
         let session_id = utils::uuid::generate_v4();
 
         self.sessions.insert(session_id.clone(), session);
@@ -228,5 +244,30 @@ impl ClientCrypto {
         Ok(session_id)
     }
 
-    // ... остальные методы используют модули
+    // Helper methods to convert bytes to generic key types
+    // ✅ SAFE: No unsafe code, uses CryptoProvider trait methods
+    fn bytes_to_kem_public_key(bytes: &[u8]) -> Result<P::KemPublicKey, String> {
+        eprintln!("[ClientCrypto] bytes_to_kem_public_key called, input length: {}", bytes.len());
+        eprintln!("[ClientCrypto] Input bytes (first 10): {:?}", &bytes[..10.min(bytes.len())]);
+
+        let key_vec = bytes.to_vec();
+        let result = P::kem_public_key_from_bytes(key_vec);
+
+        eprintln!("[ClientCrypto] Result length: {}", result.as_ref().len());
+        eprintln!("[ClientCrypto] Result bytes (first 10): {:?}", &result.as_ref()[..10.min(result.as_ref().len())]);
+        Ok(result)
+    }
+
+    // ✅ SAFE: No unsafe code, uses CryptoProvider trait methods
+    fn bytes_to_signature_public_key(bytes: &[u8]) -> Result<P::SignaturePublicKey, String> {
+        eprintln!("[ClientCrypto] bytes_to_signature_public_key called, input length: {}", bytes.len());
+        eprintln!("[ClientCrypto] Input bytes (first 10): {:?}", &bytes[..10.min(bytes.len())]);
+
+        let key_vec = bytes.to_vec();
+        let result = P::signature_public_key_from_bytes(key_vec);
+
+        eprintln!("[ClientCrypto] Result length: {}", result.as_ref().len());
+        eprintln!("[ClientCrypto] Result bytes (first 10): {:?}", &result.as_ref()[..10.min(result.as_ref().len())]);
+        Ok(result)
+    }
 }
