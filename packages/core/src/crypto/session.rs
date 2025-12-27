@@ -213,22 +213,24 @@ impl<P: CryptoProvider> Default for SessionManager<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::classic_suite::ClassicSuiteProvider;
+    use crate::crypto::suites::classic::ClassicSuiteProvider;
     use x25519_dalek::{PublicKey, StaticSecret};
 
     #[test]
     fn test_session_manager_add_get() {
         let mut manager = SessionManager::<ClassicSuiteProvider>::new();
 
-        let identity_secret = StaticSecret::random_from_rng(rand::rngs::OsRng);
-        let identity_public = PublicKey::from(&identity_secret);
         let root_key = [0u8; 32];
+
+        // Generate keys using CryptoProvider
+        let (ephemeral_private, _) = ClassicSuiteProvider::generate_kem_keys().unwrap();
+        let (_, identity_public) = ClassicSuiteProvider::generate_kem_keys().unwrap();
 
         let session = DoubleRatchetSession::<ClassicSuiteProvider>::new_x3dh_session(
             1,
             &root_key,
-            &identity_public.to_bytes().to_vec(),
-            &identity_secret.to_bytes().to_vec(),
+            &ephemeral_private,  // X3DH ephemeral key
+            &identity_public,
             "contact1".to_string(),
         )
         .unwrap();
@@ -243,15 +245,17 @@ mod tests {
     fn test_session_manager_remove() {
         let mut manager = SessionManager::<ClassicSuiteProvider>::new();
 
-        let identity_secret = StaticSecret::random_from_rng(rand::rngs::OsRng);
-        let identity_public = PublicKey::from(&identity_secret);
         let root_key = [0u8; 32];
+
+        // Generate keys using CryptoProvider
+        let (ephemeral_private, _) = ClassicSuiteProvider::generate_kem_keys().unwrap();
+        let (_, identity_public) = ClassicSuiteProvider::generate_kem_keys().unwrap();
 
         let session = DoubleRatchetSession::<ClassicSuiteProvider>::new_x3dh_session(
             1,
             &root_key,
-            &identity_public.to_bytes().to_vec(),
-            &identity_secret.to_bytes().to_vec(),
+            &ephemeral_private,  // X3DH ephemeral key
+            &identity_public,
             "contact1".to_string(),
         )
         .unwrap();
@@ -267,15 +271,17 @@ mod tests {
     fn test_session_manager_metadata() {
         let mut manager = SessionManager::<ClassicSuiteProvider>::new();
 
-        let identity_secret = StaticSecret::random_from_rng(rand::rngs::OsRng);
-        let identity_public = PublicKey::from(&identity_secret);
         let root_key = [0u8; 32];
+
+        // Generate keys using CryptoProvider
+        let (ephemeral_private, _) = ClassicSuiteProvider::generate_kem_keys().unwrap();
+        let (_, identity_public) = ClassicSuiteProvider::generate_kem_keys().unwrap();
 
         let session = DoubleRatchetSession::<ClassicSuiteProvider>::new_x3dh_session(
             1,
             &root_key,
-            &identity_public.to_bytes().to_vec(),
-            &identity_secret.to_bytes().to_vec(),
+            &ephemeral_private,  // X3DH ephemeral key
+            &identity_public,
             "contact1".to_string(),
         )
         .unwrap();

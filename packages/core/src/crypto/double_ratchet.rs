@@ -37,24 +37,80 @@ impl<P: CryptoProvider> DoubleRatchetSession<P> {
         &self.contact_id
     }
 
+    /// Cleanup старых skipped message keys для защиты от DoS
+    /// Удаляет ключи старше дефолтного периода (7 дней)
+    pub fn cleanup_old_skipped_keys_default(&mut self) {
+        self.cleanup_old_skipped_keys(MAX_SKIPPED_MESSAGE_AGE_SECONDS);
+    }
+
+    /// Cleanup старых skipped message keys для защиты от DoS
+    /// Удаляет ключи старше max_age_seconds
+    pub fn cleanup_old_skipped_keys(&mut self, max_age_seconds: i64) {
+        use tracing::debug;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let initial_count = self.skipped_message_keys.len();
+
+        // Удаляем старые ключи
+        self.skipped_message_keys.retain(|msg_num, _| {
+            if let Some(&timestamp) = self.skipped_key_timestamps.get(msg_num) {
+                (now as i64 - timestamp as i64) < max_age_seconds
+            } else {
+                // Если нет timestamp, удаляем ключ (safety measure)
+                false
+            }
+        });
+
+        // Также очищаем timestamps
+        self.skipped_key_timestamps.retain(|msg_num, _| {
+            self.skipped_message_keys.contains_key(msg_num)
+        });
+
+        let removed_count = initial_count - self.skipped_message_keys.len();
+        if removed_count > 0 {
+            debug!(
+                target: "crypto::double_ratchet",
+                removed = %removed_count,
+                remaining = %self.skipped_message_keys.len(),
+                "Cleaned up old skipped message keys"
+            );
+        }
+    }
+
     /// Инициатор сессии (Alice) - создает сессию для отправки первого сообщения
+    ///
+    /// ВАЖНО: alice_ephemeral_private - это тот же ключ, который использовался в X3DH!
+    /// Это обеспечивает, что Bob сможет использовать ephemeral public key из первого сообщения
+    /// для выполнения X3DH и получения того же root_key
     pub fn new_x3dh_session(
         suite_id: SuiteID,
         root_key_bytes: &[u8],
+        alice_ephemeral_private: &P::KemPrivateKey,  // ✅ X3DH ephemeral key становится первым DH ratchet key
         remote_identity_public_kem_pk: &P::KemPublicKey,
-        local_identity_private_kem_sk: &P::KemPrivateKey,
         contact_id: String,
     ) -> Result<Self, String> {
+        use tracing::debug;
+
+        debug!(target: "crypto::double_ratchet", "Initializing X3DH session (Alice)");
+
         // Convert root_key bytes to P::AeadKey
         let root_key_vec = P::hkdf_derive_key(b"", root_key_bytes, b"InitialRootKey", 32)
             .map_err(|e| format!("Failed to derive root key: {}", e))?;
-        let mut root_key_val = Self::bytes_to_aead_key(&root_key_vec)?;
+        let root_key_val = Self::bytes_to_aead_key(&root_key_vec)?;
 
-        // ✅ FIX: Generate NEW DH pair for sending
-        let (dh_private, dh_public) = P::generate_kem_keys()
-            .map_err(|e| format!("Failed to generate DH keys: {}", e))?;
+        // ✅ FIX: Use X3DH ephemeral key as first DH ratchet key (NOT generating new one!)
+        // This is crucial: Bob will extract this public key from first message for X3DH
+        let dh_private = alice_ephemeral_private.clone();
+        let dh_public = P::from_private_key_to_public_key(&dh_private)
+            .map_err(|e| format!("Failed to derive public key: {}", e))?;
 
-        // ✅ FIX: Perform DH(alice_new_priv, bob_identity_pub) → sending_chain
+        debug!(target: "crypto::double_ratchet", "Using X3DH ephemeral key as initial DH ratchet key");
+
+        // ✅ Perform DH(alice_ephemeral_priv, bob_identity_pub) → sending_chain
         let dh_output_secret = P::kem_decapsulate(&dh_private, remote_identity_public_kem_pk.as_ref())
             .map_err(|e| format!("Failed to perform DH: {}", e))?;
 
@@ -163,8 +219,15 @@ impl<P: CryptoProvider> DoubleRatchetSession<P> {
     }
 
     pub fn decrypt(&mut self, encrypted: &EncryptedRatchetMessage) -> Result<Vec<u8>, String> {
-        eprintln!("[DoubleRatchet] decrypt: msgNum={}, current_recv_chain_len={}, skipped_keys={}",
-                  encrypted.message_number, self.receiving_chain_length, self.skipped_message_keys.len());
+        use tracing::{debug, trace};
+
+        debug!(
+            target: "crypto::double_ratchet",
+            msg_num = %encrypted.message_number,
+            current_recv_chain_len = %self.receiving_chain_length,
+            skipped_keys_count = %self.skipped_message_keys.len(),
+            "Decrypting message"
+        );
 
         // Convert DH public key from message
         let remote_dh_public = Self::bytes_to_kem_public_key(&encrypted.dh_public_key)?;
@@ -179,13 +242,17 @@ impl<P: CryptoProvider> DoubleRatchetSession<P> {
         };
 
         if needs_ratchet {
-            eprintln!("[DoubleRatchet] Performing DH ratchet");
+            debug!(target: "crypto::double_ratchet", "Performing DH ratchet");
             self.perform_dh_ratchet(&remote_dh_public)?;
         }
 
         // Try to find skipped message key
         if let Some(key) = self.skipped_message_keys.remove(&encrypted.message_number) {
-            eprintln!("[DoubleRatchet] Found skipped message key for msgNum={}", encrypted.message_number);
+            trace!(
+                target: "crypto::double_ratchet",
+                msg_num = %encrypted.message_number,
+                "Found skipped message key"
+            );
             return self.decrypt_with_key(&key, encrypted);
         }
 
@@ -199,9 +266,16 @@ impl<P: CryptoProvider> DoubleRatchetSession<P> {
                 self.receiving_chain_length += 1;
                 return self.decrypt_with_key(&msg_key, encrypted);
             } else {
-                // Store skipped key
+                // Store skipped key with timestamp
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+
                 self.skipped_message_keys
                     .insert(self.receiving_chain_length, msg_key);
+                self.skipped_key_timestamps
+                    .insert(self.receiving_chain_length, timestamp);
                 self.receiving_chain_key = next_chain;
                 self.receiving_chain_length += 1;
 
@@ -259,16 +333,23 @@ impl<P: CryptoProvider> DoubleRatchetSession<P> {
         message_key: &P::AeadKey,
         encrypted: &EncryptedRatchetMessage,
     ) -> Result<Vec<u8>, String> {
-        eprintln!("[DoubleRatchet] decrypt_with_key: msgNum={}, nonce_len={}, ciphertext_len={}",
-                  encrypted.message_number, encrypted.nonce.len(), encrypted.ciphertext.len());
+        use tracing::{debug, trace};
+
+        trace!(
+            target: "crypto::double_ratchet",
+            msg_num = %encrypted.message_number,
+            nonce_len = %encrypted.nonce.len(),
+            ciphertext_len = %encrypted.ciphertext.len(),
+            "Decrypting with message key"
+        );
 
         let result = P::aead_decrypt(message_key, &encrypted.nonce, &encrypted.ciphertext, None)
             .map_err(|e| format!("Decryption failed: {}", e));
 
         if result.is_ok() {
-            eprintln!("[DoubleRatchet] ✅ Decryption successful");
+            debug!(target: "crypto::double_ratchet", "Decryption successful");
         } else {
-            eprintln!("[DoubleRatchet] ❌ Decryption failed");
+            debug!(target: "crypto::double_ratchet", "Decryption failed");
         }
 
         result

@@ -1,7 +1,6 @@
 use crate::api::crypto::CryptoCore;
-use crate::crypto::classic_suite::ClassicSuiteProvider;
+use crate::crypto::suites::classic::ClassicSuiteProvider;
 use base64::Engine as _;
-use rmp_serde::{from_slice, to_vec_named};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
@@ -107,24 +106,11 @@ impl ClassicCryptoCore {
         contact_id: String,
         recipient_bundle: Vec<u8>,
     ) -> Result<String, CryptoError> {
-        eprintln!("[UniFFI] init_session called for contact: {}", contact_id);
-        eprintln!("[UniFFI] recipient_bundle length: {} bytes", recipient_bundle.len());
-
         let bundle_str = std::str::from_utf8(&recipient_bundle)
-            .map_err(|e| {
-                eprintln!("[UniFFI] Failed to parse UTF-8: {}", e);
-                CryptoError::InvalidKeyData
-            })?;
-
-        eprintln!("[UniFFI] Bundle string: {}", bundle_str);
+            .map_err(|_| CryptoError::InvalidKeyData)?;
 
         let key_bundle: KeyBundle = serde_json::from_str(bundle_str)
-            .map_err(|e| {
-                eprintln!("[UniFFI] Failed to parse JSON: {}", e);
-                CryptoError::InvalidKeyData
-            })?;
-
-        eprintln!("[UniFFI] KeyBundle parsed successfully");
+            .map_err(|_| CryptoError::InvalidKeyData)?;
 
         // Convert to the internal KeyBundle type
         let internal_bundle = crate::api::crypto::KeyBundle {
@@ -135,18 +121,9 @@ impl ClassicCryptoCore {
             suite_id: key_bundle.suite_id,
         };
 
-        eprintln!("[UniFFI] Internal bundle created, acquiring lock...");
         let mut core = self.inner.lock().unwrap();
-        eprintln!("[UniFFI] Lock acquired, calling core.init_session...");
-
-        let result = core.init_session(&contact_id, &internal_bundle)
-            .map_err(|e| {
-                eprintln!("[UniFFI] core.init_session failed: {:?}", e);
-                CryptoError::SessionInitializationFailed
-            });
-
-        eprintln!("[UniFFI] init_session result: {:?}", result.is_ok());
-        result
+        core.init_session(&contact_id, &internal_bundle)
+            .map_err(|_| CryptoError::SessionInitializationFailed)
     }
 
     /// Initialize a receiving session (for responder) with first message
@@ -156,29 +133,16 @@ impl ClassicCryptoCore {
         recipient_bundle: Vec<u8>,
         first_message: Vec<u8>,
     ) -> Result<String, CryptoError> {
-        eprintln!("[UniFFI] init_receiving_session called for contact: {}", contact_id);
-        eprintln!("[UniFFI] recipient_bundle length: {} bytes", recipient_bundle.len());
-        eprintln!("[UniFFI] first_message length: {} bytes", first_message.len());
-
         // Parse recipient bundle JSON
         let bundle_str = std::str::from_utf8(&recipient_bundle)
-            .map_err(|e| {
-                eprintln!("[UniFFI] Failed to parse bundle UTF-8: {}", e);
-                CryptoError::InvalidKeyData
-            })?;
+            .map_err(|_| CryptoError::InvalidKeyData)?;
 
         let key_bundle: KeyBundle = serde_json::from_str(bundle_str)
-            .map_err(|e| {
-                eprintln!("[UniFFI] Failed to parse bundle JSON: {}", e);
-                CryptoError::InvalidKeyData
-            })?;
+            .map_err(|_| CryptoError::InvalidKeyData)?;
 
         // Parse first message JSON
         let message_str = std::str::from_utf8(&first_message)
-            .map_err(|e| {
-                eprintln!("[UniFFI] Failed to parse message UTF-8: {}", e);
-                CryptoError::InvalidCiphertext
-            })?;
+            .map_err(|_| CryptoError::InvalidCiphertext)?;
 
         #[derive(Deserialize)]
         struct FirstMessage {
@@ -188,10 +152,7 @@ impl ClassicCryptoCore {
         }
 
         let first_msg: FirstMessage = serde_json::from_str(message_str)
-            .map_err(|e| {
-                eprintln!("[UniFFI] Failed to parse first message JSON: {}", e);
-                CryptoError::InvalidCiphertext
-            })?;
+            .map_err(|_| CryptoError::InvalidCiphertext)?;
 
         // Decode base64 content
         let sealed_box = base64::engine::general_purpose::STANDARD
