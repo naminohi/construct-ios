@@ -117,20 +117,8 @@ cargo run --release
 - [**ROADMAP.md**](docs/ROADMAP.md) - План развития и постквантовая криптография
 - [**TESTING.md**](TESTING.md) - Руководство по тестированию
 
-### API и протокол
+### API
 - [**API_V3_SPEC.md**](docs/API_V3_SPEC.md) - Спецификация API с crypto-agility
-- [**api/CLIENT_API.md**](docs/api/CLIENT_API.md) - WebSocket API документация
-- [**api/websocket-protocol.md**](docs/api/websocket-protocol.md) - Протокол коммуникации
-
-### Архитектура
-- [**architecture/00-OVERVIEW.md**](docs/architecture/00-OVERVIEW.md) - Обзор архитектуры
-- [**architecture/01-RUST-AS-CORE.md**](docs/architecture/01-RUST-AS-CORE.md) - Философия Rust как ядра
-- [**ARCHITECTURE_RESPONSIBILITY.md**](docs/ARCHITECTURE_RESPONSIBILITY.md) - Распределение ответственности
-
-### Безопасность
-- [**security/encryption.md**](docs/security/encryption.md) - Криптографический стек
-- [**security/post-quantum-cryptography.md**](docs/security/post-quantum-cryptography.md) - PQ криптография
-- [**security/key-management.md**](docs/security/key-management.md) - Управление ключами
 
 ---
 
@@ -162,9 +150,6 @@ cargo run --release
 ```
 construct-messenger/
 ├── docs/                    # 📚 Документация
-│   ├── api/                # API спецификации
-│   ├── architecture/       # Архитектурные решения
-│   └── security/           # Безопасность и криптография
 │
 ├── packages/
 │   ├── core/               # 🦀 Rust криптографическое ядро
@@ -291,15 +276,3 @@ MIT License - смотрите [LICENSE](LICENSE) для деталей
 - **Mozilla** за UniFFI
 - **Rust Community** за отличные crypto библиотеки
 - **NIST** за стандартизацию постквантовой криптографии
-
----
-
-## 📧 Контакты
-
-- **Автор:** Maxim Eliseyev
-- **Email:** [указать email]
-- **Issues:** [GitHub Issues](https://github.com/your-repo/construct-messenger/issues)
-
----
-
-**Сделано с ❤️ и Rust 🦀**
