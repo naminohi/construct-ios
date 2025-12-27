@@ -1,5 +1,6 @@
 use crate::api::crypto::CryptoCore;
 use crate::crypto::classic_suite::ClassicSuiteProvider;
+use base64::Engine as _;
 use rmp_serde::{from_slice, to_vec_named};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
@@ -38,6 +39,9 @@ pub enum CryptoError {
 
     #[error("Serialization failed")]
     SerializationFailed,
+
+    #[error("MessagePack deserialization failed - check format")]
+    MessagePackDeserializationFailed,
 }
 
 // Convert our internal errors to UniFFI CryptoError
@@ -56,6 +60,15 @@ pub struct RegistrationBundleJson {
     pub signature: String,
     pub verifying_key: String,
     pub suite_id: String,
+}
+
+// Encrypted message components for wire format (matches server ChatMessage)
+// Note: We use UDL definition for UniFFI
+#[derive(Debug, Clone)]
+pub struct EncryptedMessageComponents {
+    pub ephemeral_public_key: Vec<u8>,  // 32 bytes
+    pub message_number: u32,
+    pub content: String,  // Base64(nonce || ciphertext_with_tag)
 }
 
 // Key bundle for session initialization
@@ -136,29 +149,151 @@ impl ClassicCryptoCore {
         result
     }
 
-    /// Encrypt a message for a session
+    /// Initialize a receiving session (for responder) with first message
+    pub fn init_receiving_session(
+        &self,
+        contact_id: String,
+        recipient_bundle: Vec<u8>,
+        first_message: Vec<u8>,
+    ) -> Result<String, CryptoError> {
+        eprintln!("[UniFFI] init_receiving_session called for contact: {}", contact_id);
+        eprintln!("[UniFFI] recipient_bundle length: {} bytes", recipient_bundle.len());
+        eprintln!("[UniFFI] first_message length: {} bytes", first_message.len());
+
+        // Parse recipient bundle JSON
+        let bundle_str = std::str::from_utf8(&recipient_bundle)
+            .map_err(|e| {
+                eprintln!("[UniFFI] Failed to parse bundle UTF-8: {}", e);
+                CryptoError::InvalidKeyData
+            })?;
+
+        let key_bundle: KeyBundle = serde_json::from_str(bundle_str)
+            .map_err(|e| {
+                eprintln!("[UniFFI] Failed to parse bundle JSON: {}", e);
+                CryptoError::InvalidKeyData
+            })?;
+
+        // Parse first message JSON
+        let message_str = std::str::from_utf8(&first_message)
+            .map_err(|e| {
+                eprintln!("[UniFFI] Failed to parse message UTF-8: {}", e);
+                CryptoError::InvalidCiphertext
+            })?;
+
+        #[derive(Deserialize)]
+        struct FirstMessage {
+            ephemeral_public_key: Vec<u8>,
+            message_number: u32,
+            content: String,  // Base64
+        }
+
+        let first_msg: FirstMessage = serde_json::from_str(message_str)
+            .map_err(|e| {
+                eprintln!("[UniFFI] Failed to parse first message JSON: {}", e);
+                CryptoError::InvalidCiphertext
+            })?;
+
+        // Decode base64 content
+        let sealed_box = base64::engine::general_purpose::STANDARD
+            .decode(&first_msg.content)
+            .map_err(|_| CryptoError::InvalidCiphertext)?;
+
+        // Extract nonce (first 12 bytes) and ciphertext (rest)
+        if sealed_box.len() < 12 {
+            return Err(CryptoError::InvalidCiphertext);
+        }
+        let nonce = sealed_box[..12].to_vec();
+        let ciphertext = sealed_box[12..].to_vec();
+
+        // Convert ephemeral_public_key to [u8; 32]
+        let dh_public_key: [u8; 32] = first_msg.ephemeral_public_key
+            .try_into()
+            .map_err(|_| CryptoError::InvalidKeyData)?;
+
+        // Create EncryptedRatchetMessage
+        let encrypted_first_message = crate::crypto::double_ratchet::EncryptedRatchetMessage {
+            dh_public_key,
+            message_number: first_msg.message_number,
+            ciphertext,
+            nonce,
+            previous_chain_length: 0,
+            suite_id: key_bundle.suite_id,
+        };
+
+        // Convert to internal KeyBundle
+        let internal_bundle = crate::api::crypto::KeyBundle {
+            identity_public: key_bundle.identity_public.clone(),
+            signed_prekey_public: key_bundle.signed_prekey_public.clone(),
+            signature: key_bundle.signature.clone(),
+            verifying_key: key_bundle.verifying_key.clone(),
+            suite_id: key_bundle.suite_id,
+        };
+
+        let mut core = self.inner.lock().unwrap();
+        core.init_receiving_session(&contact_id, &internal_bundle, &encrypted_first_message)
+            .map_err(|e| {
+                eprintln!("[UniFFI] core.init_receiving_session failed: {:?}", e);
+                CryptoError::SessionInitializationFailed
+            })
+    }
+
+    /// Encrypt a message for a session - returns wire format components
     pub fn encrypt_message(
         &self,
         session_id: String,
         plaintext: String,
-    ) -> Result<Vec<u8>, CryptoError> {
+    ) -> Result<EncryptedMessageComponents, CryptoError> {
         let mut core = self.inner.lock().unwrap();
         let encrypted_message = core
             .encrypt_message(&session_id, &plaintext)
             .map_err(|_| CryptoError::EncryptionFailed)?;
 
-        to_vec_named(&encrypted_message)
-            .map_err(|_| CryptoError::SerializationFailed)
+        // Create sealed box: nonce || ciphertext_with_tag
+        let mut sealed_box = Vec::new();
+        sealed_box.extend_from_slice(&encrypted_message.nonce);
+        sealed_box.extend_from_slice(&encrypted_message.ciphertext);
+
+        Ok(EncryptedMessageComponents {
+            ephemeral_public_key: encrypted_message.dh_public_key.to_vec(),
+            message_number: encrypted_message.message_number,
+            content: base64::engine::general_purpose::STANDARD.encode(&sealed_box),
+        })
     }
 
-    /// Decrypt a message from a session
+    /// Decrypt a message from a session - accepts wire format components
     pub fn decrypt_message(
         &self,
         session_id: String,
-        ciphertext: Vec<u8>,
+        ephemeral_public_key: Vec<u8>,
+        message_number: u32,
+        content: String,
     ) -> Result<String, CryptoError> {
-        let encrypted_message = from_slice(&ciphertext)
+        // Decode base64 sealed box
+        let sealed_box = base64::engine::general_purpose::STANDARD
+            .decode(&content)
             .map_err(|_| CryptoError::InvalidCiphertext)?;
+
+        // Extract nonce (first 12 bytes) and ciphertext (rest)
+        if sealed_box.len() < 12 {
+            return Err(CryptoError::InvalidCiphertext);
+        }
+        let nonce = sealed_box[..12].to_vec();
+        let ciphertext = sealed_box[12..].to_vec();
+
+        // Convert ephemeral_public_key to [u8; 32]
+        let dh_public_key: [u8; 32] = ephemeral_public_key
+            .try_into()
+            .map_err(|_| CryptoError::InvalidKeyData)?;
+
+        // Reconstruct EncryptedRatchetMessage
+        let encrypted_message = crate::crypto::double_ratchet::EncryptedRatchetMessage {
+            dh_public_key,
+            message_number,
+            ciphertext,
+            nonce,
+            previous_chain_length: 0,  // Not used by decryption
+            suite_id: 1,  // Classic suite
+        };
 
         let mut core = self.inner.lock().unwrap();
         core.decrypt_message(&session_id, &encrypted_message)

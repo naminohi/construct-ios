@@ -10,7 +10,7 @@ pub mod uniffi_bindings;
 
 // Re-export UniFFI types at crate root so scaffolding can find them
 #[cfg(not(target_arch = "wasm32"))]
-pub use uniffi_bindings::{ClassicCryptoCore, CryptoError, RegistrationBundleJson, create_crypto_core};
+pub use uniffi_bindings::{ClassicCryptoCore, CryptoError, EncryptedMessageComponents, RegistrationBundleJson, create_crypto_core};
 
 // Include UniFFI scaffolding generated from construct_core.udl
 #[cfg(not(target_arch = "wasm32"))]

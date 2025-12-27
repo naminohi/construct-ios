@@ -47,6 +47,16 @@ impl CryptoProvider for ClassicSuiteProvider {
         bytes
     }
 
+    fn kem_private_key_from_bytes(bytes: Vec<u8>) -> Self::KemPrivateKey {
+        // For ClassicSuiteProvider, KemPrivateKey is Vec<u8>, so just return it
+        bytes
+    }
+
+    fn aead_key_from_bytes(bytes: Vec<u8>) -> Self::AeadKey {
+        // For ClassicSuiteProvider, AeadKey is Vec<u8>, so just return it
+        bytes
+    }
+
     fn signature_public_key_from_bytes(bytes: Vec<u8>) -> Self::SignaturePublicKey {
         // For ClassicSuiteProvider, SignaturePublicKey is Vec<u8>, so just return it
         bytes
@@ -195,6 +205,8 @@ impl CryptoProvider for ClassicSuiteProvider {
         ciphertext: &[u8],
         associated_data: Option<&[u8]>,
     ) -> Result<Vec<u8>, CryptoError> {
+        eprintln!("[ClassicSuite] aead_decrypt: key_len={}, nonce_len={}, ciphertext_len={}",
+                  key.len(), nonce.len(), ciphertext.len());
         let cipher = ChaCha20Poly1305::new(AeadKeyChacha::from_slice(key));
         let nonce_ref = Nonce::from_slice(nonce);
 

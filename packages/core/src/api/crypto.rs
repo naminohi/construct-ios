@@ -153,6 +153,19 @@ impl<P: CryptoProvider> CryptoCore<P> {
         result
     }
 
+    pub fn init_receiving_session(
+        &mut self,
+        contact_id: &str,
+        remote_bundle: &KeyBundle,
+        first_message: &crate::crypto::double_ratchet::EncryptedRatchetMessage,
+    ) -> Result<String> {
+        eprintln!("[CryptoCore] init_receiving_session called for contact: {}", contact_id);
+        let public_bundle: PublicKeyBundle = remote_bundle.clone().into();
+        self.client
+            .init_receiving_session(contact_id, &public_bundle, first_message)
+            .map_err(ConstructError::CryptoError)
+    }
+
     pub fn encrypt_message(
         &mut self,
         session_id: &str,

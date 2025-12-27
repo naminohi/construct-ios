@@ -218,11 +218,30 @@ impl<P: CryptoProvider> ClientCrypto<P> {
     }
 
     pub fn decrypt_ratchet_message(&mut self, session_id: &str, encrypted: &EncryptedRatchetMessage) -> Result<Vec<u8>, String> {
+        eprintln!("[ClientCrypto] decrypt_ratchet_message called");
+        eprintln!("[ClientCrypto] session_id: {}", session_id);
+        eprintln!("[ClientCrypto] encrypted.message_number: {}", encrypted.message_number);
+        eprintln!("[ClientCrypto] encrypted.dh_public_key length: {}", encrypted.dh_public_key.len());
+        eprintln!("[ClientCrypto] encrypted.ciphertext length: {}", encrypted.ciphertext.len());
+        eprintln!("[ClientCrypto] encrypted.nonce length: {}", encrypted.nonce.len());
+
         let session = self.sessions
             .get_mut(session_id)
-            .ok_or_else(|| format!("Session not found: {}", session_id))?;
+            .ok_or_else(|| {
+                eprintln!("[ClientCrypto] ❌ Session not found: {}", session_id);
+                format!("Session not found: {}", session_id)
+            })?;
 
-        session.decrypt(encrypted)
+        eprintln!("[ClientCrypto] Session found, calling session.decrypt...");
+        let result = session.decrypt(encrypted);
+
+        if result.is_ok() {
+            eprintln!("[ClientCrypto] ✅ Decryption successful");
+        } else {
+            eprintln!("[ClientCrypto] ❌ session.decrypt failed: {:?}", result);
+        }
+
+        result
     }
 
     pub fn export_session(&self, session_id: &str) -> Result<Vec<u8>, String> {

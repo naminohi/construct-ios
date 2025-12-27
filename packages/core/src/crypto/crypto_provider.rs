@@ -22,6 +22,12 @@ pub trait CryptoProvider: Send + Sync + 'static {
     /// Creates a KEM public key from raw bytes
     fn kem_public_key_from_bytes(bytes: Vec<u8>) -> Self::KemPublicKey;
 
+    /// Creates a KEM private key from raw bytes
+    fn kem_private_key_from_bytes(bytes: Vec<u8>) -> Self::KemPrivateKey;
+
+    /// Creates an AEAD key from raw bytes
+    fn aead_key_from_bytes(bytes: Vec<u8>) -> Self::AeadKey;
+
     /// Creates a Signature public key from raw bytes
     fn signature_public_key_from_bytes(bytes: Vec<u8>) -> Self::SignaturePublicKey;
 

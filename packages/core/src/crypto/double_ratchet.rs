@@ -48,25 +48,18 @@ impl<P: CryptoProvider> DoubleRatchetSession<P> {
         // Convert root_key bytes to P::AeadKey
         let root_key_vec = P::hkdf_derive_key(b"", root_key_bytes, b"InitialRootKey", 32)
             .map_err(|e| format!("Failed to derive root key: {}", e))?;
+        let mut root_key_val = Self::bytes_to_aead_key(&root_key_vec)?;
 
-        // We need to convert Vec<u8> to P::AeadKey
-        // For now, use a temporary approach via HKDF
+        // ✅ FIX: Generate NEW DH pair for sending
         let (dh_private, dh_public) = P::generate_kem_keys()
             .map_err(|e| format!("Failed to generate DH keys: {}", e))?;
 
-        // Perform DH exchange to get shared secret
-        let dh_output_secret = P::kem_decapsulate(local_identity_private_kem_sk, dh_public.as_ref())
+        // ✅ FIX: Perform DH(alice_new_priv, bob_identity_pub) → sending_chain
+        let dh_output_secret = P::kem_decapsulate(&dh_private, remote_identity_public_kem_pk.as_ref())
             .map_err(|e| format!("Failed to perform DH: {}", e))?;
 
-        // Derive initial chain key from root key
-        let initial_root_key_bytes = P::hkdf_derive_key(b"", &root_key_vec, b"RootKey", 32)
-            .map_err(|e| format!("Failed to derive initial root key: {}", e))?;
-
-        let (root_key, chain_key) = P::kdf_rk(
-            &Self::bytes_to_aead_key(&initial_root_key_bytes)?,
-            &dh_output_secret,
-        )
-        .map_err(|e| format!("KDF_RK failed: {}", e))?;
+        let (root_key, chain_key) = P::kdf_rk(&root_key_val, &dh_output_secret)
+            .map_err(|e| format!("KDF_RK failed: {}", e))?;
 
         Ok(Self {
             suite_id,
@@ -170,6 +163,9 @@ impl<P: CryptoProvider> DoubleRatchetSession<P> {
     }
 
     pub fn decrypt(&mut self, encrypted: &EncryptedRatchetMessage) -> Result<Vec<u8>, String> {
+        eprintln!("[DoubleRatchet] decrypt: msgNum={}, current_recv_chain_len={}, skipped_keys={}",
+                  encrypted.message_number, self.receiving_chain_length, self.skipped_message_keys.len());
+
         // Convert DH public key from message
         let remote_dh_public = Self::bytes_to_kem_public_key(&encrypted.dh_public_key)?;
 
@@ -183,11 +179,13 @@ impl<P: CryptoProvider> DoubleRatchetSession<P> {
         };
 
         if needs_ratchet {
+            eprintln!("[DoubleRatchet] Performing DH ratchet");
             self.perform_dh_ratchet(&remote_dh_public)?;
         }
 
         // Try to find skipped message key
         if let Some(key) = self.skipped_message_keys.remove(&encrypted.message_number) {
+            eprintln!("[DoubleRatchet] Found skipped message key for msgNum={}", encrypted.message_number);
             return self.decrypt_with_key(&key, encrypted);
         }
 
@@ -261,8 +259,19 @@ impl<P: CryptoProvider> DoubleRatchetSession<P> {
         message_key: &P::AeadKey,
         encrypted: &EncryptedRatchetMessage,
     ) -> Result<Vec<u8>, String> {
-        P::aead_decrypt(message_key, &encrypted.nonce, &encrypted.ciphertext, None)
-            .map_err(|e| format!("Decryption failed: {}", e))
+        eprintln!("[DoubleRatchet] decrypt_with_key: msgNum={}, nonce_len={}, ciphertext_len={}",
+                  encrypted.message_number, encrypted.nonce.len(), encrypted.ciphertext.len());
+
+        let result = P::aead_decrypt(message_key, &encrypted.nonce, &encrypted.ciphertext, None)
+            .map_err(|e| format!("Decryption failed: {}", e));
+
+        if result.is_ok() {
+            eprintln!("[DoubleRatchet] ✅ Decryption successful");
+        } else {
+            eprintln!("[DoubleRatchet] ❌ Decryption failed");
+        }
+
+        result
     }
 
     pub fn to_serializable(&self) -> SerializableSession {
@@ -322,55 +331,28 @@ impl<P: CryptoProvider> DoubleRatchetSession<P> {
 
     // Helper functions to convert between bytes and keys
     fn bytes_to_aead_key(bytes: &[u8]) -> Result<P::AeadKey, String> {
-        // Use HKDF to derive a key of the correct type
-        P::hkdf_derive_key(b"", bytes, b"AeadKey", bytes.len())
-            .and_then(|key_bytes| {
-                // Try to create AeadKey from bytes
-                // This is a workaround since we can't directly construct P::AeadKey
-                // We use Default and hope the implementation handles it correctly
-                // In practice, ClassicSuiteProvider uses Vec<u8> which works
-                // For now, return error if sizes don't match
-                if key_bytes.len() != bytes.len() {
-                    return Err(crate::error::CryptoError::InvalidInputError(
-                        "Key size mismatch".to_string(),
-                    ));
-                }
-                // This is a hack - we create a default key and hope it gets filled
-                // In real implementation, P::AeadKey should have a from_bytes method
-                Ok(P::AeadKey::default())
-            })
-            .map_err(|e| e.to_string())
+        // ✅ Use the proper from_bytes method
+        Ok(P::aead_key_from_bytes(bytes.to_vec()))
     }
 
     fn bytes_to_kem_public_key(bytes: &[u8]) -> Result<P::KemPublicKey, String> {
-        // Similar issue - we need a way to construct KemPublicKey from bytes
-        // For ClassicSuiteProvider, Vec<u8> is used, so we just clone
-        // This is not ideal, but works for current implementation
-        let key_vec = bytes.to_vec();
-        // HACK: We need to find a way to construct P::KemPublicKey from Vec<u8>
-        // For now, assume it's Vec<u8>
-        unsafe {
-            // This is very unsafe! Only works if P::KemPublicKey is Vec<u8>
-            Ok(std::mem::transmute_copy(&key_vec))
-        }
+        // ✅ Use the proper from_bytes method
+        Ok(P::kem_public_key_from_bytes(bytes.to_vec()))
     }
 
     fn bytes_to_kem_private_key(bytes: &[u8]) -> Result<P::KemPrivateKey, String> {
-        // Same as above
-        let key_vec = bytes.to_vec();
-        unsafe {
-            Ok(std::mem::transmute_copy(&key_vec))
-        }
+        // ✅ Use the proper from_bytes method
+        Ok(P::kem_private_key_from_bytes(bytes.to_vec()))
     }
 }
 
-impl<P: CryptoProvider> Drop for DoubleRatchetSession<P> {
-    fn drop(&mut self) {
-        // Keys are automatically zeroized when they go out of scope if they implement Zeroize
-        // Take ownership to drop
-        self.dh_ratchet_private.take();
-    }
-}
+// Drop is automatic for Vec<u8> - no manual cleanup needed
+// Removed Drop implementation to prevent double-free with UniFFI
+// impl<P: CryptoProvider> Drop for DoubleRatchetSession<P> {
+//     fn drop(&mut self) {
+//         self.dh_ratchet_private.take();
+//     }
+// }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct EncryptedRatchetMessage {
