@@ -142,15 +142,10 @@ impl<P: CryptoProvider> CryptoCore<P> {
     }
 
     pub fn init_session(&mut self, contact_id: &str, remote_bundle: &KeyBundle) -> Result<String> {
-        eprintln!("[CryptoCore] init_session called for contact: {}", contact_id);
-        eprintln!("[CryptoCore] Converting KeyBundle to PublicKeyBundle...");
         let public_bundle: PublicKeyBundle = remote_bundle.clone().into();
-        eprintln!("[CryptoCore] PublicKeyBundle created, calling client.init_session...");
-        let result = self.client
+        self.client
             .init_session(contact_id, &public_bundle)
-            .map_err(ConstructError::CryptoError);
-        eprintln!("[CryptoCore] client.init_session returned: {:?}", result.is_ok());
-        result
+            .map_err(ConstructError::CryptoError)
     }
 
     pub fn init_receiving_session(
@@ -159,7 +154,6 @@ impl<P: CryptoProvider> CryptoCore<P> {
         remote_bundle: &KeyBundle,
         first_message: &crate::crypto::double_ratchet::EncryptedRatchetMessage,
     ) -> Result<String> {
-        eprintln!("[CryptoCore] init_receiving_session called for contact: {}", contact_id);
         let public_bundle: PublicKeyBundle = remote_bundle.clone().into();
         self.client
             .init_receiving_session(contact_id, &public_bundle, first_message)
@@ -279,7 +273,7 @@ pub fn generate_random_bytes(len: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::classic_suite::ClassicSuiteProvider;
+    use crate::crypto::suites::classic::ClassicSuiteProvider;
 
     #[test]
     fn test_crypto_manager_creation() {

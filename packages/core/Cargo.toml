@@ -111,6 +111,7 @@ getrandom = { version = "0.2", features = ["js"] }
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
+hex = "0.4"
 
 [build-dependencies]
 uniffi = { version = "0.28", features = ["build"] }

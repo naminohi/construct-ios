@@ -54,8 +54,8 @@ impl<P: CryptoProvider> ClientCrypto<P> {
         let identity_public = P::from_private_key_to_public_key(&self.identity_key).unwrap();
         let signed_prekey_public = P::from_private_key_to_public_key(&self.signed_prekey).unwrap();
 
-        // Generate signature public key from signature private key
-        let (_, verifying_key_generated) = P::generate_signature_keys().unwrap();
+        // ✅ FIX: Derive verifying key from the actual signing_key we're using
+        let verifying_key = P::from_signature_private_to_public(&self.signing_key).unwrap();
 
         // Подписываем signed prekey
         let signature = P::sign(&self.signing_key, signed_prekey_public.as_ref()).unwrap();
@@ -64,7 +64,7 @@ impl<P: CryptoProvider> ClientCrypto<P> {
             identity_public: identity_public.as_ref().to_vec(),
             signed_prekey_public: signed_prekey_public.as_ref().to_vec(),
             signature,
-            verifying_key: verifying_key_generated.as_ref().to_vec(),
+            verifying_key: verifying_key.as_ref().to_vec(),
             suite_id: P::suite_id(),
         }
     }
@@ -75,96 +75,75 @@ impl<P: CryptoProvider> ClientCrypto<P> {
         contact_id: &str,
         remote_bundle: &PublicKeyBundle,
     ) -> Result<String, String> {
-        eprintln!("[ClientCrypto] init_session called for contact: {}", contact_id);
-        eprintln!("[ClientCrypto] suite_id: {}", remote_bundle.suite_id);
+        use tracing::{debug, trace};
+
+        debug!(target: "crypto::client", contact_id = %contact_id, "Initializing session");
+        trace!(suite_id = %remote_bundle.suite_id);
 
         // Convert Vec<u8> from bundle to generic types
-        eprintln!("[ClientCrypto] Converting bytes to keys...");
         let remote_identity_public = Self::bytes_to_kem_public_key(&remote_bundle.identity_public)?;
-        eprintln!("[ClientCrypto] remote_identity_public converted");
         let remote_signed_prekey_public = Self::bytes_to_kem_public_key(&remote_bundle.signed_prekey_public)?;
-        eprintln!("[ClientCrypto] remote_signed_prekey_public converted");
         let remote_verifying_key = Self::bytes_to_signature_public_key(&remote_bundle.verifying_key)?;
-        eprintln!("[ClientCrypto] remote_verifying_key converted");
 
-        // 1. X3DH handshake
-        eprintln!("[ClientCrypto] Starting X3DH handshake...");
+        // ✅ Generate ephemeral key pair for this session (forward secrecy!)
+        debug!(target: "crypto::client", "Generating ephemeral key for X3DH");
+        let (ephemeral_private, _ephemeral_public) = P::generate_kem_keys()
+            .map_err(|e| format!("Failed to generate ephemeral key: {}", e))?;
+
+        // 1. Full X3DH handshake with ephemeral key
+        debug!(target: "crypto::client", "Starting X3DH handshake");
         let root_key = X3DH::<P>::perform_x3dh(
             &self.identity_key,
-            &self.signed_prekey,
+            &ephemeral_private,  // ✅ Use ephemeral key (not signed_prekey!)
             &remote_identity_public,
             &remote_signed_prekey_public,
             &remote_bundle.signature,
             &remote_verifying_key,
             remote_bundle.suite_id,
         )?;
-        eprintln!("[ClientCrypto] X3DH handshake completed successfully");
+        debug!(target: "crypto::client", "X3DH handshake completed successfully");
 
         // 2. Создание Double Ratchet сессии
-        eprintln!("[ClientCrypto] Creating Double Ratchet session...");
+        // ✅ ВАЖНО: Передаём ephemeral_private как первый DH ratchet key!
+        // Bob извлечёт ephemeral_public из первого сообщения для X3DH
+        debug!(target: "crypto::client", "Creating Double Ratchet session");
         let session = DoubleRatchetSession::<P>::new_x3dh_session(
             remote_bundle.suite_id,
             &root_key,
+            &ephemeral_private,  // ✅ X3DH ephemeral key становится первым DH ratchet key
             &remote_identity_public,
-            &self.identity_key,
             contact_id.to_string(),
         )?;
-        eprintln!("[ClientCrypto] Double Ratchet session created successfully");
+        debug!(target: "crypto::client", "Double Ratchet session created");
 
-        eprintln!("[ClientCrypto] Generating session ID...");
         let session_id = utils::uuid::generate_v4();
-        eprintln!("[ClientCrypto] Session ID: {}", session_id);
+        debug!(target: "crypto::client", session_id = %session_id, "Session ID generated");
 
-        eprintln!("[ClientCrypto] Storing session...");
         self.sessions.insert(session_id.clone(), session);
-        eprintln!("[ClientCrypto] Session stored successfully");
+        debug!(target: "crypto::client", "Session stored successfully");
 
         Ok(session_id)
     }
 
     #[cfg(feature = "post-quantum")]
     pub fn new_with_pqc() -> Result<Self, String> {
-        // Классические ключи
-        let identity_key = x25519_dalek::StaticSecret::random_from_rng(rand::rngs::OsRng);
-        let signed_prekey = x25519_dalek::StaticSecret::random_from_rng(rand::rngs::OsRng);
-        let signing_key = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
-        
-        // Пост-квантовые ключи
-        let (_, kyber_sk) = kyber_keypair().map_err(|e| e.to_string())?;
-        let (_, kyber_prekey_sk) = kyber_keypair().map_err(|e| e.to_string())?;
-        let (_, dilithium_sk) = dilithium_keypair().map_err(|e| e.to_string())?;
-        
-        Ok(Self {
-            identity_key,
-            signed_prekey,
-            signing_key,
-            sessions: std::collections::HashMap::new(),
-            storage: None,
-            kyber_secret: kyber_sk,
-            kyber_prekey_secret: kyber_prekey_sk,
-            dilithium_secret: dilithium_sk,
-            _phantom: PhantomData,
-        })
+        // TODO: Complete PQ implementation in future
+        // For now, this is a placeholder that will be implemented
+        // according to the ROADMAP.md (Q2 2026: Post-Quantum Cryptography)
+        unimplemented!("Post-quantum implementation not yet complete - see ROADMAP.md Фаза 2")
     }
     
     #[cfg(feature = "post-quantum")]
-    pub fn perform_pq_x3dh(&self, remote_bundle: &PQX3DHBundle) -> Result<[u8; 64], String> {
-        // This is a placeholder as per the markdown, and needs more implementation details
-        
-        // 1. Классический X3DH (needs to be implemented correctly)
-        // let classical_secret = X3DH::perform_x3dh(...)
-        unimplemented!("Classical part of PQX3DH is not implemented yet");
-
-        // 2. Пост-квантовый обмен (needs proper key conversion and error handling)
-        // let public_key = pqcrypto_kyber::PublicKey::from_bytes(&remote_bundle.kyber_public_key)?;
-        // let (kyber_ciphertext, kyber_shared) = encapsulate(&public_key)?;
-        // ... and for the prekey ...
-        unimplemented!("Post-quantum part of PQX3DH is not implemented yet");
-        
-        // 3. Комбинируем через HKDF
-        // let combined = ...;
-        // let final_key = ...;
-        // Ok(final_key)
+    pub fn perform_pq_x3dh(&self, _remote_bundle: &PQX3DHBundle) -> Result<[u8; 64], String> {
+        // TODO: Complete PQ-X3DH implementation in future
+        //
+        // Full implementation will include:
+        // 1. Classical X3DH with ephemeral keys (DH1, DH2, DH3)
+        // 2. Kyber768 KEM for PQ key exchange
+        // 3. Hybrid key combination: KDF(classical_secret || pq_secret)
+        //
+        // See ROADMAP.md Фаза 2 (Q2 2026) for details
+        unimplemented!("PQ-X3DH implementation not yet complete - see ROADMAP.md Фаза 2")
     }
 
     pub fn init_double_ratchet_session(&mut self, contact_id: &str, remote_bundle: &PublicKeyBundle) -> Result<String, String> {
@@ -178,20 +157,35 @@ impl<P: CryptoProvider> ClientCrypto<P> {
         remote_bundle: &PublicKeyBundle,
         first_message: &EncryptedRatchetMessage,
     ) -> Result<String, String> {
+        use tracing::debug;
+
+        debug!(target: "crypto::client", contact_id = %contact_id, "Initializing receiving session");
+
         // Convert Vec<u8> from bundle to generic types
         let remote_identity_public = Self::bytes_to_kem_public_key(&remote_bundle.identity_public)?;
         let remote_signed_prekey_public = Self::bytes_to_kem_public_key(&remote_bundle.signed_prekey_public)?;
         let remote_verifying_key = Self::bytes_to_signature_public_key(&remote_bundle.verifying_key)?;
 
-        // 1. X3DH handshake
-        let root_key = X3DH::<P>::perform_x3dh(
-            &self.identity_key,
-            &self.signed_prekey,
-            &remote_identity_public,
-            &remote_signed_prekey_public,
-            &remote_bundle.signature,
+        // ✅ Extract Alice's ephemeral public key from first message
+        // In X3DH: Alice generates ephemeral key and includes it in first message (dh_public_key)
+        let alice_ephemeral_public = Self::bytes_to_kem_public_key(&first_message.dh_public_key)?;
+        debug!(target: "crypto::client", "Extracted Alice's ephemeral key from first message");
+
+        // 1. Verify Alice's signed prekey signature
+        debug!(target: "crypto::client", "Verifying Alice's signed prekey signature");
+        P::verify(
             &remote_verifying_key,
-            remote_bundle.suite_id,
+            remote_signed_prekey_public.as_ref(),
+            &remote_bundle.signature,
+        ).map_err(|e| format!("Signature verification failed: {}", e))?;
+
+        // 2. X3DH as receiver - use Alice's ephemeral PUBLIC key
+        debug!(target: "crypto::client", "Starting X3DH handshake as receiver");
+        let root_key = X3DH::<P>::perform_x3dh_receiver(
+            &self.identity_key,                 // Bob's identity private
+            &self.signed_prekey,                // Bob's signed prekey private
+            &remote_identity_public,            // Alice's identity public
+            &alice_ephemeral_public,            // Alice's ephemeral public (from first msg)
         )?;
 
         // 2. Создание Double Ratchet сессии для получателя
@@ -218,27 +212,34 @@ impl<P: CryptoProvider> ClientCrypto<P> {
     }
 
     pub fn decrypt_ratchet_message(&mut self, session_id: &str, encrypted: &EncryptedRatchetMessage) -> Result<Vec<u8>, String> {
-        eprintln!("[ClientCrypto] decrypt_ratchet_message called");
-        eprintln!("[ClientCrypto] session_id: {}", session_id);
-        eprintln!("[ClientCrypto] encrypted.message_number: {}", encrypted.message_number);
-        eprintln!("[ClientCrypto] encrypted.dh_public_key length: {}", encrypted.dh_public_key.len());
-        eprintln!("[ClientCrypto] encrypted.ciphertext length: {}", encrypted.ciphertext.len());
-        eprintln!("[ClientCrypto] encrypted.nonce length: {}", encrypted.nonce.len());
+        use tracing::{debug, trace};
+
+        debug!(
+            target: "crypto::client",
+            session_id = %session_id,
+            msg_num = %encrypted.message_number,
+            "Decrypting ratchet message"
+        );
+        trace!(
+            dh_pk_len = %encrypted.dh_public_key.len(),
+            ciphertext_len = %encrypted.ciphertext.len(),
+            nonce_len = %encrypted.nonce.len(),
+        );
 
         let session = self.sessions
             .get_mut(session_id)
             .ok_or_else(|| {
-                eprintln!("[ClientCrypto] ❌ Session not found: {}", session_id);
+                debug!(target: "crypto::client", session_id = %session_id, "Session not found");
                 format!("Session not found: {}", session_id)
             })?;
 
-        eprintln!("[ClientCrypto] Session found, calling session.decrypt...");
+        debug!(target: "crypto::client", "Session found, calling decrypt");
         let result = session.decrypt(encrypted);
 
         if result.is_ok() {
-            eprintln!("[ClientCrypto] ✅ Decryption successful");
+            debug!(target: "crypto::client", "Decryption successful");
         } else {
-            eprintln!("[ClientCrypto] ❌ session.decrypt failed: {:?}", result);
+            debug!(target: "crypto::client", error = ?result, "Decryption failed");
         }
 
         result
@@ -266,27 +267,11 @@ impl<P: CryptoProvider> ClientCrypto<P> {
     // Helper methods to convert bytes to generic key types
     // ✅ SAFE: No unsafe code, uses CryptoProvider trait methods
     fn bytes_to_kem_public_key(bytes: &[u8]) -> Result<P::KemPublicKey, String> {
-        eprintln!("[ClientCrypto] bytes_to_kem_public_key called, input length: {}", bytes.len());
-        eprintln!("[ClientCrypto] Input bytes (first 10): {:?}", &bytes[..10.min(bytes.len())]);
-
-        let key_vec = bytes.to_vec();
-        let result = P::kem_public_key_from_bytes(key_vec);
-
-        eprintln!("[ClientCrypto] Result length: {}", result.as_ref().len());
-        eprintln!("[ClientCrypto] Result bytes (first 10): {:?}", &result.as_ref()[..10.min(result.as_ref().len())]);
-        Ok(result)
+        Ok(P::kem_public_key_from_bytes(bytes.to_vec()))
     }
 
     // ✅ SAFE: No unsafe code, uses CryptoProvider trait methods
     fn bytes_to_signature_public_key(bytes: &[u8]) -> Result<P::SignaturePublicKey, String> {
-        eprintln!("[ClientCrypto] bytes_to_signature_public_key called, input length: {}", bytes.len());
-        eprintln!("[ClientCrypto] Input bytes (first 10): {:?}", &bytes[..10.min(bytes.len())]);
-
-        let key_vec = bytes.to_vec();
-        let result = P::signature_public_key_from_bytes(key_vec);
-
-        eprintln!("[ClientCrypto] Result length: {}", result.as_ref().len());
-        eprintln!("[ClientCrypto] Result bytes (first 10): {:?}", &result.as_ref()[..10.min(result.as_ref().len())]);
-        Ok(result)
+        Ok(P::signature_public_key_from_bytes(bytes.to_vec()))
     }
 }

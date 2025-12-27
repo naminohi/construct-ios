@@ -697,7 +697,7 @@ impl<P: CryptoProvider> AppState<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::classic_suite::ClassicSuiteProvider;
+    use crate::crypto::suites::classic::ClassicSuiteProvider;
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
