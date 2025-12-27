@@ -32,7 +32,7 @@ struct ChatsListView: View {
                 List {
                     ForEach(chats) { chat in
                         NavigationLink {
-                            ChatView(chat: chat)
+                            ChatView(chat: chat, context: viewContext)
                         } label: {
                             ChatRowView(chat: chat)
                         }

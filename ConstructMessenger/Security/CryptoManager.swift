@@ -3,14 +3,14 @@
 //  Construct Messenger
 //
 //  Created by Maxim Eliseyev on 13.12.2025.
-//  Updated for UniFFI on 26.12.2025
+//  Updated for UniFFI clean API on 26.12.2025
 //
 //  This class is now a Swift wrapper around the UniFFI-generated Rust `construct-core` library.
+//  Rust handles ALL crypto operations internally - Swift just passes wire format.
 //
 
 import Foundation
 import os.log
-import MessagePack
 
 class CryptoManager {
     static let shared = CryptoManager()
@@ -128,6 +128,80 @@ class CryptoManager {
         return userSessions[userId] != nil
     }
 
+    /// Delete a session for a user (called when deleting a chat)
+    func deleteSession(for userId: String) {
+        if let sessionId = userSessions[userId] {
+            userSessions.removeValue(forKey: userId)
+            Log.info("✅ Session deleted for user: \(userId)", category: "CryptoManager")
+        } else {
+            Log.debug("No session found to delete for user: \(userId)", category: "CryptoManager")
+        }
+    }
+
+    /// Initialize a receiving session (for responder/Bob) using sender's bundle + first message
+    /// This is called when Bob receives the first message from Alice
+    func initReceivingSession(for userId: String, recipientBundle: (identityPublic: String, signedPrekeyPublic: String, signature: String, verifyingKey: String, suiteId: String), firstMessage: ChatMessage) throws {
+        guard let core = core else {
+            throw CryptoManagerError.coreNotInitialized
+        }
+
+        // 1. Decode base64 strings to Data
+        guard let identityPublicData = Data(base64Encoded: recipientBundle.identityPublic),
+              let signedPrekeyPublicData = Data(base64Encoded: recipientBundle.signedPrekeyPublic),
+              let signatureData = Data(base64Encoded: recipientBundle.signature),
+              let verifyingKeyData = Data(base64Encoded: recipientBundle.verifyingKey)
+        else {
+            Log.error("Failed to decode base64-encoded keys from bundle", category: "CryptoManager")
+            throw CryptoManagerError.invalidKeyData
+        }
+
+        // 2. Convert suiteId to UInt16
+        guard let suiteID = UInt16(recipientBundle.suiteId) else {
+            Log.error("Invalid suiteId format: \(recipientBundle.suiteId)", category: "CryptoManager")
+            throw CryptoManagerError.invalidKeyData
+        }
+
+        // 3. Create the bundle dictionary for JSON serialization
+        let bundleDict: [String: Any] = [
+            "identity_public": [UInt8](identityPublicData),
+            "signed_prekey_public": [UInt8](signedPrekeyPublicData),
+            "signature": [UInt8](signatureData),
+            "verifying_key": [UInt8](verifyingKeyData),
+            "suite_id": suiteID,
+        ]
+
+        // 4. Create the first message dictionary
+        let messageDict: [String: Any] = [
+            "ephemeral_public_key": [UInt8](firstMessage.ephemeralPublicKey),
+            "message_number": firstMessage.messageNumber,
+            "content": firstMessage.content  // Base64 string
+        ]
+
+        do {
+            let bundleData = try JSONSerialization.data(withJSONObject: bundleDict)
+            let bundleBytes = [UInt8](bundleData)
+
+            let messageData = try JSONSerialization.data(withJSONObject: messageDict)
+            let messageBytes = [UInt8](messageData)
+
+            // UniFFI: Call init_receiving_session
+            let sessionId = try core.initReceivingSession(
+                contactId: userId,
+                recipientBundle: bundleBytes,
+                firstMessage: messageBytes
+            )
+
+            self.userSessions[userId] = sessionId
+            Log.info("✅ Receiving session initialized for user: \(userId)", category: "CryptoManager")
+        } catch let error as CryptoError {
+            Log.error("❌ Failed to initialize receiving session: \(error)", category: "CryptoManager")
+            throw CryptoManagerError.sessionInitializationFailed
+        } catch {
+            Log.error("❌ Unexpected error initializing receiving session: \(error)", category: "CryptoManager")
+            throw CryptoManagerError.sessionInitializationFailed
+        }
+    }
+
     // MARK: - Encryption / Decryption
 
     /// Result of message encryption with separate fields per server ChatMessage spec
@@ -148,45 +222,17 @@ class CryptoManager {
         }
 
         do {
-            // UniFFI: encryptMessage returns [UInt8] - serialized EncryptedRatchetMessage (MessagePack format)
-            let encryptedBytes = try core.encryptMessage(sessionId: sessionId, plaintext: message)
+            // ✅ NEW CLEAN API: Rust returns wire format components directly
+            let rustComponents = try core.encryptMessage(sessionId: sessionId, plaintext: message)
 
-            // Deserialize EncryptedRatchetMessage from MessagePack
-            let decoder = MessagePackDecoder()
-
-            struct RatchetMessage: Codable {
-                let dhPublicKey: [UInt8]  // 32 bytes
-                let messageNumber: UInt32
-                let ciphertext: [UInt8]  // Already contains auth tag from ChaCha20Poly1305
-                let nonce: [UInt8]  // 12 bytes for ChaCha20
-                let previousChainLength: UInt32
-                let suiteId: UInt16
-
-                // MessagePack uses snake_case from Rust, so we need custom keys
-                enum CodingKeys: String, CodingKey {
-                    case dhPublicKey = "dh_public_key"
-                    case messageNumber = "message_number"
-                    case ciphertext
-                    case nonce
-                    case previousChainLength = "previous_chain_length"
-                    case suiteId = "suite_id"
-                }
-            }
-
-            let ratchetMsg = try decoder.decode(RatchetMessage.self, from: Data(encryptedBytes))
-
-            // Create ChaCha20Poly1305 sealed box format: nonce || ciphertext_with_tag
-            var sealedBox = Data()
-            sealedBox.append(contentsOf: ratchetMsg.nonce)  // 12 bytes
-            sealedBox.append(contentsOf: ratchetMsg.ciphertext)  // ciphertext + 16-byte tag
-
+            // Convert to Swift struct
             let components = EncryptedMessageComponents(
-                ephemeralPublicKey: Data(ratchetMsg.dhPublicKey),
-                messageNumber: ratchetMsg.messageNumber,
-                content: sealedBox.base64EncodedString()
+                ephemeralPublicKey: Data(rustComponents.ephemeralPublicKey),
+                messageNumber: rustComponents.messageNumber,
+                content: rustComponents.content
             )
 
-            Log.debug("✅ Message encrypted - ephemeralKey: \(components.ephemeralPublicKey.count) bytes, sealed box: \(sealedBox.count) bytes (nonce: 12, ciphertext+tag: \(ratchetMsg.ciphertext.count))", category: "CryptoManager")
+            Log.debug("✅ ENCRYPT: msgNum=\(components.messageNumber), ephemKey=\(rustComponents.ephemeralPublicKey.prefix(8).map { String(format: "%02x", $0) }.joined()), content=\(components.content.prefix(20))...", category: "CryptoManager")
             return components
         } catch let error as CryptoError {
             Log.error("❌ Encryption failed: \(error)", category: "CryptoManager")
@@ -197,90 +243,29 @@ class CryptoManager {
         }
     }
 
-    /// Decrypts a ciphertext using the session for a specific user
-    func decryptMessage(_ ciphertext: Data, from userId: String) throws -> String {
-        guard let core = core else {
-            throw CryptoManagerError.coreNotInitialized
-        }
-        guard let sessionId = userSessions[userId] else {
-            throw CryptoManagerError.sessionNotFound
-        }
-
-        do {
-            let bytes = [UInt8](ciphertext)
-
-            // UniFFI: decryptMessage returns String directly (no RustString!)
-            let plaintext = try core.decryptMessage(sessionId: sessionId, ciphertext: bytes)
-
-            Log.debug("✅ Message decrypted successfully", category: "CryptoManager")
-            return plaintext
-        } catch let error as CryptoError {
-            Log.error("❌ Decryption failed: \(error)", category: "CryptoManager")
-            throw CryptoManagerError.decryptionFailed
-        } catch {
-            Log.error("❌ Unexpected decryption error: \(error)", category: "CryptoManager")
-            throw CryptoManagerError.decryptionFailed
-        }
-    }
-
-    /// Decrypt a ChatMessage directly (convenience method)
-    /// Reconstructs EncryptedRatchetMessage from ChatMessage fields
+    /// Decrypt a ChatMessage directly using clean API
+    /// Uses clean API - Rust handles all MessagePack internally
     func decryptMessage(_ message: ChatMessage) throws -> String {
         guard let core = core else {
             throw CryptoManagerError.coreNotInitialized
         }
         guard let sessionId = userSessions[message.from] else {
+            Log.error("❌ No session found for user: \(message.from)", category: "CryptoManager")
             throw CryptoManagerError.sessionNotFound
         }
 
         do {
-            // Decode base64 sealed box: nonce || ciphertext_with_tag
-            guard let sealedBox = Data(base64Encoded: message.content) else {
-                throw CryptoManagerError.invalidCiphertext
-            }
+            Log.debug("📦 Decrypting: ephemKey=\(message.ephemeralPublicKey.count) bytes, msgNum=\(message.messageNumber), content=\(message.content.prefix(20))...", category: "CryptoManager")
 
-            // Extract nonce (first 12 bytes) and ciphertext (rest)
-            guard sealedBox.count >= 12 else {
-                throw CryptoManagerError.invalidCiphertext
-            }
-
-            let nonce = sealedBox.prefix(12)
-            let ciphertextWithTag = sealedBox.suffix(from: 12)
-
-            // Reconstruct EncryptedRatchetMessage
-            struct RatchetMessage: Codable {
-                let dhPublicKey: [UInt8]
-                let messageNumber: UInt32
-                let ciphertext: [UInt8]
-                let nonce: [UInt8]
-                let previousChainLength: UInt32  // Not used by decryption
-                let suiteId: UInt16
-
-                // MessagePack uses snake_case from Rust
-                enum CodingKeys: String, CodingKey {
-                    case dhPublicKey = "dh_public_key"
-                    case messageNumber = "message_number"
-                    case ciphertext
-                    case nonce
-                    case previousChainLength = "previous_chain_length"
-                    case suiteId = "suite_id"
-                }
-            }
-
-            let ratchetMsg = RatchetMessage(
-                dhPublicKey: [UInt8](message.ephemeralPublicKey),
+            // ✅ NEW CLEAN API: Pass wire format components directly to Rust
+            let plaintext = try core.decryptMessage(
+                sessionId: sessionId,
+                ephemeralPublicKey: [UInt8](message.ephemeralPublicKey),
                 messageNumber: message.messageNumber,
-                ciphertext: [UInt8](ciphertextWithTag),
-                nonce: [UInt8](nonce),
-                previousChainLength: 0,  // Not needed for decryption
-                suiteId: 1  // Classic suite
+                content: message.content
             )
 
-            let encoder = MessagePackEncoder()
-            let serialized = try encoder.encode(ratchetMsg)
-
-            let plaintext = try core.decryptMessage(sessionId: sessionId, ciphertext: [UInt8](serialized))
-            Log.debug("✅ Message decrypted successfully", category: "CryptoManager")
+            Log.debug("✅ Message decrypted successfully, plaintext length: \(plaintext.count)", category: "CryptoManager")
             return plaintext
         } catch let error as CryptoError {
             Log.error("❌ Decryption failed: \(error)", category: "CryptoManager")

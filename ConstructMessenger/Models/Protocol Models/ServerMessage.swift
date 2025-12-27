@@ -133,6 +133,7 @@ struct SearchResultsData: Codable {
 
 struct PublicKeyBundleData: Codable {
     let userId: String
+    let username: String
     let identityPublic: String
     let signedPrekeyPublic: String
     let signature: String

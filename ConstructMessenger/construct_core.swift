@@ -395,6 +395,19 @@ fileprivate struct FfiConverterUInt8: FfiConverterPrimitive {
     }
 }
 
+fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
+    typealias FfiType = UInt32
+    typealias SwiftType = UInt32
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt32 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
 fileprivate struct FfiConverterString: FfiConverter {
     typealias SwiftType = String
     typealias FfiType = RustBuffer
@@ -438,11 +451,13 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 public protocol ClassicCryptoCoreProtocol : AnyObject {
     
-    func decryptMessage(sessionId: String, ciphertext: [UInt8]) throws  -> String
+    func decryptMessage(sessionId: String, ephemeralPublicKey: [UInt8], messageNumber: UInt32, content: String) throws  -> String
     
-    func encryptMessage(sessionId: String, plaintext: String) throws  -> [UInt8]
+    func encryptMessage(sessionId: String, plaintext: String) throws  -> EncryptedMessageComponents
     
     func exportRegistrationBundleJson() throws  -> String
+    
+    func initReceivingSession(contactId: String, recipientBundle: [UInt8], firstMessage: [UInt8]) throws  -> String
     
     func initSession(contactId: String, recipientBundle: [UInt8]) throws  -> String
     
@@ -489,17 +504,19 @@ open class ClassicCryptoCore:
     
 
     
-open func decryptMessage(sessionId: String, ciphertext: [UInt8])throws  -> String {
+open func decryptMessage(sessionId: String, ephemeralPublicKey: [UInt8], messageNumber: UInt32, content: String)throws  -> String {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCryptoError.lift) {
     uniffi_construct_core_fn_method_classiccryptocore_decrypt_message(self.uniffiClonePointer(),
         FfiConverterString.lower(sessionId),
-        FfiConverterSequenceUInt8.lower(ciphertext),$0
+        FfiConverterSequenceUInt8.lower(ephemeralPublicKey),
+        FfiConverterUInt32.lower(messageNumber),
+        FfiConverterString.lower(content),$0
     )
 })
 }
     
-open func encryptMessage(sessionId: String, plaintext: String)throws  -> [UInt8] {
-    return try  FfiConverterSequenceUInt8.lift(try rustCallWithError(FfiConverterTypeCryptoError.lift) {
+open func encryptMessage(sessionId: String, plaintext: String)throws  -> EncryptedMessageComponents {
+    return try  FfiConverterTypeEncryptedMessageComponents.lift(try rustCallWithError(FfiConverterTypeCryptoError.lift) {
     uniffi_construct_core_fn_method_classiccryptocore_encrypt_message(self.uniffiClonePointer(),
         FfiConverterString.lower(sessionId),
         FfiConverterString.lower(plaintext),$0
@@ -510,6 +527,16 @@ open func encryptMessage(sessionId: String, plaintext: String)throws  -> [UInt8]
 open func exportRegistrationBundleJson()throws  -> String {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCryptoError.lift) {
     uniffi_construct_core_fn_method_classiccryptocore_export_registration_bundle_json(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+open func initReceivingSession(contactId: String, recipientBundle: [UInt8], firstMessage: [UInt8])throws  -> String {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCryptoError.lift) {
+    uniffi_construct_core_fn_method_classiccryptocore_init_receiving_session(self.uniffiClonePointer(),
+        FfiConverterString.lower(contactId),
+        FfiConverterSequenceUInt8.lower(recipientBundle),
+        FfiConverterSequenceUInt8.lower(firstMessage),$0
     )
 })
 }
@@ -566,6 +593,71 @@ public func FfiConverterTypeClassicCryptoCore_lift(_ pointer: UnsafeMutableRawPo
 
 public func FfiConverterTypeClassicCryptoCore_lower(_ value: ClassicCryptoCore) -> UnsafeMutableRawPointer {
     return FfiConverterTypeClassicCryptoCore.lower(value)
+}
+
+
+public struct EncryptedMessageComponents {
+    public var ephemeralPublicKey: [UInt8]
+    public var messageNumber: UInt32
+    public var content: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(ephemeralPublicKey: [UInt8], messageNumber: UInt32, content: String) {
+        self.ephemeralPublicKey = ephemeralPublicKey
+        self.messageNumber = messageNumber
+        self.content = content
+    }
+}
+
+
+
+extension EncryptedMessageComponents: Equatable, Hashable {
+    public static func ==(lhs: EncryptedMessageComponents, rhs: EncryptedMessageComponents) -> Bool {
+        if lhs.ephemeralPublicKey != rhs.ephemeralPublicKey {
+            return false
+        }
+        if lhs.messageNumber != rhs.messageNumber {
+            return false
+        }
+        if lhs.content != rhs.content {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(ephemeralPublicKey)
+        hasher.combine(messageNumber)
+        hasher.combine(content)
+    }
+}
+
+
+public struct FfiConverterTypeEncryptedMessageComponents: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> EncryptedMessageComponents {
+        return
+            try EncryptedMessageComponents(
+                ephemeralPublicKey: FfiConverterSequenceUInt8.read(from: &buf), 
+                messageNumber: FfiConverterUInt32.read(from: &buf), 
+                content: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: EncryptedMessageComponents, into buf: inout [UInt8]) {
+        FfiConverterSequenceUInt8.write(value.ephemeralPublicKey, into: &buf)
+        FfiConverterUInt32.write(value.messageNumber, into: &buf)
+        FfiConverterString.write(value.content, into: &buf)
+    }
+}
+
+
+public func FfiConverterTypeEncryptedMessageComponents_lift(_ buf: RustBuffer) throws -> EncryptedMessageComponents {
+    return try FfiConverterTypeEncryptedMessageComponents.lift(buf)
+}
+
+public func FfiConverterTypeEncryptedMessageComponents_lower(_ value: EncryptedMessageComponents) -> RustBuffer {
+    return FfiConverterTypeEncryptedMessageComponents.lower(value)
 }
 
 
@@ -670,6 +762,8 @@ public enum CryptoError {
     
     case SerializationFailed(message: String)
     
+    case MessagePackDeserializationFailed(message: String)
+    
 }
 
 
@@ -715,6 +809,10 @@ public struct FfiConverterTypeCryptoError: FfiConverterRustBuffer {
             message: try FfiConverterString.read(from: &buf)
         )
         
+        case 9: return .MessagePackDeserializationFailed(
+            message: try FfiConverterString.read(from: &buf)
+        )
+        
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -742,6 +840,8 @@ public struct FfiConverterTypeCryptoError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(7))
         case .SerializationFailed(_ /* message is ignored*/):
             writeInt(&buf, Int32(8))
+        case .MessagePackDeserializationFailed(_ /* message is ignored*/):
+            writeInt(&buf, Int32(9))
 
         
         }
@@ -803,13 +903,16 @@ private var initializationResult: InitializationResult = {
     if (uniffi_construct_core_checksum_func_create_crypto_core() != 59945) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_construct_core_checksum_method_classiccryptocore_decrypt_message() != 35012) {
+    if (uniffi_construct_core_checksum_method_classiccryptocore_decrypt_message() != 52559) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_construct_core_checksum_method_classiccryptocore_encrypt_message() != 831) {
+    if (uniffi_construct_core_checksum_method_classiccryptocore_encrypt_message() != 30896) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_construct_core_checksum_method_classiccryptocore_export_registration_bundle_json() != 50804) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_construct_core_checksum_method_classiccryptocore_init_receiving_session() != 564) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_construct_core_checksum_method_classiccryptocore_init_session() != 28133) {

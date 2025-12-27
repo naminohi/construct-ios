@@ -20,19 +20,24 @@ class ChatViewModel: ObservableObject {
 
     private let wsManager = WebSocketManager.shared
     private var cancellables = Set<AnyCancellable>()
-    private var viewContext: NSManagedObjectContext?
+    private var viewContext: NSManagedObjectContext
 
-    init(chat: Chat) {
+    init(chat: Chat, context: NSManagedObjectContext) {
         self.chat = chat
+        self.viewContext = context
         setupSubscribers()
         checkExistingSession()  // ✅ FIXED: Check if session already exists
         fetchRecipientPublicKey()
+
+        // Load messages immediately since we have context
+        Log.debug("🔧 ChatViewModel initialized with viewContext", category: "ChatViewModel")
+        loadMessages()
     }
 
-    func setContext(_ context: NSManagedObjectContext) {
-        Log.debug("🔧 Setting viewContext for ChatViewModel", category: "ChatViewModel")
-        self.viewContext = context
-        loadMessages()
+    deinit {
+        // ✅ FIX: Clean up subscriptions when ViewModel is destroyed
+        cancellables.removeAll()
+        Log.debug("🔧 ChatViewModel deinitialized", category: "ChatViewModel")
     }
 
     private func setupSubscribers() {
@@ -73,18 +78,13 @@ class ChatViewModel: ObservableObject {
     }
 
     private func loadMessages() {
-        guard let context = viewContext else {
-            Log.error("❌ loadMessages: viewContext is nil", category: "ChatViewModel")
-            return
-        }
-
         Log.debug("📥 Loading messages for chat \(chat.id ?? "unknown")", category: "ChatViewModel")
 
         let fetchRequest: NSFetchRequest<Message> = Message.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "chat == %@", chat)
         fetchRequest.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: true)]
 
-        if let fetchedMessages = try? context.fetch(fetchRequest) {
+        if let fetchedMessages = try? viewContext.fetch(fetchRequest) {
             messages = fetchedMessages
             Log.debug("📬 Loaded \(fetchedMessages.count) messages", category: "ChatViewModel")
             for (index, msg) in fetchedMessages.enumerated() {
@@ -125,8 +125,9 @@ class ChatViewModel: ObservableObject {
             let components = try CryptoManager.shared.encryptMessage(text, for: recipientId)
 
             // Create ChatMessage with proper format per server spec
+            let messageId = UUID().uuidString
             let message = ChatMessage(
-                id: UUID().uuidString,
+                id: messageId,
                 from: currentUserId,
                 to: recipientId,
                 ephemeralPublicKey: components.ephemeralPublicKey,  // Binary 32 bytes
@@ -135,8 +136,10 @@ class ChatViewModel: ObservableObject {
                 timestamp: UInt64(Date().timeIntervalSince1970)
             )
 
+            Log.debug("📤 Sending message with ID: \(messageId)", category: "ChatViewModel")
             saveMessage(message, decryptedContent: text, isSentByMe: true, status: .sending)
             wsManager.send(.sendMessage(message))
+            Log.debug("📮 Message sent to WebSocket: \(messageId)", category: "ChatViewModel")
 
         } catch {
             errorMessage = "Failed to encrypt message: \(error.localizedDescription)"
@@ -170,41 +173,53 @@ class ChatViewModel: ObservableObject {
         switch message {
         case .publicKeyBundle(let data):
             if data.userId == chat.otherUser?.id {
+                // ✅ Update username if we have the user in Core Data
+                if let user = chat.otherUser {
+                    user.username = data.username
+                    user.displayName = data.username
+                    try? viewContext.save()
+                    Log.info("Updated username for user: \(data.username)", category: "ChatViewModel")
+                }
+
                 self.recipientBundle = (data.identityPublic, data.signedPrekeyPublic, data.signature, data.verifyingKey)
                 guard let currentUserId = SessionManager.shared.currentUserId else { return }
 
-                // Determine who is the initiator.
+                // 🔑 Determine who is the initiator (lexicographically smaller UUID)
                 let isInitiator = currentUserId < data.userId
 
-                do {
-                    // Create a new bundle with the suiteId.
-                    let bundleWithSuite = (
-                        identityPublic: self.recipientBundle!.identityPublic,
-                        signedPrekeyPublic: self.recipientBundle!.signedPrekeyPublic,
-                        signature: self.recipientBundle!.signature,
-                        verifyingKey: self.recipientBundle!.verifyingKey,
-                        suiteId: "1" // Hardcoded suiteId
-                    )
-                    try CryptoManager.shared.initializeSession(for: data.userId, recipientBundle: bundleWithSuite)
+                if isInitiator {
+                    // ✅ ALICE (initiator): Initialize session immediately
+                    do {
+                        let bundleWithSuite = (
+                            identityPublic: self.recipientBundle!.identityPublic,
+                            signedPrekeyPublic: self.recipientBundle!.signedPrekeyPublic,
+                            signature: self.recipientBundle!.signature,
+                            verifyingKey: self.recipientBundle!.verifyingKey,
+                            suiteId: "1"
+                        )
+                        try CryptoManager.shared.initializeSession(for: data.userId, recipientBundle: bundleWithSuite)
 
-                    // ✅ FIXED: Mark session as ready
-                    isSessionReady = true
-                    errorMessage = nil
-                    Log.info("Session initialized successfully", category: "ChatViewModel")
+                        isSessionReady = true
+                        errorMessage = nil
+                        Log.info("✅ Session initialized as INITIATOR for \(data.userId)", category: "ChatViewModel")
 
-                    // ✅ FIXED: Process any pending messages
-                    processPendingMessages()
+                        processPendingMessages()
 
-                } catch {
-                    errorMessage = "Failed to initialize secure session: \(error.localizedDescription)"
-                    Log.error("Failed to initialize secure session: \(error.localizedDescription)", category: "ChatViewModel")
-                    isSessionReady = false
+                    } catch {
+                        errorMessage = "Failed to initialize secure session: \(error.localizedDescription)"
+                        Log.error("❌ Failed to initialize session as initiator: \(error.localizedDescription)", category: "ChatViewModel")
+                        isSessionReady = false
+                    }
+                } else {
+                    // ✅ BOB (responder): Do NOT initialize session here!
+                    // Session will be initialized in ChatsViewModel when first message arrives
+                    Log.info("📦 Received public key bundle as RESPONDER - waiting for first message to initialize session", category: "ChatViewModel")
+                    // Don't set isSessionReady = true yet
+                    // ChatsViewModel will handle init_receiving_session when first message arrives
                 }
             }
-        case .message(let msg):
-            if msg.from == chat.otherUser?.id {
-                handleIncomingMessage(msg)
-            }
+        // ✅ REMOVED: .message handling - ChatsViewModel handles ALL incoming messages
+        // ChatViewModel only handles ACKs for sent messages
         case .ack(let data):
             handleAck(messageId: data.messageId, status: data.status)
         case .error(let data):
@@ -215,36 +230,56 @@ class ChatViewModel: ObservableObject {
     }
     
     private func handleAck(messageId: String, status: String) {
-        updateMessageStatus(messageId: messageId, status: status == "delivered" ? .delivered : .sent)
-    }
-    
-    private func handleIncomingMessage(_ message: ChatMessage) {
-        do {
-            let decryptedText = try CryptoManager.shared.decryptMessage(message)
-            saveMessage(message, decryptedContent: decryptedText, isSentByMe: false, status: .delivered)
-        } catch {
-            Log.error("Error decrypting message: \(String(describing: error))", category: "ChatViewModel")
+        Log.debug("📨 Received ACK for message: \(messageId), status: \(status)", category: "ChatViewModel")
+
+        // First, try to find the message by ID
+        let fetchRequest: NSFetchRequest<Message> = Message.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "id == %@", messageId)
+
+        if let message = try? viewContext.fetch(fetchRequest).first {
+            Log.debug("✅ Found message by ID: \(messageId)", category: "ChatViewModel")
+            updateMessageStatus(messageId: messageId, status: status == "delivered" ? .delivered : .sent)
+        } else {
+            Log.debug("❌ Message not found by ID: \(messageId)", category: "ChatViewModel")
+
+            // List all pending messages to debug
+            let allMessagesRequest: NSFetchRequest<Message> = Message.fetchRequest()
+            allMessagesRequest.predicate = NSPredicate(format: "chat == %@ AND isSentByMe == YES", chat)
+            allMessagesRequest.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: false)]
+
+            if let allMessages = try? viewContext.fetch(allMessagesRequest) {
+                Log.debug("📋 All sent messages in this chat:", category: "ChatViewModel")
+                for msg in allMessages.prefix(5) {
+                    Log.debug("  - ID: \(msg.id ?? "nil"), status: \(msg.deliveryStatus), timestamp: \(msg.timestamp)", category: "ChatViewModel")
+                }
+
+                // Try to match by most recent sending message
+                if let mostRecentSending = allMessages.first(where: { $0.deliveryStatus == .sending }) {
+                    Log.debug("🔄 Assuming ACK is for most recent sending message: \(mostRecentSending.id ?? "nil")", category: "ChatViewModel")
+                    mostRecentSending.deliveryStatus = status == "delivered" ? .delivered : .sent
+                    try? viewContext.save()
+                    loadMessages()
+                }
+            }
         }
     }
+
+    // ✅ REMOVED: handleIncomingMessage - ChatsViewModel handles ALL incoming messages
+    // ChatViewModel only displays messages already saved to Core Data
 
     // MARK: - Core Data Operations
     private func saveMessage(_ message: ChatMessage, decryptedContent: String, isSentByMe: Bool, status: DeliveryStatus) {
-        guard let context = viewContext else {
-            Log.error("❌ saveMessage: viewContext is nil", category: "ChatViewModel")
-            return
-        }
-
         Log.debug("💾 Saving message \(message.id), isSentByMe: \(isSentByMe), status: \(status)", category: "ChatViewModel")
 
         let fetchRequest: NSFetchRequest<Message> = Message.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "id == %@", message.id)
 
-        if let existing = try? context.fetch(fetchRequest).first {
+        if let existing = try? viewContext.fetch(fetchRequest).first {
             Log.debug("📝 Updating existing message \(message.id)", category: "ChatViewModel")
             existing.deliveryStatus = status
         } else {
             Log.debug("✨ Creating new message \(message.id)", category: "ChatViewModel")
-            let newMessage = Message(context: context)
+            let newMessage = Message(context: viewContext)
             newMessage.id = message.id
             newMessage.fromUserId = message.from
             newMessage.toUserId = message.to
@@ -257,7 +292,7 @@ class ChatViewModel: ObservableObject {
         }
 
         do {
-            try context.save()
+            try viewContext.save()
             Log.debug("✅ Message saved to Core Data", category: "ChatViewModel")
             loadMessages()
             Log.debug("📊 After loadMessages: \(messages.count) messages", category: "ChatViewModel")
@@ -265,16 +300,14 @@ class ChatViewModel: ObservableObject {
             Log.error("Failed to save or update message: \(error.localizedDescription)", category: "ChatViewModel")
         }
     }
-    
-    private func updateMessageStatus(messageId: String, status: DeliveryStatus) {
-        guard let context = viewContext else { return }
 
+    private func updateMessageStatus(messageId: String, status: DeliveryStatus) {
         let fetchRequest: NSFetchRequest<Message> = Message.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "id == %@", messageId)
 
-        if let message = try? context.fetch(fetchRequest).first {
+        if let message = try? viewContext.fetch(fetchRequest).first {
             message.deliveryStatus = status
-            try? context.save()
+            try? viewContext.save()
             loadMessages()
         }
     }

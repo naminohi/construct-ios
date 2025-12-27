@@ -10,11 +10,12 @@ import CoreData
 
 struct ChatView: View {
     @Environment(\.managedObjectContext) private var viewContext
-    @ObservedObject private var viewModel: ChatViewModel
+    @StateObject private var viewModel: ChatViewModel  // ✅ FIX: StateObject persists across view updates
     @State private var messageText = ""
 
-    init(chat: Chat) {
-        self.viewModel = ChatViewModel(chat: chat)
+    init(chat: Chat, context: NSManagedObjectContext) {
+        // ✅ FIX: Use StateObject initializer to create ViewModel only once
+        _viewModel = StateObject(wrappedValue: ChatViewModel(chat: chat, context: context))
     }
 
     var body: some View {
@@ -74,9 +75,6 @@ struct ChatView: View {
         }
         .navigationTitle(viewModel.chat.otherUser?.displayName ?? "Chat")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear {
-            viewModel.setContext(viewContext)
-        }
     }
 }
 
@@ -96,7 +94,7 @@ struct ChatView: View {
     try? context.save()
 
     return NavigationStack {
-        ChatView(chat: chat)
+        ChatView(chat: chat, context: context)
             .environment(\.managedObjectContext, context)
     }
 }

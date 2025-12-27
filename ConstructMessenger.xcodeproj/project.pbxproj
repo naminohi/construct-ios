@@ -7,19 +7,37 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		BF1109EE2EEFF60500786F33 /* DMMessagePack in Frameworks */ = {isa = PBXBuildFile; productRef = BF1109ED2EEFF60500786F33 /* DMMessagePack */; };
-		BF82955C2EFB32A200874E91 /* libconstruct_core.a in Frameworks */ = {isa = PBXBuildFile; fileRef = BF82955B2EFB32A200874E91 /* libconstruct_core.a */; };
+		BF80FA192EFF1716004D88E1 /* DMMessagePack in Frameworks */ = {isa = PBXBuildFile; productRef = BF80FA182EFF1716004D88E1 /* DMMessagePack */; };
+		BF80FA1B2EFF171D004D88E1 /* DMMessagePack in Frameworks */ = {isa = PBXBuildFile; productRef = BF80FA1A2EFF171D004D88E1 /* DMMessagePack */; };
+		BF80FA262EFFD11D004D88E1 /* libconstruct_core.a in Frameworks */ = {isa = PBXBuildFile; fileRef = BF80FA252EFFD11D004D88E1 /* libconstruct_core.a */; };
+		BF80FA272EFFD11D004D88E1 /* libconstruct_core.a in Frameworks */ = {isa = PBXBuildFile; fileRef = BF80FA252EFFD11D004D88E1 /* libconstruct_core.a */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		BF8A96FE2EFF0FAF009C5EF7 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BF103A672EED889800324CEA /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BF103A6E2EED889800324CEA;
+			remoteInfo = ConstructMessenger;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		BF103A6F2EED889800324CEA /* ConstructMessenger.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ConstructMessenger.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		BF82955B2EFB32A200874E91 /* libconstruct_core.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libconstruct_core.a; sourceTree = "<group>"; };
+		BF80FA252EFFD11D004D88E1 /* libconstruct_core.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libconstruct_core.a; sourceTree = "<group>"; };
+		BF8A96FA2EFF0FAF009C5EF7 /* ConstructMessengerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ConstructMessengerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		BF103A712EED889800324CEA /* ConstructMessenger */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = ConstructMessenger;
+			sourceTree = "<group>";
+		};
+		BF8A96FB2EFF0FAF009C5EF7 /* ConstructMessengerTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ConstructMessengerTests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -29,8 +47,17 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				BF82955C2EFB32A200874E91 /* libconstruct_core.a in Frameworks */,
-				BF1109EE2EEFF60500786F33 /* DMMessagePack in Frameworks */,
+				BF80FA1B2EFF171D004D88E1 /* DMMessagePack in Frameworks */,
+				BF80FA272EFFD11D004D88E1 /* libconstruct_core.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BF8A96F72EFF0FAF009C5EF7 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BF80FA192EFF1716004D88E1 /* DMMessagePack in Frameworks */,
+				BF80FA262EFFD11D004D88E1 /* libconstruct_core.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -41,6 +68,7 @@
 			isa = PBXGroup;
 			children = (
 				BF103A712EED889800324CEA /* ConstructMessenger */,
+				BF8A96FB2EFF0FAF009C5EF7 /* ConstructMessengerTests */,
 				BF5F2DF92EF96B1C00BB01C5 /* Frameworks */,
 				BF103A702EED889800324CEA /* Products */,
 			);
@@ -50,6 +78,7 @@
 			isa = PBXGroup;
 			children = (
 				BF103A6F2EED889800324CEA /* ConstructMessenger.app */,
+				BF8A96FA2EFF0FAF009C5EF7 /* ConstructMessengerTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -57,7 +86,7 @@
 		BF5F2DF92EF96B1C00BB01C5 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
-				BF82955B2EFB32A200874E91 /* libconstruct_core.a */,
+				BF80FA252EFFD11D004D88E1 /* libconstruct_core.a */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -82,11 +111,35 @@
 			);
 			name = ConstructMessenger;
 			packageProductDependencies = (
-				BF1109ED2EEFF60500786F33 /* DMMessagePack */,
+				BF80FA1A2EFF171D004D88E1 /* DMMessagePack */,
 			);
 			productName = "Construct Messenger";
 			productReference = BF103A6F2EED889800324CEA /* ConstructMessenger.app */;
 			productType = "com.apple.product-type.application";
+		};
+		BF8A96F92EFF0FAF009C5EF7 /* ConstructMessengerTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BF8A97002EFF0FAF009C5EF7 /* Build configuration list for PBXNativeTarget "ConstructMessengerTests" */;
+			buildPhases = (
+				BF8A96F62EFF0FAF009C5EF7 /* Sources */,
+				BF8A96F72EFF0FAF009C5EF7 /* Frameworks */,
+				BF8A96F82EFF0FAF009C5EF7 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				BF8A96FF2EFF0FAF009C5EF7 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				BF8A96FB2EFF0FAF009C5EF7 /* ConstructMessengerTests */,
+			);
+			name = ConstructMessengerTests;
+			packageProductDependencies = (
+				BF80FA182EFF1716004D88E1 /* DMMessagePack */,
+			);
+			productName = ConstructMessengerTests;
+			productReference = BF8A96FA2EFF0FAF009C5EF7 /* ConstructMessengerTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
 		};
 /* End PBXNativeTarget section */
 
@@ -95,11 +148,15 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 2610;
+				LastSwiftUpdateCheck = 2620;
 				LastUpgradeCheck = 2620;
 				TargetAttributes = {
 					BF103A6E2EED889800324CEA = {
 						CreatedOnToolsVersion = 26.1.1;
+					};
+					BF8A96F92EFF0FAF009C5EF7 = {
+						CreatedOnToolsVersion = 26.2;
+						TestTargetID = BF103A6E2EED889800324CEA;
 					};
 				};
 			};
@@ -113,7 +170,7 @@
 			mainGroup = BF103A662EED889800324CEA;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				BF1109EC2EEFF60500786F33 /* XCRemoteSwiftPackageReference "msgpack-swift" */,
+				BF8A970A2EFF167E009C5EF7 /* XCRemoteSwiftPackageReference "msgpack-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = BF103A702EED889800324CEA /* Products */;
@@ -121,12 +178,20 @@
 			projectRoot = "";
 			targets = (
 				BF103A6E2EED889800324CEA /* ConstructMessenger */,
+				BF8A96F92EFF0FAF009C5EF7 /* ConstructMessengerTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		BF103A6D2EED889800324CEA /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BF8A96F82EFF0FAF009C5EF7 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -143,7 +208,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		BF8A96F62EFF0FAF009C5EF7 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		BF8A96FF2EFF0FAF009C5EF7 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BF103A6E2EED889800324CEA /* ConstructMessenger */;
+			targetProxy = BF8A96FE2EFF0FAF009C5EF7 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		BF103A7A2EED889800324CEA /* Debug */ = {
@@ -296,6 +376,7 @@
 					"$(PROJECT_DIR)/target/aarch64-apple-ios-sim/release",
 					"$(PROJECT_DIR)/target/x86_64-apple-ios/release",
 					"$(PROJECT_DIR)/target/aarch64-apple-ios/release",
+					"$(PROJECT_DIR)",
 				);
 				MARKETING_VERSION = 0.1.3;
 				PRODUCT_BUNDLE_IDENTIFIER = maximeliseyev.constructmessenger;
@@ -336,6 +417,7 @@
 					"$(PROJECT_DIR)/target/aarch64-apple-ios-sim/release",
 					"$(PROJECT_DIR)/target/x86_64-apple-ios/release",
 					"$(PROJECT_DIR)/target/aarch64-apple-ios/release",
+					"$(PROJECT_DIR)",
 				);
 				MARKETING_VERSION = 0.1.3;
 				PRODUCT_BUNDLE_IDENTIFIER = maximeliseyev.constructmessenger;
@@ -346,6 +428,58 @@
 				SWIFT_OBJC_BRIDGING_HEADER = "/Users/maximeliseyev/Code/construct-messenger/ConstructMessenger/ConstructMessenger-Bridging-Header.h";
 				SWIFT_VERSION = 5.7;
 				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		BF8A97012EFF0FAF009C5EF7 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = PK2473XF3P;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = maximeliseyev.ConstructMessengerTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ConstructMessenger.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ConstructMessenger";
+			};
+			name = Debug;
+		};
+		BF8A97022EFF0FAF009C5EF7 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = PK2473XF3P;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = maximeliseyev.ConstructMessengerTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ConstructMessenger.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ConstructMessenger";
 			};
 			name = Release;
 		};
@@ -370,10 +504,19 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		BF8A97002EFF0FAF009C5EF7 /* Build configuration list for PBXNativeTarget "ConstructMessengerTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BF8A97012EFF0FAF009C5EF7 /* Debug */,
+				BF8A97022EFF0FAF009C5EF7 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		BF1109EC2EEFF60500786F33 /* XCRemoteSwiftPackageReference "msgpack-swift" */ = {
+		BF8A970A2EFF167E009C5EF7 /* XCRemoteSwiftPackageReference "msgpack-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/fumoboy007/msgpack-swift.git";
 			requirement = {
@@ -384,9 +527,14 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		BF1109ED2EEFF60500786F33 /* DMMessagePack */ = {
+		BF80FA182EFF1716004D88E1 /* DMMessagePack */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = BF1109EC2EEFF60500786F33 /* XCRemoteSwiftPackageReference "msgpack-swift" */;
+			package = BF8A970A2EFF167E009C5EF7 /* XCRemoteSwiftPackageReference "msgpack-swift" */;
+			productName = DMMessagePack;
+		};
+		BF80FA1A2EFF171D004D88E1 /* DMMessagePack */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BF8A970A2EFF167E009C5EF7 /* XCRemoteSwiftPackageReference "msgpack-swift" */;
 			productName = DMMessagePack;
 		};
 /* End XCSwiftPackageProductDependency section */
