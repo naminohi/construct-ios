@@ -135,21 +135,15 @@ class ChatsViewModel: ObservableObject {
         )
 
         do {
-            // ✅ Initialize receiving session with sender's bundle + first message
-            try CryptoManager.shared.initReceivingSession(
+            // ✅ NEW API: Initialize receiving session returns decrypted first message
+            // No need to call decryptMessage again!
+            let decryptedContent = try CryptoManager.shared.initReceivingSession(
                 for: data.userId,
                 recipientBundle: bundleWithSuite,
                 firstMessage: firstMessage
             )
 
-            Log.info("✅ Receiving session initialized for \(data.userId)", category: "ChatsViewModel")
-
-            // Now decrypt the first message
-            guard let decryptedContent = try? CryptoManager.shared.decryptMessage(firstMessage) else {
-                Log.error("❌ Failed to decrypt first message after session init", category: "ChatsViewModel")
-                pendingFirstMessages.removeValue(forKey: data.userId)
-                return
-            }
+            Log.info("✅ Receiving session initialized for \(data.userId), first message decrypted", category: "ChatsViewModel")
 
             // Find or create chat
             let fetchRequest: NSFetchRequest<Chat> = Chat.fetchRequest()

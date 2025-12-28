@@ -457,7 +457,7 @@ public protocol ClassicCryptoCoreProtocol : AnyObject {
     
     func exportRegistrationBundleJson() throws  -> String
     
-    func initReceivingSession(contactId: String, recipientBundle: [UInt8], firstMessage: [UInt8]) throws  -> String
+    func initReceivingSession(contactId: String, recipientBundle: [UInt8], firstMessage: [UInt8]) throws  -> SessionInitResult
     
     func initSession(contactId: String, recipientBundle: [UInt8]) throws  -> String
     
@@ -531,8 +531,8 @@ open func exportRegistrationBundleJson()throws  -> String {
 })
 }
     
-open func initReceivingSession(contactId: String, recipientBundle: [UInt8], firstMessage: [UInt8])throws  -> String {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCryptoError.lift) {
+open func initReceivingSession(contactId: String, recipientBundle: [UInt8], firstMessage: [UInt8])throws  -> SessionInitResult {
+    return try  FfiConverterTypeSessionInitResult.lift(try rustCallWithError(FfiConverterTypeCryptoError.lift) {
     uniffi_construct_core_fn_method_classiccryptocore_init_receiving_session(self.uniffiClonePointer(),
         FfiConverterString.lower(contactId),
         FfiConverterSequenceUInt8.lower(recipientBundle),
@@ -739,6 +739,63 @@ public func FfiConverterTypeRegistrationBundleJson_lift(_ buf: RustBuffer) throw
 
 public func FfiConverterTypeRegistrationBundleJson_lower(_ value: RegistrationBundleJson) -> RustBuffer {
     return FfiConverterTypeRegistrationBundleJson.lower(value)
+}
+
+
+public struct SessionInitResult {
+    public var sessionId: String
+    public var decryptedMessage: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sessionId: String, decryptedMessage: String) {
+        self.sessionId = sessionId
+        self.decryptedMessage = decryptedMessage
+    }
+}
+
+
+
+extension SessionInitResult: Equatable, Hashable {
+    public static func ==(lhs: SessionInitResult, rhs: SessionInitResult) -> Bool {
+        if lhs.sessionId != rhs.sessionId {
+            return false
+        }
+        if lhs.decryptedMessage != rhs.decryptedMessage {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(sessionId)
+        hasher.combine(decryptedMessage)
+    }
+}
+
+
+public struct FfiConverterTypeSessionInitResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SessionInitResult {
+        return
+            try SessionInitResult(
+                sessionId: FfiConverterString.read(from: &buf),
+                decryptedMessage: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SessionInitResult, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.sessionId, into: &buf)
+        FfiConverterString.write(value.decryptedMessage, into: &buf)
+    }
+}
+
+
+public func FfiConverterTypeSessionInitResult_lift(_ buf: RustBuffer) throws -> SessionInitResult {
+    return try FfiConverterTypeSessionInitResult.lift(buf)
+}
+
+public func FfiConverterTypeSessionInitResult_lower(_ value: SessionInitResult) -> RustBuffer {
+    return FfiConverterTypeSessionInitResult.lower(value)
 }
 
 
