@@ -1,8 +1,7 @@
-use crate::crypto::{CryptoProvider, SuiteID};
-
-/// Constants for DoS protection for skipped messages.
-const MAX_SKIPPED_MESSAGES: u32 = 1000;
-const MAX_SKIPPED_MESSAGE_AGE_SECONDS: i64 = 7 * 24 * 60 * 60; // 7 days
+use crate::{
+    config::{MAX_SKIPPED_MESSAGES, MAX_SKIPPED_MESSAGE_AGE_SECONDS},
+    crypto::{CryptoProvider, SuiteID},
+};
 
 pub struct DoubleRatchetSession<P: CryptoProvider> {
     suite_id: SuiteID,
