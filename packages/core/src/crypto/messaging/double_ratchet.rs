@@ -198,12 +198,13 @@ impl<P: CryptoProvider> SecureMessaging<P> for DoubleRatchetSession<P> {
     /// 2. Выполняет DH(bob_identity_priv, alice_ephemeral_pub) → receiving_chain
     /// 3. Генерирует новую DH пару для отправки
     /// 4. Выполняет второй DH ratchet для sending_chain
+    /// 5. **Расшифровывает первое сообщение**
     fn new_responder_session(
         root_key: &[u8],
         local_identity: &P::KemPrivateKey,
         first_message: &Self::EncryptedMessage,
         contact_id: String,
-    ) -> Result<Self, String> {
+    ) -> Result<(Self, Vec<u8>), String> {
         use tracing::debug;
 
         debug!(
@@ -248,7 +249,7 @@ impl<P: CryptoProvider> SecureMessaging<P> for DoubleRatchetSession<P> {
         let (final_root_key, sending_chain) = P::kdf_rk(&root_key_val, &dh_output2)
             .map_err(|e| format!("KDF_RK failed: {}", e))?;
 
-        Ok(Self {
+        let mut session = Self {
             suite_id: first_message.suite_id,
             root_key: final_root_key,
             sending_chain_key: sending_chain,
@@ -262,8 +263,25 @@ impl<P: CryptoProvider> SecureMessaging<P> for DoubleRatchetSession<P> {
             skipped_message_keys: HashMap::new(),
             skipped_key_timestamps: HashMap::new(),
             session_id: uuid::Uuid::new_v4().to_string(),
-            contact_id,
-        })
+            contact_id: contact_id.clone(),
+        };
+
+        // ⚠️ КРИТИЧЕСКИ ВАЖНО: Расшифровываем первое сообщение!
+        // Bob должен прочитать первое сообщение чтобы получить plaintext.
+        debug!(
+            target: "crypto::double_ratchet",
+            "Decrypting first message from Alice"
+        );
+
+        let plaintext = session.decrypt(first_message)?;
+
+        debug!(
+            target: "crypto::double_ratchet",
+            plaintext_len = %plaintext.len(),
+            "First message decrypted successfully"
+        );
+
+        Ok((session, plaintext))
     }
 
     /// Зашифровать сообщение
@@ -295,14 +313,19 @@ impl<P: CryptoProvider> SecureMessaging<P> for DoubleRatchetSession<P> {
         let nonce = P::generate_nonce(12)
             .map_err(|e| format!("Nonce generation failed: {}", e))?;
 
-        let ciphertext = P::aead_encrypt(&message_key, &nonce, plaintext, None)
-            .map_err(|e| format!("Encryption failed: {}", e))?;
-
-        // Convert dh_ratchet_public to [u8; 32]
+        // Convert dh_ratchet_public to [u8; 32] first
         let dh_public_key_vec = self.dh_ratchet_public.as_ref().to_vec();
         let dh_public_key: [u8; 32] = dh_public_key_vec
             .try_into()
             .map_err(|_| "Invalid public key length")?;
+
+        // Associated Data: dh_public_key || message_number (per Signal/Noise protocol)
+        let mut associated_data = Vec::with_capacity(32 + 4);
+        associated_data.extend_from_slice(&dh_public_key);
+        associated_data.extend_from_slice(&message_number.to_be_bytes());
+
+        let ciphertext = P::aead_encrypt(&message_key, &nonce, plaintext, Some(&associated_data))
+            .map_err(|e| format!("Encryption failed: {}", e))?;
 
         trace!(
             target: "crypto::double_ratchet",
@@ -533,7 +556,12 @@ impl<P: CryptoProvider> DoubleRatchetSession<P> {
             "Decrypting with message key"
         );
 
-        let result = P::aead_decrypt(message_key, &encrypted.nonce, &encrypted.ciphertext, None)
+        // Reconstruct Associated Data: dh_public_key || message_number
+        let mut associated_data = Vec::with_capacity(32 + 4);
+        associated_data.extend_from_slice(&encrypted.dh_public_key);
+        associated_data.extend_from_slice(&encrypted.message_number.to_be_bytes());
+
+        let result = P::aead_decrypt(message_key, &encrypted.nonce, &encrypted.ciphertext, Some(&associated_data))
             .map_err(|e| format!("Decryption failed: {}", e));
 
         if result.is_ok() {
@@ -693,7 +721,8 @@ mod tests {
         .unwrap();
 
         // Bob creates session from first message
-        let mut bob_session = DoubleRatchetSession::<ClassicSuiteProvider>::new_responder_session(
+        // ⚠️ ВАЖНО: new_responder_session теперь возвращает (session, plaintext)
+        let (mut bob_session, decrypted1) = DoubleRatchetSession::<ClassicSuiteProvider>::new_responder_session(
             &root_key_bob,
             &bob_identity_priv,
             &encrypted1,
@@ -701,8 +730,7 @@ mod tests {
         )
         .unwrap();
 
-        // Bob decrypts first message
-        let decrypted1 = bob_session.decrypt(&encrypted1).unwrap();
+        // Verify first message was decrypted correctly
         assert_eq!(decrypted1, plaintext1);
 
         // Bob replies
@@ -762,7 +790,8 @@ mod tests {
         )
         .unwrap();
 
-        let mut bob = DoubleRatchetSession::<ClassicSuiteProvider>::new_responder_session(
+        // ⚠️ ВАЖНО: new_responder_session теперь возвращает (session, plaintext первого сообщения)
+        let (mut bob, dec1) = DoubleRatchetSession::<ClassicSuiteProvider>::new_responder_session(
             &root_key_bob,
             &bob_identity_priv,
             &msg1,
@@ -770,7 +799,7 @@ mod tests {
         )
         .unwrap();
 
-        let dec1 = bob.decrypt(&msg1).unwrap();
+        // Verify first message was decrypted
         assert_eq!(dec1, b"Message 1");
 
         // Receive msg3 before msg2 - should work with skipped keys

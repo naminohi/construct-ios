@@ -134,7 +134,7 @@ pub trait SecureMessaging<P: CryptoProvider>: Sized {
     /// 1. Bob получил root_key от KeyAgreement::perform_as_responder()
     /// 2. Bob получил первое зашифрованное сообщение от Alice
     /// 3. Bob извлекает Alice's ephemeral_public из first_message.dh_public_key
-    /// 4. Bob создаёт receiving session для расшифровки
+    /// 4. Bob создаёт receiving session и **расшифровывает первое сообщение**
     ///
     /// # Параметры
     /// - `root_key`: Shared secret от KeyAgreement (32 bytes)
@@ -143,18 +143,23 @@ pub trait SecureMessaging<P: CryptoProvider>: Sized {
     /// - `contact_id`: Идентификатор контакта
     ///
     /// # Возвращает
-    /// Готовую сессию для расшифровки и ответа
+    /// Кортеж: (сессия, расшифрованный plaintext первого сообщения)
     ///
     /// # Ошибки
     /// - Invalid root_key
     /// - Invalid first_message format
     /// - Missing dh_public_key in first_message
+    /// - Decryption failure
+    ///
+    /// # ⚠️ КРИТИЧЕСКИ ВАЖНО
+    /// Первое сообщение расшифровывается ВНУТРИ этого метода!
+    /// Caller НЕ должен вызывать decrypt() для первого сообщения.
     fn new_responder_session(
         root_key: &[u8],
         local_identity: &P::KemPrivateKey,
         first_message: &Self::EncryptedMessage,
         contact_id: String,
-    ) -> Result<Self, String>;
+    ) -> Result<(Self, Vec<u8>), String>;
 
     /// Зашифровать сообщение
     ///

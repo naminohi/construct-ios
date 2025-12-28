@@ -14,6 +14,11 @@ dictionary EncryptedMessageComponents {
     string content;
 };
 
+dictionary SessionInitResult {
+    string session_id;
+    string decrypted_message;
+};
+
 [Error]
 enum CryptoError {
     "InitializationFailed",
@@ -35,7 +40,7 @@ interface ClassicCryptoCore {
     string init_session(string contact_id, sequence<u8> recipient_bundle);
 
     [Throws=CryptoError]
-    string init_receiving_session(string contact_id, sequence<u8> recipient_bundle, sequence<u8> first_message);
+    SessionInitResult init_receiving_session(string contact_id, sequence<u8> recipient_bundle, sequence<u8> first_message);
 
     [Throws=CryptoError]
     EncryptedMessageComponents encrypt_message(string session_id, string plaintext);

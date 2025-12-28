@@ -205,13 +205,16 @@ mod tests {
 
     #[test]
     fn test_validate_chat_message() {
+        // Valid base64 content (base64 of "test")
+        let valid_base64_content = base64::engine::general_purpose::STANDARD.encode(b"test");
+
         let msg = ChatMessage {
             id: "550e8400-e29b-41d4-a716-446655440000".to_string(),
             from: "550e8400-e29b-41d4-a716-446655440001".to_string(),
             to: "550e8400-e29b-41d4-a716-446655440002".to_string(),
             ephemeral_public_key: vec![0u8; 32],
             message_number: 1,
-            content: "encrypted_content".to_string(),
+            content: valid_base64_content,
             timestamp: crate::utils::time::current_timestamp() as u64,
         };
 

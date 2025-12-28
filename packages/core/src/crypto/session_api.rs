@@ -199,7 +199,7 @@ where
     ///
     /// # Возвращает
     ///
-    /// Готовую сессию для расшифровки и ответа
+    /// Кортеж: (сессия, расшифрованный plaintext первого сообщения)
     ///
     /// # Пример
     ///
@@ -209,7 +209,7 @@ where
     ///     first_message.dh_public_key.to_vec()
     /// );
     ///
-    /// let session = Session::init_as_responder(
+    /// let (session, plaintext) = Session::init_as_responder(
     ///     &bob_identity_private,
     ///     &bob_signed_prekey_private,
     ///     &alice_identity_public,
@@ -218,7 +218,8 @@ where
     ///     "alice".to_string(),
     /// )?;
     ///
-    /// let plaintext = session.decrypt(&first_encrypted_message)?;
+    /// // Plaintext уже расшифрован! НЕ вызывайте decrypt() снова.
+    /// println!("First message: {}", String::from_utf8_lossy(&plaintext));
     /// ```
     pub fn init_as_responder(
         local_identity: &P::KemPrivateKey,
@@ -227,7 +228,7 @@ where
         remote_ephemeral: &P::KemPublicKey,
         first_message: &M::EncryptedMessage,
         contact_id: String,
-    ) -> Result<Self, String> {
+    ) -> Result<(Self, Vec<u8>), String> {
         use tracing::info;
 
         info!(
@@ -251,7 +252,8 @@ where
 
         // 2. Create messaging session (Double Ratchet) from first message
         // Convert root_key to &[u8] - X3DH returns Vec<u8>
-        let messaging_session = M::new_responder_session(
+        // ⚠️ ВАЖНО: new_responder_session теперь возвращает (session, plaintext)
+        let (messaging_session, plaintext) = M::new_responder_session(
             root_key.as_ref(),
             local_identity,
             first_message,
@@ -261,14 +263,17 @@ where
         info!(
             target: "crypto::session",
             session_id = %messaging_session.session_id(),
-            "Session initialized successfully"
+            plaintext_len = %plaintext.len(),
+            "Session initialized and first message decrypted successfully"
         );
 
-        Ok(Self {
+        let session = Self {
             contact_id,
             messaging_session,
             _phantom: PhantomData,
-        })
+        };
+
+        Ok((session, plaintext))
     }
 
     /// Зашифровать сообщение
@@ -437,7 +442,8 @@ mod tests {
         );
 
         // Bob initializes session as responder
-        let mut bob_session = TestSession::init_as_responder(
+        // ⚠️ ВАЖНО: init_as_responder теперь возвращает (session, plaintext первого сообщения)
+        let (mut bob_session, decrypted1) = TestSession::init_as_responder(
             &bob_identity_priv,
             &bob_signed_prekey_priv,
             &alice_identity_pub,
@@ -447,8 +453,7 @@ mod tests {
         )
         .unwrap();
 
-        // Bob decrypts Alice's first message
-        let decrypted1 = bob_session.decrypt(&encrypted1).unwrap();
+        // Verify first message was decrypted correctly
         assert_eq!(decrypted1, plaintext1);
 
         // Bob sends a reply
