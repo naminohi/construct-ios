@@ -140,7 +140,8 @@ class CryptoManager {
 
     /// Initialize a receiving session (for responder/Bob) using sender's bundle + first message
     /// This is called when Bob receives the first message from Alice
-    func initReceivingSession(for userId: String, recipientBundle: (identityPublic: String, signedPrekeyPublic: String, signature: String, verifyingKey: String, suiteId: String), firstMessage: ChatMessage) throws {
+    /// Returns the decrypted plaintext of the first message
+    func initReceivingSession(for userId: String, recipientBundle: (identityPublic: String, signedPrekeyPublic: String, signature: String, verifyingKey: String, suiteId: String), firstMessage: ChatMessage) throws -> String {
         guard let core = core else {
             throw CryptoManagerError.coreNotInitialized
         }
@@ -184,15 +185,18 @@ class CryptoManager {
             let messageData = try JSONSerialization.data(withJSONObject: messageDict)
             let messageBytes = [UInt8](messageData)
 
-            // UniFFI: Call init_receiving_session
-            let sessionId = try core.initReceivingSession(
+            // ✅ NEW API: init_receiving_session returns SessionInitResult with decrypted message
+            let result = try core.initReceivingSession(
                 contactId: userId,
                 recipientBundle: bundleBytes,
                 firstMessage: messageBytes
             )
 
-            self.userSessions[userId] = sessionId
-            Log.info("✅ Receiving session initialized for user: \(userId)", category: "CryptoManager")
+            self.userSessions[userId] = result.sessionId
+            Log.info("✅ Receiving session initialized for user: \(userId), decrypted message length: \(result.decryptedMessage.count)", category: "CryptoManager")
+
+            // Return the decrypted first message
+            return result.decryptedMessage
         } catch let error as CryptoError {
             Log.error("❌ Failed to initialize receiving session: \(error)", category: "CryptoManager")
             throw CryptoManagerError.sessionInitializationFailed

@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BF7098B62F015BE000CC6F04 /* libconstruct_core.a in Frameworks */ = {isa = PBXBuildFile; fileRef = BF7098B52F015BE000CC6F04 /* libconstruct_core.a */; };
+		BF7098B72F015BE000CC6F04 /* libconstruct_core.a in Frameworks */ = {isa = PBXBuildFile; fileRef = BF7098B52F015BE000CC6F04 /* libconstruct_core.a */; };
 		BF80FA192EFF1716004D88E1 /* DMMessagePack in Frameworks */ = {isa = PBXBuildFile; productRef = BF80FA182EFF1716004D88E1 /* DMMessagePack */; };
 		BF80FA1B2EFF171D004D88E1 /* DMMessagePack in Frameworks */ = {isa = PBXBuildFile; productRef = BF80FA1A2EFF171D004D88E1 /* DMMessagePack */; };
 		BF80FA262EFFD11D004D88E1 /* libconstruct_core.a in Frameworks */ = {isa = PBXBuildFile; fileRef = BF80FA252EFFD11D004D88E1 /* libconstruct_core.a */; };
@@ -25,6 +27,7 @@
 
 /* Begin PBXFileReference section */
 		BF103A6F2EED889800324CEA /* ConstructMessenger.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ConstructMessenger.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		BF7098B52F015BE000CC6F04 /* libconstruct_core.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libconstruct_core.a; sourceTree = "<group>"; };
 		BF80FA252EFFD11D004D88E1 /* libconstruct_core.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libconstruct_core.a; sourceTree = "<group>"; };
 		BF8A96FA2EFF0FAF009C5EF7 /* ConstructMessengerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ConstructMessengerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -48,6 +51,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				BF80FA1B2EFF171D004D88E1 /* DMMessagePack in Frameworks */,
+				BF7098B62F015BE000CC6F04 /* libconstruct_core.a in Frameworks */,
 				BF80FA272EFFD11D004D88E1 /* libconstruct_core.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -57,6 +61,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				BF80FA192EFF1716004D88E1 /* DMMessagePack in Frameworks */,
+				BF7098B72F015BE000CC6F04 /* libconstruct_core.a in Frameworks */,
 				BF80FA262EFFD11D004D88E1 /* libconstruct_core.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -86,6 +91,7 @@
 		BF5F2DF92EF96B1C00BB01C5 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				BF7098B52F015BE000CC6F04 /* libconstruct_core.a */,
 				BF80FA252EFFD11D004D88E1 /* libconstruct_core.a */,
 			);
 			name = Frameworks;
