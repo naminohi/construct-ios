@@ -1,7 +1,10 @@
 // API для отправки и получения сообщений
 
-use crate::crypto::{ClientCrypto, CryptoProvider};
-use crate::crypto::double_ratchet::EncryptedRatchetMessage;
+use crate::crypto::client_api::Client;
+use crate::crypto::handshake::x3dh::X3DHProtocol;
+use crate::crypto::handshake::KeyAgreement;
+use crate::crypto::messaging::double_ratchet::{DoubleRatchetSession, EncryptedRatchetMessage};
+use crate::crypto::CryptoProvider;
 use crate::utils::error::{ConstructError, Result};
 use serde::{Deserialize, Serialize};
 
@@ -44,29 +47,37 @@ impl From<EncryptedMessage> for EncryptedRatchetMessage {
 
 /// Отправить зашифрованное сообщение
 pub fn encrypt_message<P: CryptoProvider>(
-    client: &mut ClientCrypto<P>,
-    session_id: &str,
+    client: &mut Client<P, X3DHProtocol<P>, DoubleRatchetSession<P>>,
+    contact_id: &str,
     plaintext: &str,
-) -> Result<EncryptedMessage> {
+) -> Result<EncryptedMessage>
+where
+    X3DHProtocol<P>: KeyAgreement<P, PublicKeyBundle = crate::crypto::handshake::x3dh::X3DHPublicKeyBundle>,
+    <X3DHProtocol<P> as KeyAgreement<P>>::SharedSecret: AsRef<[u8]>,
+{
     let encrypted = client
-        .encrypt_ratchet_message(session_id, plaintext.as_bytes())
+        .encrypt_message(contact_id, plaintext.as_bytes())
         .map_err(ConstructError::CryptoError)?;
 
     let mut msg: EncryptedMessage = encrypted.into();
-    msg.session_id = session_id.to_string();
+    msg.session_id = contact_id.to_string();
     Ok(msg)
 }
 
 /// Получить и расшифровать сообщение
 pub fn decrypt_message<P: CryptoProvider>(
-    client: &mut ClientCrypto<P>,
-    session_id: &str,
+    client: &mut Client<P, X3DHProtocol<P>, DoubleRatchetSession<P>>,
+    contact_id: &str,
     encrypted: EncryptedMessage,
-) -> Result<String> {
+) -> Result<String>
+where
+    X3DHProtocol<P>: KeyAgreement<P, PublicKeyBundle = crate::crypto::handshake::x3dh::X3DHPublicKeyBundle>,
+    <X3DHProtocol<P> as KeyAgreement<P>>::SharedSecret: AsRef<[u8]>,
+{
     let ratchet_msg: EncryptedRatchetMessage = encrypted.into();
 
     let plaintext = client
-        .decrypt_ratchet_message(session_id, &ratchet_msg)
+        .decrypt_message(contact_id, &ratchet_msg)
         .map_err(ConstructError::CryptoError)?;
 
     String::from_utf8(plaintext)
@@ -75,28 +86,50 @@ pub fn decrypt_message<P: CryptoProvider>(
 
 /// Инициализировать сессию с контактом (отправитель)
 pub fn init_session<P: CryptoProvider>(
-    client: &mut ClientCrypto<P>,
+    client: &mut Client<P, X3DHProtocol<P>, DoubleRatchetSession<P>>,
     contact_id: &str,
     remote_bundle: &crate::api::crypto::KeyBundle,
-) -> Result<String> {
-    let public_bundle = remote_bundle.clone().into();
+) -> Result<String>
+where
+    X3DHProtocol<P>: KeyAgreement<P, PublicKeyBundle = crate::crypto::handshake::x3dh::X3DHPublicKeyBundle>,
+    <X3DHProtocol<P> as KeyAgreement<P>>::SharedSecret: AsRef<[u8]>,
+{
+    use crate::crypto::handshake::x3dh::X3DHPublicKeyBundle;
+
+    let bundle_data = X3DHPublicKeyBundle {
+        identity_public: remote_bundle.identity_public.clone(),
+        signed_prekey_public: remote_bundle.signed_prekey_public.clone(),
+        signature: remote_bundle.signature.clone(),
+        verifying_key: remote_bundle.verifying_key.clone(),
+        suite_id: remote_bundle.suite_id,
+    };
+
+    let remote_identity = P::kem_public_key_from_bytes(bundle_data.identity_public.clone());
+    let public_bundle = &bundle_data as &<X3DHProtocol<P> as KeyAgreement<P>>::PublicKeyBundle;
+
     client
-        .init_double_ratchet_session(contact_id, &public_bundle)
+        .init_session(contact_id, public_bundle, &remote_identity)
         .map_err(ConstructError::SessionError)
 }
 
 /// Инициализировать сессию получателя при получении первого сообщения
 pub fn init_receiving_session<P: CryptoProvider>(
-    client: &mut ClientCrypto<P>,
+    client: &mut Client<P, X3DHProtocol<P>, DoubleRatchetSession<P>>,
     contact_id: &str,
     remote_bundle: &crate::api::crypto::KeyBundle,
     first_encrypted_msg: &EncryptedMessage,
-) -> Result<String> {
-    let public_bundle = remote_bundle.clone().into();
+) -> Result<String>
+where
+    X3DHProtocol<P>: KeyAgreement<P, PublicKeyBundle = crate::crypto::handshake::x3dh::X3DHPublicKeyBundle>,
+    <X3DHProtocol<P> as KeyAgreement<P>>::SharedSecret: AsRef<[u8]>,
+{
+    use crate::crypto::handshake::x3dh::X3DHPublicKeyBundle;
+    let public_bundle: X3DHPublicKeyBundle = remote_bundle.clone().into();
     let ratchet_msg: EncryptedRatchetMessage = first_encrypted_msg.clone().into();
+    let remote_identity = P::kem_public_key_from_bytes(public_bundle.identity_public);
 
     client
-        .init_receiving_session(contact_id, &public_bundle, &ratchet_msg)
+        .init_receiving_session(contact_id, &remote_identity, &ratchet_msg)
         .map_err(ConstructError::SessionError)
 }
 

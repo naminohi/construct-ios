@@ -1,7 +1,8 @@
-use crate::crypto::keys::KeyManager;
-use crate::crypto::session::SessionManager;
-use crate::crypto::x3dh::PublicKeyBundle;
-use crate::crypto::{ClientCrypto, CryptoProvider};
+use crate::crypto::client_api::Client;
+use crate::crypto::handshake::x3dh::{X3DHProtocol, X3DHPublicKeyBundle};
+use crate::crypto::handshake::KeyAgreement;
+use crate::crypto::messaging::double_ratchet::DoubleRatchetSession;
+use crate::crypto::CryptoProvider;
 use crate::utils::error::{ConstructError, Result};
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
@@ -15,38 +16,26 @@ pub struct KeyBundle {
     pub suite_id: u16, // Added
 }
 
-impl From<PublicKeyBundle> for KeyBundle {
-    fn from(bundle: PublicKeyBundle) -> Self {
+impl From<X3DHPublicKeyBundle> for KeyBundle {
+    fn from(bundle: X3DHPublicKeyBundle) -> Self {
         Self {
             identity_public: bundle.identity_public,
             signed_prekey_public: bundle.signed_prekey_public,
             signature: bundle.signature,
             verifying_key: bundle.verifying_key,
-            suite_id: bundle.suite_id, // Added
+            suite_id: bundle.suite_id,
         }
     }
 }
 
-impl From<crate::crypto::RegistrationBundle> for KeyBundle {
-    fn from(bundle: crate::crypto::RegistrationBundle) -> Self {
-        Self {
-            identity_public: bundle.identity_public,
-            signed_prekey_public: bundle.signed_prekey_public,
-            signature: bundle.signature,
-            verifying_key: bundle.verifying_key,
-            suite_id: bundle.suite_id, // Added
-        }
-    }
-}
-
-impl From<KeyBundle> for PublicKeyBundle {
+impl From<KeyBundle> for X3DHPublicKeyBundle {
     fn from(bundle: KeyBundle) -> Self {
         Self {
             identity_public: bundle.identity_public,
             signed_prekey_public: bundle.signed_prekey_public,
             signature: bundle.signature,
             verifying_key: bundle.verifying_key,
-            suite_id: bundle.suite_id, // Added
+            suite_id: bundle.suite_id,
         }
     }
 }
@@ -60,52 +49,37 @@ pub struct RegistrationBundleB64 {
     pub suite_id: String, // Added
 }
 
-pub struct CryptoCore<P: CryptoProvider> {
-    key_manager: KeyManager<P>,
-    session_manager: SessionManager<P>,
-    client: ClientCrypto<P>,
+pub struct CryptoCore<P: CryptoProvider>
+where
+    X3DHProtocol<P>: KeyAgreement<P>,
+{
+    client: Client<P, X3DHProtocol<P>, DoubleRatchetSession<P>>,
     _phantom: PhantomData<P>,
 }
 
-impl<P: CryptoProvider> CryptoCore<P> {
+impl<P: CryptoProvider> CryptoCore<P>
+where
+    X3DHProtocol<P>: KeyAgreement<P, PublicKeyBundle = X3DHPublicKeyBundle>,
+    <X3DHProtocol<P> as KeyAgreement<P>>::SharedSecret: AsRef<[u8]>,
+{
     pub fn new() -> Result<Self> {
-        let mut key_manager = KeyManager::<P>::new();
-        key_manager.initialize()?;
-
-        let client = ClientCrypto::<P>::new().map_err(ConstructError::CryptoError)?;
+        let client = Client::<P, X3DHProtocol<P>, DoubleRatchetSession<P>>::new()
+            .map_err(ConstructError::CryptoError)?;
 
         Ok(Self {
-            key_manager,
-            session_manager: SessionManager::<P>::new(),
             client,
             _phantom: PhantomData,
         })
     }
 
-    pub fn key_manager(&self) -> &KeyManager<P> {
-        &self.key_manager
-    }
-
-    pub fn key_manager_mut(&mut self) -> &mut KeyManager<P> {
-        &mut self.key_manager
-    }
-
-    pub fn session_manager(&self) -> &SessionManager<P> {
-        &self.session_manager
-    }
-
-    pub fn session_manager_mut(&mut self) -> &mut SessionManager<P> {
-        &mut self.session_manager
-    }
-
     pub fn export_registration_bundle(&self) -> Result<KeyBundle> {
-        let bundle = self.key_manager.export_registration_bundle()?;
+        let bundle = self.client.key_manager().export_registration_bundle()?;
         Ok(bundle.into())
     }
 
     pub fn export_registration_bundle_b64(&self) -> Result<RegistrationBundleB64> {
         use base64::Engine;
-        let bundle = self.key_manager.export_registration_bundle()?;
+        let bundle = self.client.key_manager().export_registration_bundle()?;
         Ok(RegistrationBundleB64 {
             identity_public: base64::engine::general_purpose::STANDARD.encode(&bundle.identity_public),
             signed_prekey_public: base64::engine::general_purpose::STANDARD.encode(&bundle.signed_prekey_public),
@@ -116,35 +90,36 @@ impl<P: CryptoProvider> CryptoCore<P> {
     }
 
     pub fn export_public_bundle(&self) -> Result<KeyBundle> {
-        let bundle = self.key_manager.export_public_bundle()?;
+        let bundle = self.client.key_manager().export_public_bundle()?;
         Ok(bundle.into())
     }
 
-    pub fn rotate_prekey(&mut self) -> Result<()> {
-        self.key_manager.rotate_signed_prekey()
-    }
-
-    pub fn sign_data(&self, data: &[u8]) -> Result<Vec<u8>> {
-        self.key_manager.sign(data)
-    }
-
     pub fn has_session(&self, contact_id: &str) -> bool {
-        self.session_manager.has_session(contact_id)
+        self.client.has_session(contact_id)
     }
 
     pub fn active_sessions_count(&self) -> usize {
-        self.session_manager.session_count()
-    }
-
-    pub fn cleanup_old_sessions(&mut self, max_age_seconds: i64) {
-        self.session_manager
-            .cleanup_sessions_older_than(max_age_seconds);
+        self.client.active_sessions_count()
     }
 
     pub fn init_session(&mut self, contact_id: &str, remote_bundle: &KeyBundle) -> Result<String> {
-        let public_bundle: PublicKeyBundle = remote_bundle.clone().into();
+        // Convert to X3DHPublicKeyBundle and then use it
+        let bundle_data = X3DHPublicKeyBundle {
+            identity_public: remote_bundle.identity_public.clone(),
+            signed_prekey_public: remote_bundle.signed_prekey_public.clone(),
+            signature: remote_bundle.signature.clone(),
+            verifying_key: remote_bundle.verifying_key.clone(),
+            suite_id: remote_bundle.suite_id,
+        };
+
+        // Extract remote identity from bundle
+        let remote_identity = P::kem_public_key_from_bytes(bundle_data.identity_public.clone());
+
+        // Cast to the expected generic type
+        let public_bundle = &bundle_data as &<X3DHProtocol<P> as KeyAgreement<P>>::PublicKeyBundle;
+
         self.client
-            .init_session(contact_id, &public_bundle)
+            .init_session(contact_id, public_bundle, &remote_identity)
             .map_err(ConstructError::CryptoError)
     }
 
@@ -152,43 +127,47 @@ impl<P: CryptoProvider> CryptoCore<P> {
         &mut self,
         contact_id: &str,
         remote_bundle: &KeyBundle,
-        first_message: &crate::crypto::double_ratchet::EncryptedRatchetMessage,
+        first_message: &crate::crypto::messaging::double_ratchet::EncryptedRatchetMessage,
     ) -> Result<String> {
-        let public_bundle: PublicKeyBundle = remote_bundle.clone().into();
+        let public_bundle: X3DHPublicKeyBundle = remote_bundle.clone().into();
+
+        // Extract remote identity and ephemeral key
+        let remote_identity = P::kem_public_key_from_bytes(public_bundle.identity_public.clone());
+
         self.client
-            .init_receiving_session(contact_id, &public_bundle, first_message)
+            .init_receiving_session(contact_id, &remote_identity, first_message)
             .map_err(ConstructError::CryptoError)
     }
 
     pub fn encrypt_message(
         &mut self,
-        session_id: &str,
+        contact_id: &str,
         plaintext: &str,
-    ) -> Result<crate::crypto::double_ratchet::EncryptedRatchetMessage> {
+    ) -> Result<crate::crypto::messaging::double_ratchet::EncryptedRatchetMessage> {
         self.client
-            .encrypt_ratchet_message(session_id, plaintext.as_bytes())
+            .encrypt_message(contact_id, plaintext.as_bytes())
             .map_err(ConstructError::CryptoError)
     }
 
     pub fn decrypt_message(
         &mut self,
-        session_id: &str,
-        message: &crate::crypto::double_ratchet::EncryptedRatchetMessage,
+        contact_id: &str,
+        message: &crate::crypto::messaging::double_ratchet::EncryptedRatchetMessage,
     ) -> Result<String> {
         let plaintext = self
             .client
-            .decrypt_ratchet_message(session_id, message)
+            .decrypt_message(contact_id, message)
             .map_err(ConstructError::CryptoError)?;
 
         String::from_utf8(plaintext)
             .map_err(|e| ConstructError::SerializationError(format!("Invalid UTF-8: {}", e)))
     }
 
-    pub fn client(&self) -> &ClientCrypto<P> {
+    pub fn client(&self) -> &Client<P, X3DHProtocol<P>, DoubleRatchetSession<P>> {
         &self.client
     }
 
-    pub fn client_mut(&mut self) -> &mut ClientCrypto<P> {
+    pub fn client_mut(&mut self) -> &mut Client<P, X3DHProtocol<P>, DoubleRatchetSession<P>> {
         &mut self.client
     }
 
@@ -222,18 +201,34 @@ impl<P: CryptoProvider> CryptoCore<P> {
     // }
 }
 
-impl<P: CryptoProvider> Default for CryptoCore<P> {
+impl<P: CryptoProvider> Default for CryptoCore<P>
+where
+    X3DHProtocol<P>: KeyAgreement<P, PublicKeyBundle = X3DHPublicKeyBundle>,
+    <X3DHProtocol<P> as KeyAgreement<P>>::SharedSecret: AsRef<[u8]>,
+{
     fn default() -> Self {
         Self::new().expect("Failed to create CryptoCore")
     }
 }
 
-pub fn create_client<P: CryptoProvider>() -> Result<ClientCrypto<P>> {
-    ClientCrypto::<P>::new().map_err(ConstructError::CryptoError)
+pub fn create_client<P: CryptoProvider>() -> Result<Client<P, X3DHProtocol<P>, DoubleRatchetSession<P>>>
+where
+    X3DHProtocol<P>: KeyAgreement<P, PublicKeyBundle = X3DHPublicKeyBundle>,
+    <X3DHProtocol<P> as KeyAgreement<P>>::SharedSecret: AsRef<[u8]>,
+{
+    Client::<P, X3DHProtocol<P>, DoubleRatchetSession<P>>::new()
+        .map_err(ConstructError::CryptoError)
 }
 
-pub fn get_registration_bundle<P: CryptoProvider>(client: &ClientCrypto<P>) -> Result<KeyBundle> {
-    let bundle = client.get_registration_bundle();
+pub fn get_registration_bundle<P: CryptoProvider>(
+    client: &Client<P, X3DHProtocol<P>, DoubleRatchetSession<P>>
+) -> Result<KeyBundle>
+where
+    X3DHProtocol<P>: KeyAgreement<P, PublicKeyBundle = X3DHPublicKeyBundle>,
+    <X3DHProtocol<P> as KeyAgreement<P>>::SharedSecret: AsRef<[u8]>,
+{
+    let bundle = client.key_manager().export_registration_bundle()
+        .map_err(ConstructError::from)?;
     Ok(KeyBundle {
         identity_public: bundle.identity_public,
         signed_prekey_public: bundle.signed_prekey_public,

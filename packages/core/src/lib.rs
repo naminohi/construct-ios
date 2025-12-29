@@ -28,5 +28,4 @@ pub mod error;
 
 // Re-exports для удобства
 pub use api::MessengerAPI;
-pub use crypto::ClientCrypto;
 

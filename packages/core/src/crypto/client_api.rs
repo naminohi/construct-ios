@@ -131,6 +131,35 @@ where
     /// let bundle = client.get_registration_bundle()?;
     /// send_to_server(bundle);
     /// ```
+    ///
+    /// # ⚠️ ВАЖНО: Этот метод имеет архитектурную проблему
+    ///
+    /// TODO(ARCHITECTURE): Этот метод генерирует НОВЫЕ ключи вместо экспорта существующих!
+    /// См. полное описание проблемы и решения: packages/core/ARCHITECTURE_TODOS.md
+    ///
+    /// ПРОБЛЕМА:
+    /// - Вызывает статический метод H::generate_registration_bundle()
+    /// - Генерирует совершенно новые ключи каждый раз
+    /// - НЕ использует ключи из self.key_manager
+    /// - Это означает, что bundle не соответствует ключам клиента!
+    ///
+    /// ПОЧЕМУ ТАК СДЕЛАНО:
+    /// - KeyManager<P> не знает о generic типе H (handshake protocol)
+    /// - KeyManager::export_registration_bundle() возвращает конкретный X3DHPublicKeyBundle
+    /// - Но этот метод должен возвращать generic H::RegistrationBundle
+    /// - Type mismatch делает невозможным использование KeyManager напрямую
+    ///
+    /// КАК ИСПОЛЬЗОВАТЬ СЕЙЧАС:
+    /// - ⚠️ НЕ используйте этот метод для реального экспорта ключей!
+    /// - Используйте напрямую: client.key_manager().export_registration_bundle()
+    /// - Смотрите uniffi_bindings.rs:119 для примера
+    ///
+    /// КАК ИСПРАВИТЬ:
+    /// 1. Сделать KeyManager<P, H: KeyAgreement<P>> - generic по handshake protocol
+    /// 2. export_registration_bundle(&self) -> Result<H::RegistrationBundle>
+    /// 3. Тогда этот метод сможет корректно вызывать key_manager.export_registration_bundle()
+    ///
+    /// Смотрите также: uniffi_bindings.rs:93-118 для полного описания проблемы и решений
     pub fn get_registration_bundle(&self) -> Result<H::RegistrationBundle, String> {
         H::generate_registration_bundle()
     }
