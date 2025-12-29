@@ -55,9 +55,8 @@
 //! - [`messaging::double_ratchet`]: Double Ratchet протокол
 //!
 //! ### High-Level APIs
-//! - [`session_api`]: NEW Session API (объединяет handshake + messaging)
-//! - `session`: OLD Session management (будет заменён на session_api)
-//! - `client`: Client API (старый, будет рефакторен)
+//! - [`session_api`]: Session API (объединяет handshake + messaging)
+//! - [`client_api`]: Client API (управляет ключами + множественными сессиями)
 //!
 //! ### Utilities
 //! - [`keys`]: KeyManager для управления долгосрочными ключами
@@ -84,26 +83,13 @@ pub mod messaging;
 pub mod suites;
 
 // ============================================================================
-// Legacy modules (будут рефакторены)
-// ============================================================================
-
-/// OLD: Будет перемещён в handshake/x3dh.rs
-pub mod x3dh;
-
-/// OLD: Будет перемещён в messaging/double_ratchet.rs
-pub mod double_ratchet;
-
-/// OLD: Будет рефакторен в новый Client API
-pub mod client;
-
-// ============================================================================
 // High-Level APIs
 // ============================================================================
 
-/// NEW Session API - объединяет handshake + messaging
+/// Session API - объединяет handshake + messaging
 pub mod session_api;
 
-/// NEW Client API - управляет ключами + множественными сессиями
+/// Client API - управляет ключами + множественными сессиями
 pub mod client_api;
 
 // ============================================================================
@@ -111,9 +97,6 @@ pub mod client_api;
 // ============================================================================
 
 pub mod keys;
-
-/// OLD Session management (будет заменён на session_api)
-pub mod session;
 
 pub mod master_key;
 
@@ -127,13 +110,10 @@ pub mod pq_x3dh;
 pub mod pq_double_ratchet;
 
 // ============================================================================
-// Re-exports для обратной совместимости
+// Re-exports для удобства
 // ============================================================================
 
 pub use provider::CryptoProvider;
-pub use client::ClientCrypto;
-pub use double_ratchet::{DoubleRatchetSession, EncryptedRatchetMessage, SerializableSession};
-pub use x3dh::{PublicKeyBundle, RegistrationBundle, X3DH};
 
 pub type SuiteID = u16;
 

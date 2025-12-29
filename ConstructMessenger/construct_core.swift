@@ -778,7 +778,7 @@ public struct FfiConverterTypeSessionInitResult: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SessionInitResult {
         return
             try SessionInitResult(
-                sessionId: FfiConverterString.read(from: &buf),
+                sessionId: FfiConverterString.read(from: &buf), 
                 decryptedMessage: FfiConverterString.read(from: &buf)
         )
     }
@@ -969,7 +969,7 @@ private var initializationResult: InitializationResult = {
     if (uniffi_construct_core_checksum_method_classiccryptocore_export_registration_bundle_json() != 50804) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_construct_core_checksum_method_classiccryptocore_init_receiving_session() != 564) {
+    if (uniffi_construct_core_checksum_method_classiccryptocore_init_receiving_session() != 47586) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_construct_core_checksum_method_classiccryptocore_init_session() != 28133) {

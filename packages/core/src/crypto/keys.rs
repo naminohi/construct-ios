@@ -182,12 +182,52 @@ impl<P: CryptoProvider> KeyManager<P> {
     }
 
     /// Экспорт регистрационного bundle
-    pub fn export_registration_bundle(&self) -> Result<crate::crypto::RegistrationBundle> {
+    ///
+    /// TODO(ARCHITECTURE): Этот метод возвращает конкретный тип X3DHPublicKeyBundle
+    /// См. полное описание: packages/core/ARCHITECTURE_TODOS.md
+    ///
+    /// ПРОБЛЕМА:
+    /// - KeyManager<P> generic только по CryptoProvider
+    /// - Не знает о handshake protocol (X3DH, PQ-X3DH, etc.)
+    /// - Поэтому возвращает конкретный тип X3DHPublicKeyBundle
+    /// - Это создаёт несоответствие с Client<P, H, M> где H - generic handshake protocol
+    ///
+    /// ПОСЛЕДСТВИЯ:
+    /// - Client::get_registration_bundle() не может использовать этот метод
+    /// - Потому что возвращаемые типы не совпадают:
+    ///   - Этот метод: X3DHPublicKeyBundle (конкретный)
+    ///   - Client метод: H::RegistrationBundle (generic)
+    /// - Приходится обходить Client и вызывать этот метод напрямую
+    ///
+    /// ПРАВИЛЬНОЕ РЕШЕНИЕ:
+    /// Сделать KeyManager generic по handshake protocol:
+    /// ```rust,ignore
+    /// pub struct KeyManager<P: CryptoProvider, H: KeyAgreement<P>> {
+    ///     // ...
+    /// }
+    ///
+    /// impl<P: CryptoProvider, H: KeyAgreement<P>> KeyManager<P, H> {
+    ///     pub fn export_registration_bundle(&self) -> Result<H::RegistrationBundle> {
+    ///         // Делегировать создание bundle протоколу handshake
+    ///         H::export_from_key_manager(self)
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// Это потребует:
+    /// 1. Добавить в trait KeyAgreement метод export_from_key_manager()
+    /// 2. Обновить KeyManager<P> -> KeyManager<P, H>
+    /// 3. Обновить все места использования KeyManager
+    ///
+    /// Смотрите также:
+    /// - client_api.rs:137-161 - проблема в Client::get_registration_bundle()
+    /// - uniffi_bindings.rs:93-118 - workaround и полное описание решений
+    pub fn export_registration_bundle(&self) -> Result<crate::crypto::handshake::x3dh::X3DHPublicKeyBundle> {
         let identity_public = self.identity_public_key()?.as_ref().to_vec();
         let verifying_key = self.verifying_key()?.as_ref().to_vec();
         let prekey = self.current_signed_prekey()?;
 
-        Ok(crate::crypto::RegistrationBundle {
+        Ok(crate::crypto::handshake::x3dh::X3DHPublicKeyBundle {
             identity_public,
             signed_prekey_public: prekey.key_pair.1.as_ref().to_vec(),
             signature: prekey.signature.clone(),
@@ -197,12 +237,12 @@ impl<P: CryptoProvider> KeyManager<P> {
     }
 
     /// Экспорт публичного key bundle
-    pub fn export_public_bundle(&self) -> Result<crate::crypto::PublicKeyBundle> {
+    pub fn export_public_bundle(&self) -> Result<crate::crypto::handshake::x3dh::X3DHPublicKeyBundle> {
         let identity_public = self.identity_public_key()?.as_ref().to_vec();
         let verifying_key = self.verifying_key()?.as_ref().to_vec();
         let prekey = self.current_signed_prekey()?;
 
-        Ok(crate::crypto::PublicKeyBundle {
+        Ok(crate::crypto::handshake::x3dh::X3DHPublicKeyBundle {
             identity_public,
             signed_prekey_public: prekey.key_pair.1.as_ref().to_vec(),
             signature: prekey.signature.clone(),
