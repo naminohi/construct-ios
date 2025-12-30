@@ -12,14 +12,26 @@ struct ChatRowView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Circle()
-                .fill(Color.blue)
-                .frame(width: 50, height: 50)
-                .overlay {
-                    Text(initials)
-                        .foregroundColor(.white)
-                        .fontWeight(.semibold)
+            // Avatar
+            Group {
+                if let avatarData = chat.otherUser?.avatarData,
+                   let avatarImage = ImageHelper.imageFromData(avatarData) {
+                    Image(uiImage: avatarImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 50, height: 50)
+                        .clipShape(Circle())
+                } else {
+                    Circle()
+                        .fill(Color.blue)
+                        .frame(width: 50, height: 50)
+                        .overlay {
+                            Text(initials)
+                                .foregroundColor(.white)
+                                .fontWeight(.semibold)
+                        }
                 }
+            }
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(chat.otherUser?.displayName ?? "Unknown")

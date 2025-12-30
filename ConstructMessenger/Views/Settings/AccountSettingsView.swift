@@ -8,12 +8,15 @@
 import SwiftUI
 
 struct AccountSettingsView: View {
+    @Environment(\.managedObjectContext) private var viewContext
     @EnvironmentObject var authViewModel: AuthViewModel
     @StateObject private var viewModel = SettingsViewModel()
 
     // Profile Picture
     @State private var showingImagePicker = false
-    @State private var profileImage: UIImage?
+
+    // Contact Sharing
+    @State private var showingQRCode = false
 
     // Change Password
     @State private var showingChangePassword = false
@@ -29,7 +32,7 @@ struct AccountSettingsView: View {
                 HStack {
                     Spacer()
                     VStack(spacing: 12) {
-                        if let image = profileImage {
+                        if let image = viewModel.profileImage {
                             Image(uiImage: image)
                                 .resizable()
                                 .scaledToFill()
@@ -62,11 +65,46 @@ struct AccountSettingsView: View {
             Section {
                 TextField("Display Name", text: $viewModel.displayName)
                     .onChange(of: viewModel.displayName) { newValue in
-                        saveDisplayName(newValue)
+                        viewModel.saveDisplayName(newValue)
                     }
 
             } header: {
                 Text("Account Information")
+            }
+
+            // MARK: - Share Contact Section
+            Section {
+                Button {
+                    showingQRCode = true
+                } label: {
+                    HStack {
+                        Image(systemName: "qrcode")
+                            .foregroundColor(.blue)
+                        Text("Show My QR Code")
+                            .foregroundColor(.primary)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                Button {
+                    copyContactLink()
+                } label: {
+                    HStack {
+                        Image(systemName: "link")
+                            .foregroundColor(.blue)
+                        Text("Copy Contact Link")
+                            .foregroundColor(.primary)
+                        Spacer()
+                    }
+                }
+            } header: {
+                Text("Share Contact")
+            } footer: {
+                Text("Share your QR code or link to let others add you as a verified contact")
+                    .font(.caption)
             }
 
             // MARK: - Password Section
@@ -118,11 +156,30 @@ struct AccountSettingsView: View {
         .navigationTitle("Account")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
+            viewModel.setContext(viewContext)
             viewModel.loadUserInfo(from: authViewModel)
         }
         .sheet(isPresented: $showingImagePicker) {
-            ImagePicker(image: $profileImage)
+            ImagePicker(onImagePicked: { image in
+                viewModel.saveAvatar(image)
+            })
         }
+        .sheet(isPresented: $showingQRCode) {
+            ContactQRCodeView(
+                userId: viewModel.userId,
+                username: viewModel.username
+            )
+        }
+    }
+
+    // MARK: - Contact Link
+    private var contactLink: String {
+        // Format: construct://add-contact?id=USER_ID&username=USERNAME
+        guard let userId = authViewModel.currentUserId,
+              let username = authViewModel.currentUsername else {
+            return ""
+        }
+        return "construct://add-contact?id=\(userId)&username=\(username)"
     }
 
     // MARK: - Validation
@@ -134,11 +191,10 @@ struct AccountSettingsView: View {
     }
 
     // MARK: - Actions
-    private func saveDisplayName(_ newValue: String) {
-        let trimmed = newValue.trimmingCharacters(in: .whitespaces)
-        authViewModel.currentDisplayName = trimmed
-        // TODO: Send update to server
-        print("Display name updated to: \(trimmed)")
+    private func copyContactLink() {
+        UIPasteboard.general.string = contactLink
+        // Could show a toast/banner here
+        print("Contact link copied: \(contactLink)")
     }
 
     private func changePassword() {
@@ -164,7 +220,7 @@ struct AccountSettingsView: View {
 
 // MARK: - Image Picker
 struct ImagePicker: UIViewControllerRepresentable {
-    @Binding var image: UIImage?
+    let onImagePicked: (UIImage) -> Void
     @Environment(\.dismiss) var dismiss
 
     func makeUIViewController(context: Context) -> UIImagePickerController {
@@ -189,9 +245,9 @@ struct ImagePicker: UIViewControllerRepresentable {
 
         func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]) {
             if let editedImage = info[.editedImage] as? UIImage {
-                parent.image = editedImage
+                parent.onImagePicked(editedImage)
             } else if let originalImage = info[.originalImage] as? UIImage {
-                parent.image = originalImage
+                parent.onImagePicked(originalImage)
             }
 
             parent.dismiss()
@@ -204,6 +260,17 @@ struct ImagePicker: UIViewControllerRepresentable {
 }
 
 #Preview {
+    let container = PreviewHelpers.createPreviewContainer()
+    let context = container.viewContext
+
+    // Create sample user
+    let user = User(context: context)
+    user.id = "user123"
+    user.username = "john_doe"
+    user.displayName = "John Doe"
+
+    try? context.save()
+
     let authViewModel = AuthViewModel()
     authViewModel.isAuthenticated = true
     authViewModel.currentUserId = "user123"
@@ -212,6 +279,7 @@ struct ImagePicker: UIViewControllerRepresentable {
 
     return NavigationStack {
         AccountSettingsView()
+            .environment(\.managedObjectContext, context)
             .environmentObject(authViewModel)
     }
 }

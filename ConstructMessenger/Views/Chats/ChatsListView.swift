@@ -26,26 +26,26 @@ struct ChatsListView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                ConnectionStatusBanner()
-
-                List {
-                    ForEach(chats) { chat in
-                        NavigationLink {
-                            ChatView(chat: chat, context: viewContext)
-                        } label: {
-                            ChatRowView(chat: chat)
-                        }
+            List {
+                ForEach(chats) { chat in
+                    NavigationLink {
+                        ChatView(chat: chat, context: viewContext)
+                    } label: {
+                        ChatRowView(chat: chat)
                     }
-                    .onDelete(perform: deleteItems)
                 }
+                .onDelete(perform: deleteItems)
             }
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        showingNewChat = true
-                    } label: {
-                        Image(systemName: "magnifyingglass")
+                    HStack(spacing: 12) {
+                        ConnectionStatusIndicator()
+
+                        Button {
+                            showingNewChat = true
+                        } label: {
+                            Image(systemName: "qrcode.viewfinder")
+                        }
                     }
                 }
             }

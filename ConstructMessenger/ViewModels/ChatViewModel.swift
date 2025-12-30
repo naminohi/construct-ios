@@ -121,7 +121,7 @@ class ChatViewModel: ObservableObject {
     }
 
     // MARK: - Send Message
-    func sendMessage(text: String) {
+    func sendMessage(text: String, replyTo: Message? = nil) {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         guard let recipientId = chat.otherUser?.id else { return }
         guard let currentUserId = SessionManager.shared.currentUserId else { return }
@@ -162,7 +162,13 @@ class ChatViewModel: ObservableObject {
             )
 
             Log.debug("📤 Sending message with ID: \(messageId)", category: "ChatViewModel")
-            saveMessage(message, decryptedContent: text, isSentByMe: true, status: .sending)
+            saveMessage(
+                message,
+                decryptedContent: text,
+                isSentByMe: true,
+                status: .sending,
+                replyTo: replyTo
+            )
             wsManager.send(.sendMessage(message))
             Log.debug("📮 Message sent to WebSocket: \(messageId)", category: "ChatViewModel")
 
@@ -293,7 +299,7 @@ class ChatViewModel: ObservableObject {
     // ChatViewModel only displays messages already saved to Core Data
 
     // MARK: - Core Data Operations
-    private func saveMessage(_ message: ChatMessage, decryptedContent: String, isSentByMe: Bool, status: DeliveryStatus) {
+    private func saveMessage(_ message: ChatMessage, decryptedContent: String, isSentByMe: Bool, status: DeliveryStatus, replyTo: Message? = nil) {
         Log.debug("💾 Saving message \(message.id), isSentByMe: \(isSentByMe), status: \(status)", category: "ChatViewModel")
 
         let fetchRequest: NSFetchRequest<Message> = Message.fetchRequest()
@@ -314,6 +320,12 @@ class ChatViewModel: ObservableObject {
             newMessage.isSentByMe = isSentByMe
             newMessage.deliveryStatus = status
             newMessage.chat = chat
+
+            // Set reply information
+            if let replyMessage = replyTo {
+                newMessage.replyToMessageId = replyMessage.id
+                newMessage.replyToContent = replyMessage.decryptedContent
+            }
         }
 
         do {

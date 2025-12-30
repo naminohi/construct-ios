@@ -12,6 +12,7 @@ struct ChatView: View {
     @Environment(\.managedObjectContext) private var viewContext
     @StateObject private var viewModel: ChatViewModel  // ✅ FIX: StateObject persists across view updates
     @State private var messageText = ""
+    @State private var replyingTo: Message?
 
     init(chat: Chat, context: NSManagedObjectContext) {
         // ✅ FIX: Use StateObject initializer to create ViewModel only once
@@ -20,8 +21,6 @@ struct ChatView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ConnectionStatusBanner()
-
             if viewModel.isSending {
                 HStack(spacing: 8) {
                     ProgressView()
@@ -42,10 +41,14 @@ struct ChatView: View {
                             VStack(spacing: 0) {
                                 MessageBubble(
                                     message: message,
-                                    isLastInGroup: isLastInGroup(message, at: index, in: viewModel.messages)
-                                ) { msg in
-                                    viewModel.retryMessage(msg)
-                                }
+                                    isLastInGroup: isLastInGroup(message, at: index, in: viewModel.messages),
+                                    onRetry: { msg in
+                                        viewModel.retryMessage(msg)
+                                    },
+                                    onReply: { msg in
+                                        replyingTo = msg
+                                    }
+                                )
                                 .id(message.id)
 
                                 // Add spacing after each message
@@ -78,14 +81,24 @@ struct ChatView: View {
             MessageInputView(
                 text: $messageText,
                 isSending: viewModel.isSending,
+                replyingTo: replyingTo,
                 onSend: {
-                    viewModel.sendMessage(text: messageText)
+                    viewModel.sendMessage(text: messageText, replyTo: replyingTo)
                     messageText = ""
+                    replyingTo = nil
+                },
+                onCancelReply: {
+                    replyingTo = nil
                 }
             )
         }
         .navigationTitle(viewModel.chat.otherUser?.displayName ?? "Chat")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                ConnectionStatusIndicator()
+            }
+        }
     }
 
     // MARK: - Message Grouping Logic
