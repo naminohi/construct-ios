@@ -62,6 +62,25 @@ class KeychainManager {
         return load(forKey: "signing_key")
     }
 
+    // MARK: - Private Keys JSON (for Rust persistence)
+
+    /// Save all private keys as JSON string (from Rust export)
+    func savePrivateKeysJson(_ jsonString: String) -> Bool {
+        guard let data = jsonString.data(using: .utf8) else { return false }
+        return save(data, forKey: "crypto_private_keys_json", accessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly)
+    }
+
+    /// Load private keys JSON string (for Rust import)
+    func loadPrivateKeysJson() -> String? {
+        guard let data = load(forKey: "crypto_private_keys_json") else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// Delete private keys JSON
+    func deletePrivateKeysJson() {
+        delete(forKey: "crypto_private_keys_json")
+    }
+
     // MARK: - User ID
     func saveUserId(_ userId: String) {
         guard let data = userId.data(using: .utf8) else { return }

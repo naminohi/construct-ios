@@ -117,6 +117,17 @@ class ChatsViewModel: ObservableObject {
         guard let firstMessage = pendingFirstMessages[data.userId] else {
             // No pending message - this bundle was requested for outgoing session (handled in ChatViewModel)
             Log.debug("Received public key bundle for \(data.userId), but no pending first message", category: "ChatsViewModel")
+
+            // Update username for existing user if found
+            guard let context = viewContext else { return }
+            let userFetch: NSFetchRequest<User> = User.fetchRequest()
+            userFetch.predicate = NSPredicate(format: "id == %@", data.userId)
+            if let existingUser = try? context.fetch(userFetch).first {
+                existingUser.username = data.username
+                existingUser.displayName = data.username
+                try? context.save()
+                Log.info("Updated username for user: \(data.username)", category: "ChatsViewModel")
+            }
             return
         }
 
@@ -145,14 +156,21 @@ class ChatsViewModel: ObservableObject {
 
             Log.info("✅ Receiving session initialized for \(data.userId), first message decrypted", category: "ChatsViewModel")
 
-            // Find or create chat
+            // Find or create chat (chat was already created in handleIncomingMessage)
             let fetchRequest: NSFetchRequest<Chat> = Chat.fetchRequest()
             fetchRequest.predicate = NSPredicate(format: "otherUser.id == %@", data.userId)
 
             let chat: Chat
             if let existingChat = try? context.fetch(fetchRequest).first {
+                // Update username for existing user
+                if let user = existingChat.otherUser {
+                    user.username = data.username
+                    user.displayName = data.username
+                    Log.info("✅ Updated username to: \(data.username)", category: "ChatsViewModel")
+                }
                 chat = existingChat
             } else {
+                // This shouldn't happen since handleIncomingMessage creates the chat
                 let newUser = User(context: context)
                 newUser.id = data.userId
                 newUser.username = data.username
@@ -162,6 +180,7 @@ class ChatsViewModel: ObservableObject {
                 newChat.id = UUID().uuidString
                 newChat.otherUser = newUser
                 chat = newChat
+                Log.debug("⚠️ Chat didn't exist, created new one (this shouldn't happen)", category: "ChatsViewModel")
             }
 
             // Save the message

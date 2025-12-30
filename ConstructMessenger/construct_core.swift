@@ -455,6 +455,8 @@ public protocol ClassicCryptoCoreProtocol : AnyObject {
     
     func encryptMessage(sessionId: String, plaintext: String) throws  -> EncryptedMessageComponents
     
+    func exportPrivateKeysJson() throws  -> String
+    
     func exportRegistrationBundleJson() throws  -> String
     
     func initReceivingSession(contactId: String, recipientBundle: [UInt8], firstMessage: [UInt8]) throws  -> SessionInitResult
@@ -520,6 +522,13 @@ open func encryptMessage(sessionId: String, plaintext: String)throws  -> Encrypt
     uniffi_construct_core_fn_method_classiccryptocore_encrypt_message(self.uniffiClonePointer(),
         FfiConverterString.lower(sessionId),
         FfiConverterString.lower(plaintext),$0
+    )
+})
+}
+    
+open func exportPrivateKeysJson()throws  -> String {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCryptoError.lift) {
+    uniffi_construct_core_fn_method_classiccryptocore_export_private_keys_json(self.uniffiClonePointer(),$0
     )
 })
 }
@@ -658,6 +667,87 @@ public func FfiConverterTypeEncryptedMessageComponents_lift(_ buf: RustBuffer) t
 
 public func FfiConverterTypeEncryptedMessageComponents_lower(_ value: EncryptedMessageComponents) -> RustBuffer {
     return FfiConverterTypeEncryptedMessageComponents.lower(value)
+}
+
+
+public struct PrivateKeysJson {
+    public var identitySecret: String
+    public var signingSecret: String
+    public var signedPrekeySecret: String
+    public var prekeySignature: String
+    public var suiteId: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(identitySecret: String, signingSecret: String, signedPrekeySecret: String, prekeySignature: String, suiteId: String) {
+        self.identitySecret = identitySecret
+        self.signingSecret = signingSecret
+        self.signedPrekeySecret = signedPrekeySecret
+        self.prekeySignature = prekeySignature
+        self.suiteId = suiteId
+    }
+}
+
+
+
+extension PrivateKeysJson: Equatable, Hashable {
+    public static func ==(lhs: PrivateKeysJson, rhs: PrivateKeysJson) -> Bool {
+        if lhs.identitySecret != rhs.identitySecret {
+            return false
+        }
+        if lhs.signingSecret != rhs.signingSecret {
+            return false
+        }
+        if lhs.signedPrekeySecret != rhs.signedPrekeySecret {
+            return false
+        }
+        if lhs.prekeySignature != rhs.prekeySignature {
+            return false
+        }
+        if lhs.suiteId != rhs.suiteId {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(identitySecret)
+        hasher.combine(signingSecret)
+        hasher.combine(signedPrekeySecret)
+        hasher.combine(prekeySignature)
+        hasher.combine(suiteId)
+    }
+}
+
+
+public struct FfiConverterTypePrivateKeysJson: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PrivateKeysJson {
+        return
+            try PrivateKeysJson(
+                identitySecret: FfiConverterString.read(from: &buf), 
+                signingSecret: FfiConverterString.read(from: &buf), 
+                signedPrekeySecret: FfiConverterString.read(from: &buf), 
+                prekeySignature: FfiConverterString.read(from: &buf), 
+                suiteId: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PrivateKeysJson, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.identitySecret, into: &buf)
+        FfiConverterString.write(value.signingSecret, into: &buf)
+        FfiConverterString.write(value.signedPrekeySecret, into: &buf)
+        FfiConverterString.write(value.prekeySignature, into: &buf)
+        FfiConverterString.write(value.suiteId, into: &buf)
+    }
+}
+
+
+public func FfiConverterTypePrivateKeysJson_lift(_ buf: RustBuffer) throws -> PrivateKeysJson {
+    return try FfiConverterTypePrivateKeysJson.lift(buf)
+}
+
+public func FfiConverterTypePrivateKeysJson_lower(_ value: PrivateKeysJson) -> RustBuffer {
+    return FfiConverterTypePrivateKeysJson.lower(value)
 }
 
 
@@ -941,6 +1031,13 @@ public func createCryptoCore()throws  -> ClassicCryptoCore {
     )
 })
 }
+public func createCryptoCoreFromKeysJson(keysJson: String)throws  -> ClassicCryptoCore {
+    return try  FfiConverterTypeClassicCryptoCore.lift(try rustCallWithError(FfiConverterTypeCryptoError.lift) {
+    uniffi_construct_core_fn_func_create_crypto_core_from_keys_json(
+        FfiConverterString.lower(keysJson),$0
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -960,10 +1057,16 @@ private var initializationResult: InitializationResult = {
     if (uniffi_construct_core_checksum_func_create_crypto_core() != 59945) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_construct_core_checksum_func_create_crypto_core_from_keys_json() != 4455) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_construct_core_checksum_method_classiccryptocore_decrypt_message() != 52559) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_construct_core_checksum_method_classiccryptocore_encrypt_message() != 30896) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_construct_core_checksum_method_classiccryptocore_export_private_keys_json() != 39134) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_construct_core_checksum_method_classiccryptocore_export_registration_bundle_json() != 50804) {
