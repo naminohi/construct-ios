@@ -37,12 +37,23 @@ struct ChatView: View {
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(spacing: 12) {
-                        ForEach(viewModel.messages) { message in
-                            MessageBubble(message: message) { msg in
-                                viewModel.retryMessage(msg)
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(viewModel.messages.enumerated()), id: \.element.id) { index, message in
+                            VStack(spacing: 0) {
+                                MessageBubble(
+                                    message: message,
+                                    isLastInGroup: isLastInGroup(message, at: index, in: viewModel.messages)
+                                ) { msg in
+                                    viewModel.retryMessage(msg)
+                                }
+                                .id(message.id)
+
+                                // Add spacing after each message
+                                if index < viewModel.messages.count - 1 {
+                                    Spacer()
+                                        .frame(height: spacingAfterMessage(at: index, in: viewModel.messages))
+                                }
                             }
-                            .id(message.id)
                         }
                     }
                     .padding()
@@ -75,6 +86,44 @@ struct ChatView: View {
         }
         .navigationTitle(viewModel.chat.otherUser?.displayName ?? "Chat")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    // MARK: - Message Grouping Logic
+
+    /// Determines if a message is the last in a group of consecutive messages from the same sender
+    private func isLastInGroup(_ message: Message, at index: Int, in messages: [Message]) -> Bool {
+        // If this is the last message, it's always the last in its group
+        guard index < messages.count - 1 else {
+            return true
+        }
+
+        let nextMessage = messages[index + 1]
+
+        // Different sender = end of group
+        if message.isSentByMe != nextMessage.isSentByMe {
+            return true
+        }
+
+        // If more than 5 minutes apart, start a new group
+        let timeDifference = nextMessage.timestamp.timeIntervalSince(message.timestamp)
+        if timeDifference > 300 { // 5 minutes
+            return true
+        }
+
+        return false
+    }
+
+    /// Returns appropriate spacing after a message
+    private func spacingAfterMessage(at index: Int, in messages: [Message]) -> CGFloat {
+        let message = messages[index]
+
+        // If this is the last in group, use larger spacing
+        if isLastInGroup(message, at: index, in: messages) {
+            return 12
+        }
+
+        // Otherwise, use compact spacing within the group
+        return 4
     }
 }
 

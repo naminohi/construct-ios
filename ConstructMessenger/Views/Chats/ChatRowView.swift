@@ -32,13 +32,6 @@ struct ChatRowView: View {
                 }
             }
 
-            Spacer()
-
-            if let time = chat.lastMessageTime {
-                Text(time, style: .relative)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
         }
         .padding(.vertical, 4)
     }

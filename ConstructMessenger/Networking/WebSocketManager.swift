@@ -36,7 +36,7 @@ class WebSocketManager: NSObject, ObservableObject {
             switch self {
             case .connected: return "Connected"
             case .disconnected: return "Disconnected"
-            case .reconnecting(let attempt): return "Reconnecting... (attempt \(attempt))"
+            case .reconnecting(let attempt): return "Reconnecting... )"
             }
         }
     }
