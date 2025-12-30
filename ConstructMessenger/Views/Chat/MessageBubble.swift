@@ -11,11 +11,13 @@ struct MessageBubble: View {
     let message: Message
     let isLastInGroup: Bool
     let onRetry: ((Message) -> Void)?
+    let onReply: ((Message) -> Void)?
 
-    init(message: Message, isLastInGroup: Bool = true, onRetry: ((Message) -> Void)? = nil) {
+    init(message: Message, isLastInGroup: Bool = true, onRetry: ((Message) -> Void)? = nil, onReply: ((Message) -> Void)? = nil) {
         self.message = message
         self.isLastInGroup = isLastInGroup
         self.onRetry = onRetry
+        self.onReply = onReply
     }
 
     var body: some View {
@@ -25,12 +27,34 @@ struct MessageBubble: View {
             }
 
             VStack(alignment: message.isSentByMe ? .trailing : .leading, spacing: 4) {
-                Text(message.decryptedContent ?? "Encrypted")
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(message.isSentByMe ? Color.blue : Color.gray.opacity(0.2))
-                    .foregroundColor(message.isSentByMe ? .white : .primary)
-                    .cornerRadius(16)
+                VStack(alignment: .leading, spacing: 0) {
+                    // Reply/Quote preview
+                    if let replyContent = message.replyToContent {
+                        HStack(spacing: 4) {
+                            Rectangle()
+                                .fill(message.isSentByMe ? Color.white.opacity(0.5) : Color.blue.opacity(0.5))
+                                .frame(width: 3)
+
+                            Text(replyContent)
+                                .font(.caption)
+                                .foregroundColor(message.isSentByMe ? .white.opacity(0.8) : .secondary)
+                                .lineLimit(2)
+                                .padding(.vertical, 4)
+                                .padding(.trailing, 8)
+                        }
+                        .padding(.leading, 8)
+                        .padding(.top, 8)
+                    }
+
+                    // Main message content
+                    Text(message.decryptedContent ?? "Encrypted")
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, message.replyToContent != nil ? 4 : 8)
+                        .padding(.bottom, message.replyToContent != nil ? 8 : 0)
+                }
+                .background(message.isSentByMe ? Color.blue : Color.gray.opacity(0.2))
+                .foregroundColor(message.isSentByMe ? .white : .primary)
+                .cornerRadius(16)
 
                 if isLastInGroup {
                     HStack(spacing: 4) {
@@ -49,6 +73,21 @@ struct MessageBubble: View {
 
             if !message.isSentByMe {
                 Spacer(minLength: 60)
+            }
+        }
+        .contextMenu {
+            Button {
+                UIPasteboard.general.string = message.decryptedContent
+            } label: {
+                Label("Copy", systemImage: "doc.on.doc")
+            }
+
+            if let onReply = onReply {
+                Button {
+                    onReply(message)
+                } label: {
+                    Label("Reply", systemImage: "arrowshape.turn.up.left")
+                }
             }
         }
     }
