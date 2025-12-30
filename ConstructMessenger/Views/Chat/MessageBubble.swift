@@ -9,10 +9,12 @@ import SwiftUI
 
 struct MessageBubble: View {
     let message: Message
+    let isLastInGroup: Bool
     let onRetry: ((Message) -> Void)?
 
-    init(message: Message, onRetry: ((Message) -> Void)? = nil) {
+    init(message: Message, isLastInGroup: Bool = true, onRetry: ((Message) -> Void)? = nil) {
         self.message = message
+        self.isLastInGroup = isLastInGroup
         self.onRetry = onRetry
     }
 
@@ -30,16 +32,18 @@ struct MessageBubble: View {
                     .foregroundColor(message.isSentByMe ? .white : .primary)
                     .cornerRadius(16)
 
-                HStack(spacing: 4) {
-                    if message.isSentByMe {
-                        deliveryStatusView
-                    }
+                if isLastInGroup {
+                    HStack(spacing: 4) {
+                        if message.isSentByMe {
+                            deliveryStatusView
+                        }
 
-                    Text(message.timestamp ?? Date(), style: .time)
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
+                        Text(message.timestamp, style: .time)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal, 4)
                 }
-                .padding(.horizontal, 4)
             }
             .frame(maxWidth: UIScreen.main.bounds.width * 0.7, alignment: message.isSentByMe ? .trailing : .leading)
 
