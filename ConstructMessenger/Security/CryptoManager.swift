@@ -23,22 +23,56 @@ class CryptoManager {
 
     private init() {
         do {
-            // UniFFI: createCryptoCore() returns ClassicCryptoCore directly
-            self.core = try createCryptoCore()
-            Log.info("✅ UniFFI CryptoCore initialized successfully!", category: "CryptoManager")
+            // Try to load existing keys from Keychain
+            if let savedKeysJson = KeychainManager.shared.loadPrivateKeysJson() {
+                Log.info("🔑 Found existing keys in Keychain, restoring CryptoCore...", category: "CryptoManager")
+
+                // Create CryptoCore from saved keys
+                self.core = try createCryptoCoreFromKeysJson(keysJson: savedKeysJson)
+                Log.info("✅ CryptoCore restored from saved keys!", category: "CryptoManager")
+            } else {
+                Log.info("🆕 No saved keys found, generating new CryptoCore...", category: "CryptoManager")
+
+                // Create new CryptoCore with fresh keys
+                self.core = try createCryptoCore()
+
+                // Export private keys and save to Keychain
+                if let core = self.core {
+                    let keysJson = try core.exportPrivateKeysJson()
+                    let saved = KeychainManager.shared.savePrivateKeysJson(keysJson)
+
+                    if saved {
+                        Log.info("✅ New CryptoCore created and keys saved to Keychain", category: "CryptoManager")
+                    } else {
+                        Log.error("⚠️ CryptoCore created but failed to save keys to Keychain", category: "CryptoManager")
+                    }
+                } else {
+                    Log.error("❌ CryptoCore is nil after creation", category: "CryptoManager")
+                }
+            }
         } catch let error as CryptoError {
             // CryptoError is now the UniFFI-generated enum
-            Log.fault("❌ Failed to create UniFFI CryptoCore: \(error)", category: "CryptoManager")
-            fatalError("Failed to create UniFFI CryptoCore: \(error)")
+            Log.fault("❌ Failed to create/restore UniFFI CryptoCore: \(error)", category: "CryptoManager")
+            fatalError("Failed to create/restore UniFFI CryptoCore: \(error)")
         } catch {
-            Log.fault("❌ Unexpected error creating CryptoCore: \(error)", category: "CryptoManager")
-            fatalError("Unexpected error creating CryptoCore: \(error)")
+            Log.fault("❌ Unexpected error creating/restoring CryptoCore: \(error)", category: "CryptoManager")
+            fatalError("Unexpected error creating/restoring CryptoCore: \(error)")
         }
     }
 
     deinit {
         // UniFFI manages memory automatically via Arc<T>
         // No manual cleanup needed!
+    }
+
+    // MARK: - Key Management
+
+    /// Delete all saved cryptographic keys (e.g., on logout)
+    /// After calling this, the app must be restarted to generate new keys
+    func deleteAllCryptoKeys() {
+        KeychainManager.shared.deletePrivateKeysJson()
+        KeychainManager.shared.deleteAllKeys()
+        Log.info("🗑️ All cryptographic keys deleted from Keychain", category: "CryptoManager")
     }
 
     // MARK: - Registration

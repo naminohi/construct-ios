@@ -19,26 +19,32 @@ struct MessageBubble: View {
     var body: some View {
         HStack {
             if message.isSentByMe {
-                Spacer()
+                Spacer(minLength: 60)
             }
 
             VStack(alignment: message.isSentByMe ? .trailing : .leading, spacing: 4) {
                 Text(message.decryptedContent ?? "Encrypted")
-                    .padding(.vertical, 6)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(message.isSentByMe ? Color.blue : Color.gray.opacity(0.2))
+                    .foregroundColor(message.isSentByMe ? .white : .primary)
+                    .cornerRadius(16)
 
                 HStack(spacing: 4) {
                     if message.isSentByMe {
                         deliveryStatusView
                     }
 
-                    Text(message.timestamp, style: .time)
+                    Text(message.timestamp ?? Date(), style: .time)
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
+                .padding(.horizontal, 4)
             }
+            .frame(maxWidth: UIScreen.main.bounds.width * 0.7, alignment: message.isSentByMe ? .trailing : .leading)
 
             if !message.isSentByMe {
-                Spacer()
+                Spacer(minLength: 60)
             }
         }
     }

@@ -22,9 +22,13 @@ class ChatViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var viewContext: NSManagedObjectContext
 
+    // ✅ FIX: Use NSFetchedResultsController for automatic Core Data updates
+    private var fetchedResultsController: NSFetchedResultsController<Message>?
+
     init(chat: Chat, context: NSManagedObjectContext) {
         self.chat = chat
         self.viewContext = context
+        setupFetchedResultsController()  // ✅ Setup FRC first
         setupSubscribers()
         checkExistingSession()  // ✅ FIXED: Check if session already exists
         fetchRecipientPublicKey()
@@ -38,6 +42,27 @@ class ChatViewModel: ObservableObject {
         // ✅ FIX: Clean up subscriptions when ViewModel is destroyed
         cancellables.removeAll()
         Log.debug("🔧 ChatViewModel deinitialized", category: "ChatViewModel")
+    }
+
+    private func setupFetchedResultsController() {
+        let fetchRequest: NSFetchRequest<Message> = Message.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "chat == %@", chat)
+        fetchRequest.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: true)]
+
+        fetchedResultsController = NSFetchedResultsController(
+            fetchRequest: fetchRequest,
+            managedObjectContext: viewContext,
+            sectionNameKeyPath: nil,
+            cacheName: nil
+        )
+
+        // Observe changes using Combine
+        NotificationCenter.default.publisher(for: .NSManagedObjectContextObjectsDidChange, object: viewContext)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.loadMessages()
+            }
+            .store(in: &cancellables)
     }
 
     private func setupSubscribers() {

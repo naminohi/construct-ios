@@ -27,11 +27,9 @@ struct ContentView: View {
         }
         .onChange(of: scenePhase) { newPhase in
             if newPhase == .active {
-                // Also try to restore when coming from background to foreground
-                if !authViewModel.isAuthenticated {
-                    print("📱 App became active, attempting to restore session...")
-                    authViewModel.restoreSession()
-                }
+                // Always restore connection when coming from background to foreground
+                print("📱 App became active, attempting to restore connection...")
+                authViewModel.restoreSession()
             } else if newPhase == .background {
                 print("⏹️ App went to background. Disconnecting WebSocket.")
                 // Disconnect when going to background to save resources
