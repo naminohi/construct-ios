@@ -37,15 +37,15 @@ struct ChatsListView: View {
                 .onDelete(perform: deleteItems)
             }
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    HStack(spacing: 12) {
-                        ConnectionStatusIndicator()
+                ToolbarItem(placement: .principal) {
+                    ConnectionStatusIndicator()
+                }
 
-                        Button {
-                            showingNewChat = true
-                        } label: {
-                            Image(systemName: "qrcode.viewfinder")
-                        }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        showingNewChat = true
+                    } label: {
+                        Image(systemName: "qrcode.viewfinder")
                     }
                 }
             }
