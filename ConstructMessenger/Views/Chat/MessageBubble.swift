@@ -113,9 +113,20 @@ struct MessageBubble: View {
                 .foregroundColor(.green)
 
         case .queued:
-            Image(systemName: "tray")
-                .font(.system(size: 10))
-                .foregroundColor(.orange)
+            Button {
+                if let onRetry = onRetry {
+                    onRetry(message)
+                }
+            } label: {
+                HStack(spacing: 2) {
+                    Image(systemName: "tray")
+                        .font(.system(size: 10))
+                        .foregroundColor(.orange)
+                    Text("Retry")
+                        .font(.caption2)
+                        .foregroundColor(.orange)
+                }
+            }
 
         case .failed:
             Button {
