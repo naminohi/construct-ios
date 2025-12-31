@@ -59,6 +59,20 @@ struct SettingsView: View {
                     Text("Connection")
                 }
 
+                // MARK: - Appearance Section
+                Section {
+                    NavigationLink(destination: AppearanceSettingsView()) {
+                        Label {
+                            Text("Appearance")
+                        } icon: {
+                            Image(systemName: "paintbrush.fill")
+                                .foregroundColor(.purple)
+                        }
+                    }
+                } header: {
+                    Text("Preferences")
+                }
+
                 // MARK: - About Section
                 Section {
                     HStack {

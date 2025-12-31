@@ -96,7 +96,6 @@ struct ChatView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                ConnectionStatusIndicator()
             }
         }
     }
