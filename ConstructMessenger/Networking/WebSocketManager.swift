@@ -88,13 +88,20 @@ class WebSocketManager: NSObject, ObservableObject {
 
     // MARK: - Send Message
     func send(_ message: ClientMessage) {
+        // ✅ FIX: Check if WebSocket is connected before sending
+        guard let task = webSocketTask, isConnected else {
+            Log.error("❌ Cannot send message - WebSocket not connected", category: "WebSocket")
+            errorPublisher.send(NetworkError.notConnected)
+            return
+        }
+
         do {
             let msgpackData = try MessagePackHelper.encode(message)
             Log.debug("Sending: \(message)", category: "WebSocket")
 
             let wsMessage = URLSessionWebSocketTask.Message.data(msgpackData)
-            
-            webSocketTask?.send(wsMessage) { [weak self] error in
+
+            task.send(wsMessage) { [weak self] error in
                 if let error = error {
                     Log.error("WebSocket send error: \(error.localizedDescription)", category: "WebSocket")
                     self?.errorPublisher.send(error)

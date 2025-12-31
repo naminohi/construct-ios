@@ -149,6 +149,11 @@ class QRCodeScanner: NSObject, ObservableObject, AVCaptureMetadataOutputObjectsD
         let previewLayer = AVCaptureVideoPreviewLayer(session: captureSession)
         previewLayer.videoGravity = .resizeAspectFill
 
+        // Set orientation to portrait since app is portrait-only
+        if let connection = previewLayer.connection, connection.isVideoOrientationSupported {
+            connection.videoOrientation = .portrait
+        }
+
         return previewLayer
     }
 }
