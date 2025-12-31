@@ -161,21 +161,26 @@ struct QRCodeScannerViewRepresentable: UIViewRepresentable {
         let view = UIView(frame: .zero)
         view.backgroundColor = .black
 
-        if let previewLayer = scanner.getPreviewLayer() {
-            previewLayer.frame = view.bounds
-            view.layer.addSublayer(previewLayer)
-
-            // Store reference for updating
-            context.coordinator.previewLayer = previewLayer
-        }
+        // Store the view in coordinator so we can add the layer later
+        context.coordinator.parentView = view
 
         return view
     }
 
     func updateUIView(_ uiView: UIView, context: Context) {
+        // Add preview layer if it's available and not already added
+        if context.coordinator.previewLayer == nil,
+           let previewLayer = scanner.getPreviewLayer() {
+            previewLayer.frame = uiView.bounds
+            uiView.layer.insertSublayer(previewLayer, at: 0)
+            context.coordinator.previewLayer = previewLayer
+        }
+
         // Update preview layer frame when view size changes
-        DispatchQueue.main.async {
-            context.coordinator.previewLayer?.frame = uiView.bounds
+        if let previewLayer = context.coordinator.previewLayer {
+            DispatchQueue.main.async {
+                previewLayer.frame = uiView.bounds
+            }
         }
     }
 
@@ -185,6 +190,7 @@ struct QRCodeScannerViewRepresentable: UIViewRepresentable {
 
     class Coordinator {
         var previewLayer: AVCaptureVideoPreviewLayer?
+        var parentView: UIView?
     }
 }
 
