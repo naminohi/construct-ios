@@ -1,4 +1,4 @@
-/* 
+/*
   Localizable.strings
   ConstructMessenger
 
@@ -6,8 +6,18 @@
   
 */
 
+// MARK: - General
+"error" = "Error";
+"ok" = "OK";
+"cancel" = "Cancel";
+"done" = "Done";
+"unknown" = "Unknown";
+
+// MARK: - Main Tabs
 "chats" = "Chats";
 "settings" = "Settings";
+
+// MARK: - Auth
 "construct_messenger" = "Construct Messenger";
 "back_to_login" = "Back to Login";
 "register" = "Register";
@@ -19,6 +29,18 @@
 "min_password_placeholder" = "Min %d characters";
 "confirm_password" = "Confirm Password";
 "reenter_password" = "Re-enter password";
+"please_check_all_fields" = "Please check all fields";
+"logout" = "Logout";
+"logout_confirmation" = "Are you sure you want to logout?";
+
+// MARK: - Chats List
+"add_contact" = "Add Contact";
+"scan_qr_code_or_share_link" = "Scan a QR code or share your contact link to add verified contacts";
+"scan_qr_code" = "Scan QR Code";
+"your_contact_link_is_in_account_settings" = "Your contact link is in Account Settings";
+"new_contact" = "New Contact";
+
+// MARK: - Chat
 "sending" = "Sending...";
 "initializing_secure_connection" = "Initializing secure connection...";
 "not_connected_to_server" = "Not connected to server";
@@ -30,6 +52,10 @@
 "delete" = "Delete";
 "retry" = "Retry";
 "message" = "Message";
+"reply_to_colon" = "Reply to:";
+"message_placeholder" = "Message...";
+
+// MARK: - Message Info
 "status" = "Status";
 "sent" = "Sent";
 "direction" = "Direction";
@@ -48,23 +74,25 @@
 "double_ratchet" = "Double Ratchet";
 "security" = "Security";
 "message_info" = "Message Info";
-"done" = "Done";
-"unknown" = "Unknown";
-"reply_to_colon" = "Reply to:";
-"message_placeholder" = "Message...";
-"add_contact" = "Add Contact";
-"scan_qr_code_or_share_link" = "Scan a QR code or share your contact link to add verified contacts";
-"scan_qr_code" = "Scan QR Code";
-"your_contact_link_is_in_account_settings" = "Your contact link is in Account Settings";
-"new_contact" = "New Contact";
-"cancel" = "Cancel";
+
+// MARK: - QR Code Scanner
 "position_qr_code_within_frame" = "Position the QR code within the frame";
 "camera_access_required" = "Camera Access Required";
 "open_settings" = "Open Settings";
 "allow_camera_access_for_qr" = "Please allow camera access in Settings to scan QR codes";
-"error" = "Error";
-"ok" = "OK";
 "invalid_qr_code_construct" = "Invalid QR code. Please scan a Construct Messenger contact code.";
+
+// MARK: - Settings Main
+"user" = "User";
+"preferences" = "Preferences";
+"version" = "Version";
+"about" = "About";
+"account" = "Account";
+"appearance" = "Appearance";
+"network" = "Network";
+"notifications" = "Notifications";
+
+// MARK: - Settings -> Account
 "display_name" = "Display Name";
 "account_information" = "Account Information";
 "current_password" = "Current Password";
@@ -72,18 +100,26 @@
 "confirm_new_password" = "Confirm New Password";
 "change_password" = "Change Password";
 "password_min_length_message" = "Password must be at least %d characters";
-"account" = "Account";
-"please_check_all_fields" = "Please check all fields";
-"theme" = "Theme";
-"theme_footer" = "Choose how Construct Messenger looks. Automatic adjusts based on your system settings.";
-"appearance" = "Appearance";
-"automatic" = "Automatic";
-"light" = "Light";
-"dark" = "Dark";
+"show_my_qr_code" = "Show My QR Code";
+"link_copied" = "Link Copied!";
+"copy_contact_link" = "Copy Contact Link";
+"share_contact" = "Share Contact";
+"share_contact_footer" = "Share your QR code or link to let others add you as a contact";
+
+// MARK: - Settings -> My QR Code
 "my_qr_code" = "My QR Code";
 "failed_to_generate_qr_code" = "Failed to generate QR code";
 "show_this_code_to_someone_nearby" = "Show this code to someone nearby";
 "scan_with_camera_or_screenshot" = "They can scan this with their camera or take a screenshot";
+
+// MARK: - Settings -> Appearance
+"theme" = "Theme";
+"theme_footer" = "Choose how Construct Messenger looks. Automatic adjusts based on your system settings.";
+"automatic" = "Automatic";
+"light" = "Light";
+"dark" = "Dark";
+
+// MARK: - Settings -> Network
 "connected" = "Connected";
 "disconnected" = "Disconnected";
 "active_server" = "Active Server";
@@ -99,18 +135,35 @@
 "release" = "Release";
 "server_information" = "Server Information";
 "server_settings_footer" = "These settings are automatically configured based on your build configuration.";
-"network" = "Network";
-"notifications" = "Notifications";
 "reconnect_required" = "Reconnect Required";
 "reconnect_alert_message" = "The app will reconnect to the new server.";
-"show_my_qr_code" = "Show My QR Code";
-"link_copied" = "Link Copied!";
-"copy_contact_link" = "Copy Contact Link";
-"share_contact" = "Share Contact";
-"share_contact_footer" = "Share your QR code or link to let others add you as a contact";
-"user" = "User";
-"preferences" = "Preferences";
-"version" = "Version";
-"about" = "About";
-"logout" = "Logout";
-"logout_confirmation" = "Are you sure you want to logout?";
+
+// MARK: - Notifications Settings
+"notifications_settings" = "Notification Settings";
+"enable_notifications" = "Enable Notifications";
+"notifications_footer" = "Control how and when you receive notifications";
+"message_notifications" = "Message Notifications";
+"show_message_notifications" = "Show Message Notifications";
+"message_notifications_footer" = "Get notified when you receive new messages";
+"notification_preview" = "Notification Preview";
+"preview_name_and_message" = "Name and Message";
+"preview_name_only" = "Name Only";
+"preview_none" = "No Preview";
+"notification_preview_footer" = "Choose what information appears in notifications";
+"sound_and_haptics" = "Sound & Haptics";
+"notification_sound" = "Notification Sound";
+"vibration" = "Vibration";
+"sound_haptics_footer" = "Customize notification sound and vibration";
+"push_notifications" = "Push Notifications";
+"enable_push_notifications" = "Enable Push Notifications";
+"push_notifications_footer" = "Receive notifications when the app is in the background. Your messages remain end-to-end encrypted.";
+"push_privacy_notice" = "Privacy Notice";
+"push_privacy_notice_text" = "Push notifications are delivered using encrypted, anonymous tokens. The server cannot read your messages or identify who you're talking to.";
+"system_notification_settings" = "System Notification Settings";
+"open_system_settings" = "Open System Settings";
+"system_settings_footer" = "Manage notification permissions in iOS Settings";
+"notification_permissions_required" = "Notification permissions are required to receive alerts";
+"grant_permission" = "Grant Permission";
+"not_determined" = "Not Set";
+"authorized" = "Authorized";
+"denied" = "Denied";

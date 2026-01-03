@@ -65,7 +65,8 @@ struct LoginView: View {
 }
 
 #Preview {
-    LoginView(viewModel: AuthViewModel())
+    let container = PreviewHelpers.createPreviewContainer()
+    return LoginView(viewModel: AuthViewModel(context: container.viewContext))
         .padding()
 }
 

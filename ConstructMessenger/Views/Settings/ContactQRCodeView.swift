@@ -14,7 +14,11 @@ struct ContactQRCodeView: View {
     let username: String
 
     private var contactLink: String {
-        "construct://add-contact?id=\(userId)&username=\(username)"
+        let link = "construct://add-contact?id=\(userId)&username=\(username)"
+        print("🔗 ContactQRCodeView: Generated link: \(link)")
+        print("   userId: \(userId)")
+        print("   username: \(username)")
+        return link
     }
 
     var body: some View {

@@ -46,8 +46,6 @@ struct ChatView: View {
                 .background(Color.orange.opacity(0.1))
             } else if !WebSocketManager.shared.isConnected {
                 HStack(spacing: 8) {
-                    Image(systemName: "wifi.slash")
-                        .font(.caption)
                     Text("not_connected_to_server")
                         .font(.caption)
                         .foregroundColor(.red)

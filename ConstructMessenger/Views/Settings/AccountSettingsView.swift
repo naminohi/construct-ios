@@ -68,7 +68,7 @@ struct AccountSettingsView: View {
             Section {
                 TextField("display_name", text: $viewModel.displayName)
                     .onChange(of: viewModel.displayName) { newValue in
-                        viewModel.saveDisplayName(newValue)
+                        viewModel.saveDisplayName(newValue, authViewModel: authViewModel)
                     }
 
             } header: {
@@ -155,7 +155,7 @@ struct AccountSettingsView: View {
         }
         .sheet(isPresented: $showingImagePicker) {
             ImagePicker(onImagePicked: { image in
-                viewModel.saveAvatar(image)
+                viewModel.saveAvatar(image, authViewModel: authViewModel)
             })
         }
     }
@@ -243,7 +243,7 @@ struct ImagePicker: UIViewControllerRepresentable {
 
     try? context.save()
 
-    let authViewModel = AuthViewModel()
+    let authViewModel = AuthViewModel(context: context)
     authViewModel.isAuthenticated = true
     authViewModel.currentUserId = "user123"
     authViewModel.currentUsername = "john_doe"
