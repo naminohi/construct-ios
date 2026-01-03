@@ -10,6 +10,9 @@ import CoreData
 
 @main
 struct Construct_MessengerApp: App {
+    // IMPORTANT: AppDelegate for background tasks registration
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+
     static let persistentContainer: NSPersistentContainer = {
         let container = NSPersistentContainer(name: "ConstructMessenger")
         container.loadPersistentStores { description, error in
