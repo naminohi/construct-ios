@@ -190,3 +190,20 @@
 "not_determined" = "Not Set";
 "authorized" = "Authorized";
 "denied" = "Denied";
+
+// MARK: - Background Fetch & Local Notifications
+"construct_new_message" = "New Message";
+"construct_new_messages" = "New Messages";
+"construct_new_message_from" = "New message from %@";
+"construct_new_messages_count" = "You have %d new messages";
+"construct_new_messages_from_contacts" = "You have %d new messages from %d contacts";
+"construct_sync_completed" = "Messages Synced";
+"construct_sync_completed_count" = "Synced %d new messages";
+"background_fetch" = "Background Refresh";
+"background_fetch_footer" = "Check for new messages in the background. Uses minimal battery.";
+"enable_background_fetch" = "Enable Background Refresh";
+"background_fetch_status" = "Background Refresh Status";
+"background_fetch_disabled" = "Disabled";
+"background_fetch_enabled" = "Enabled";
+"background_fetch_last_check" = "Last check: %@";
+"background_fetch_waiting" = "Enabled, waiting for first check";
