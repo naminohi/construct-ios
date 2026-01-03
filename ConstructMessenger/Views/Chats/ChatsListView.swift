@@ -127,7 +127,11 @@ struct ChatsListView: View {
             bio: nil
         )
         if let chat = chatsViewModel.startChat(with: publicUserInfo) {
-            print("✅ ChatsListView: Chat created with @\(username), chat.id=\(chat.id ?? "nil"), chat.otherUser?.id=\(chat.otherUser?.id ?? "nil")")
+            print("✅ ChatsListView: Chat created with @\(username)")
+            print("   chat.id = \(chat.id ?? "nil")")
+            print("   chat.otherUser?.id = \(chat.otherUser?.id ?? "nil")")
+            print("   chat.otherUser?.username = \(chat.otherUser?.username ?? "nil")")
+            print("   chat.otherUser?.displayName = \(chat.otherUser?.displayName ?? "nil")")
         } else {
             print("❌ ChatsListView: Failed to create chat with @\(username)")
         }
