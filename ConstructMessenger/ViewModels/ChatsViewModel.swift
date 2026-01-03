@@ -52,24 +52,34 @@ class ChatsViewModel: ObservableObject {
 
         let dbUser: User
         if let existingUser = try? context.fetch(userFetchRequest).first {
-            // Use existing user
+            // Use existing user - update username and displayName if they changed
+            existingUser.username = user.username
+            existingUser.displayName = user.username
             dbUser = existingUser
-            Log.debug("Using existing user: \(user.username)", category: "ChatsViewModel")
+            Log.debug("Using existing user: id=\(user.id), username=\(user.username), displayName=\(existingUser.displayName)", category: "ChatsViewModel")
         } else {
             // Create new user
             dbUser = User(context: context)
             dbUser.id = user.id
             dbUser.username = user.username
             dbUser.displayName = user.username
-            Log.debug("Created new user: \(user.username)", category: "ChatsViewModel")
+            Log.debug("Created new user: id=\(user.id), username=\(user.username), displayName=\(user.username)", category: "ChatsViewModel")
         }
 
         let chat = Chat(context: context)
         chat.id = UUID().uuidString
         chat.otherUser = dbUser
 
-        try? context.save()
-        Log.debug("Created chat with user \(user.username), chat.otherUser.id = \(chat.otherUser?.id ?? "nil")", category: "ChatsViewModel")
+        do {
+            try context.save()
+            Log.debug("✅ Chat saved successfully", category: "ChatsViewModel")
+            Log.debug("   chat.id = \(chat.id ?? "nil")", category: "ChatsViewModel")
+            Log.debug("   chat.otherUser?.id = \(chat.otherUser?.id ?? "nil")", category: "ChatsViewModel")
+            Log.debug("   chat.otherUser?.username = \(chat.otherUser?.username ?? "nil")", category: "ChatsViewModel")
+            Log.debug("   chat.otherUser?.displayName = \(chat.otherUser?.displayName ?? "nil")", category: "ChatsViewModel")
+        } catch {
+            Log.error("❌ Failed to save chat: \(error)", category: "ChatsViewModel")
+        }
         return chat
     }
 
@@ -158,7 +168,8 @@ class ChatsViewModel: ObservableObject {
                 if let user = existingChat.otherUser {
                     user.username = data.username
                     user.displayName = data.username
-                    Log.info("✅ Updated username to: \(data.username)", category: "ChatsViewModel")
+                    try? context.save()  // ✅ FIX: Save updated username
+                    Log.info("✅ Updated username to: \(data.username), displayName: \(user.displayName)", category: "ChatsViewModel")
                 }
                 chat = existingChat
             } else {
