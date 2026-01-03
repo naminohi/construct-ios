@@ -29,7 +29,7 @@ struct MainTabView: View {
 #Preview {
     let container = PreviewHelpers.createPreviewContainer()
     let context = container.viewContext
-    let authViewModel = AuthViewModel()
+    let authViewModel = AuthViewModel(context: context)
     authViewModel.isAuthenticated = true
     authViewModel.currentUserId = "me"
     authViewModel.currentUsername = "john_doe"

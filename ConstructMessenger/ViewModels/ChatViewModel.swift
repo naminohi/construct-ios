@@ -28,6 +28,8 @@ class ChatViewModel: ObservableObject {
     init(chat: Chat, context: NSManagedObjectContext) {
         self.chat = chat
         self.viewContext = context
+        Log.debug("🔧 ChatViewModel init: chat.id=\(chat.id ?? "nil"), chat.otherUser?.id=\(chat.otherUser?.id ?? "nil"), chat.otherUser?.username=\(chat.otherUser?.username ?? "nil")", category: "ChatViewModel")
+
         setupFetchedResultsController()  // ✅ Setup FRC first
         setupSubscribers()
         checkExistingSession()  // ✅ FIXED: Check if session already exists
@@ -95,8 +97,15 @@ class ChatViewModel: ObservableObject {
     }
 
     private func fetchRecipientPublicKey() {
-        guard let userId = chat.otherUser?.id else { return }
-        guard let currentUserId = SessionManager.shared.currentUserId else { return }
+        guard let userId = chat.otherUser?.id else {
+            Log.error("❌ Cannot fetch recipient public key: chat.otherUser?.id is nil", category: "ChatViewModel")
+            return
+        }
+        guard let currentUserId = SessionManager.shared.currentUserId else {
+            Log.error("❌ Cannot fetch recipient public key: currentUserId is nil", category: "ChatViewModel")
+            return
+        }
+        Log.debug("🔑 Fetching public key for userId: \(userId), currentUserId: \(currentUserId)", category: "ChatViewModel")
 
         // 🚫 BLOCK: Cannot send encrypted messages to yourself
         if userId == currentUserId {
@@ -321,6 +330,7 @@ class ChatViewModel: ObservableObject {
     private func handleServerMessage(_ message: ServerMessage) {
         switch message {
         case .publicKeyBundle(let data):
+            Log.debug("📦 Received publicKeyBundle for userId: \(data.userId), chat.otherUser?.id: \(chat.otherUser?.id ?? "nil"), match: \(data.userId == chat.otherUser?.id)", category: "ChatViewModel")
             if data.userId == chat.otherUser?.id {
                 // ✅ Update username if we have the user in Core Data
                 if let user = chat.otherUser {

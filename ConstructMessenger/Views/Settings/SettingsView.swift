@@ -8,6 +8,7 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @Environment(\.managedObjectContext) private var viewContext
     @EnvironmentObject var authViewModel: AuthViewModel
     @StateObject private var viewModel = SettingsViewModel()
     @State private var showingQRCode = false
@@ -125,6 +126,7 @@ struct SettingsView: View {
             }
             .navigationTitle("settings")
             .onAppear {
+                viewModel.setContext(viewContext)
                 viewModel.loadUserInfo(from: authViewModel)
             }
             .sheet(isPresented: $showingQRCode) {
@@ -164,7 +166,8 @@ struct SettingsView: View {
 }
 
 #Preview {
-    let authViewModel = AuthViewModel()
+    let container = PreviewHelpers.createPreviewContainer()
+    let authViewModel = AuthViewModel(context: container.viewContext)
     authViewModel.isAuthenticated = true
     authViewModel.currentUserId = "user123"
     authViewModel.currentUsername = "john_doe"

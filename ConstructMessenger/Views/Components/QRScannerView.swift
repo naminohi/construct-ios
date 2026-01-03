@@ -227,7 +227,10 @@ struct QRScannerView: View {
         let testUsername = "test_user_\(Int.random(in: 100...999))"
         let testCode = "construct://add-contact?id=\(testUserId)&username=\(testUsername)"
 
-        print("🧪 Simulating QR scan: \(testCode)")
+        print("🧪 QRScannerView: Simulating QR scan")
+        print("   Generated URL: \(testCode)")
+        print("   UserId: \(testUserId)")
+        print("   Username: \(testUsername)")
         handleScannedCode(testCode)
     }
 

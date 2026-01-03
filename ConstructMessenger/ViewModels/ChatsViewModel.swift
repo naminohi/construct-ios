@@ -46,16 +46,30 @@ class ChatsViewModel: ObservableObject {
             return existingChat
         }
 
-        let dbUser = User(context: context)
-        dbUser.id = user.id
-        dbUser.username = user.username
-        dbUser.displayName = user.username // ✅ FIX: Set required displayName
+        // ✅ FIX: Check if User already exists before creating a new one
+        let userFetchRequest: NSFetchRequest<User> = User.fetchRequest()
+        userFetchRequest.predicate = NSPredicate(format: "id == %@", user.id)
+
+        let dbUser: User
+        if let existingUser = try? context.fetch(userFetchRequest).first {
+            // Use existing user
+            dbUser = existingUser
+            Log.debug("Using existing user: \(user.username)", category: "ChatsViewModel")
+        } else {
+            // Create new user
+            dbUser = User(context: context)
+            dbUser.id = user.id
+            dbUser.username = user.username
+            dbUser.displayName = user.username
+            Log.debug("Created new user: \(user.username)", category: "ChatsViewModel")
+        }
 
         let chat = Chat(context: context)
         chat.id = UUID().uuidString
         chat.otherUser = dbUser
 
         try? context.save()
+        Log.debug("Created chat with user \(user.username), chat.otherUser.id = \(chat.otherUser?.id ?? "nil")", category: "ChatsViewModel")
         return chat
     }
 
@@ -89,10 +103,12 @@ class ChatsViewModel: ObservableObject {
 
     // MARK: - Handle Public Key Bundle (for receiving session initialization)
     private func handlePublicKeyBundle(_ data: PublicKeyBundleData) {
+        Log.debug("📦 ChatsViewModel: Received publicKeyBundle for userId: \(data.userId), hasPendingMessage: \(pendingFirstMessages[data.userId] != nil)", category: "ChatsViewModel")
+
         // Check if we have a pending first message from this user
         guard let firstMessage = pendingFirstMessages[data.userId] else {
             // No pending message - this bundle was requested for outgoing session (handled in ChatViewModel)
-            Log.debug("Received public key bundle for \(data.userId), but no pending first message", category: "ChatsViewModel")
+            Log.debug("ChatsViewModel: No pending first message for \(data.userId) - assuming this is for ChatViewModel to handle", category: "ChatsViewModel")
 
             // Update username for existing user if found
             guard let context = viewContext else { return }

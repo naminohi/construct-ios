@@ -68,7 +68,8 @@ struct AuthView: View {
 }
 
 #Preview {
-    AuthView()
-        .environmentObject(AuthViewModel())
+    let container = PreviewHelpers.createPreviewContainer()
+    return AuthView()
+        .environmentObject(AuthViewModel(context: container.viewContext))
 }
 

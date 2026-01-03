@@ -95,7 +95,8 @@ struct RegisterView: View {
 }
 
 #Preview {
-    RegisterView(viewModel: AuthViewModel())
+    let container = PreviewHelpers.createPreviewContainer()
+    return RegisterView(viewModel: AuthViewModel(context: container.viewContext))
         .padding()
 }
 

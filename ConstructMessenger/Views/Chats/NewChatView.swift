@@ -84,19 +84,32 @@ struct NewChatView: View {
     }
 
     private func handleScannedContact(_ url: String) {
+        print("🔍 NewChatView: Handling scanned URL: \(url)")
+
         // Parse URL: construct://add-contact?id=USER_ID&username=USERNAME
-        guard url.hasPrefix("construct://add-contact"),
-              let components = URLComponents(string: url),
-              let queryItems = components.queryItems else {
-            print("Invalid contact URL format")
+        guard url.hasPrefix("construct://add-contact") else {
+            print("❌ Invalid URL prefix: \(url)")
             return
         }
+
+        guard let components = URLComponents(string: url) else {
+            print("❌ Failed to parse URL components from: \(url)")
+            return
+        }
+
+        guard let queryItems = components.queryItems else {
+            print("❌ No query items in URL: \(url)")
+            return
+        }
+
+        print("📋 Query items: \(queryItems)")
 
         // Extract parameters
         var userId: String?
         var username: String?
 
         for item in queryItems {
+            print("  - \(item.name) = \(item.value ?? "nil")")
             if item.name == "id" {
                 userId = item.value
             } else if item.name == "username" {
@@ -104,10 +117,13 @@ struct NewChatView: View {
             }
         }
 
-        guard let userId = userId, let username = username else {
-            print("Missing required parameters in contact URL")
+        guard let userId = userId, !userId.isEmpty,
+              let username = username, !username.isEmpty else {
+            print("❌ Missing or empty required parameters - userId: \(userId ?? "nil"), username: \(username ?? "nil")")
             return
         }
+
+        print("✅ Parsed contact: userId=\(userId), username=\(username)")
 
         // Create or fetch user
         addContact(userId: userId, username: username)
@@ -117,34 +133,19 @@ struct NewChatView: View {
     }
 
     private func addContact(userId: String, username: String) {
-        // Check if user already exists
-        let fetchRequest: NSFetchRequest<User> = User.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "id == %@", userId)
+        print("📱 NewChatView: Adding contact userId=\(userId), username=\(username)")
 
-        let user: User
-        if let existingUser = try? viewContext.fetch(fetchRequest).first {
-            user = existingUser
-            print("User already exists: @\(username)")
-        } else {
-            // Create new user
-            user = User(context: viewContext)
-            user.id = userId
-            user.username = username
-            user.displayName = username
-
-            try? viewContext.save()
-            print("Added new contact: @\(username)")
-        }
-
-        // Start chat with user
+        // Start chat with user - let ChatsViewModel handle User creation
         let publicUserInfo = PublicUserInfo(
-            id: user.id,
-            username: user.username,
+            id: userId,
+            username: username,
             avatarUrl: nil,
             bio: nil
         )
         if let chat = chatsViewModel.startChat(with: publicUserInfo) {
-            print("Chat created with @\(username)")
+            print("✅ NewChatView: Chat created with @\(username), chat.id=\(chat.id ?? "nil"), chat.otherUser?.id=\(chat.otherUser?.id ?? "nil")")
+        } else {
+            print("❌ NewChatView: Failed to create chat with @\(username)")
         }
     }
 }

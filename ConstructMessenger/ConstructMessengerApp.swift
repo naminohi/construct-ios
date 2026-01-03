@@ -10,9 +10,7 @@ import CoreData
 
 @main
 struct Construct_MessengerApp: App {
-    @StateObject private var authViewModel = AuthViewModel()
-
-    let persistentContainer: NSPersistentContainer = {
+    static let persistentContainer: NSPersistentContainer = {
         let container = NSPersistentContainer(name: "ConstructMessenger")
         container.loadPersistentStores { description, error in
             if let error = error {
@@ -22,10 +20,12 @@ struct Construct_MessengerApp: App {
         return container
     }()
 
+    @StateObject private var authViewModel = AuthViewModel(context: Construct_MessengerApp.persistentContainer.viewContext)
+
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .environment(\.managedObjectContext, persistentContainer.viewContext)
+                .environment(\.managedObjectContext, Construct_MessengerApp.persistentContainer.viewContext)
                 .environmentObject(authViewModel)
         }
     }
