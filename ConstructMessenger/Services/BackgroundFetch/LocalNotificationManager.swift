@@ -40,10 +40,10 @@ class LocalNotificationManager: NSObject {
                 self.isAuthorized = granted
 
                 if let error = error {
-                    Logger.log("Notification authorization error: \(error)", level: .error)
+                    Log.error("Notification authorization error: \(error)")
                 }
 
-                Logger.log("Notification authorization: \(granted ? "granted" : "denied")", level: .info)
+                Log.info("Notification authorization: \(granted ? "granted" : "denied")")
                 completion(granted)
             }
         }
@@ -54,7 +54,7 @@ class LocalNotificationManager: NSObject {
         notificationCenter.getNotificationSettings { settings in
             DispatchQueue.main.async {
                 self.isAuthorized = settings.authorizationStatus == .authorized
-                Logger.log("Notification authorization status: \(settings.authorizationStatus.rawValue)", level: .debug)
+                Log.debug("Notification authorization status: \(settings.authorizationStatus.rawValue)")
             }
         }
     }
@@ -77,7 +77,7 @@ class LocalNotificationManager: NSObject {
         chatID: String
     ) {
         guard isAuthorized else {
-            Logger.log("Cannot show notification: not authorized", level: .debug)
+            Log.debug("Cannot show notification: not authorized")
             return
         }
 
@@ -104,9 +104,9 @@ class LocalNotificationManager: NSObject {
         // Add notification
         notificationCenter.add(request) { error in
             if let error = error {
-                Logger.log("Failed to show notification: \(error)", level: .error)
+                Log.error("Failed to show notification: \(error)")
             } else {
-                Logger.log("Notification shown: \(identifier)", level: .debug)
+                Log.debug("Notification shown: \(identifier)")
             }
         }
     }
@@ -149,7 +149,7 @@ class LocalNotificationManager: NSObject {
 
         notificationCenter.add(request) { error in
             if let error = error {
-                Logger.log("Failed to show batch notification: \(error)", level: .error)
+                Log.error("Failed to show batch notification: \(error)")
             }
         }
     }
@@ -264,7 +264,7 @@ extension LocalNotificationManager: UNUserNotificationCenterDelegate {
     ) {
         let userInfo = response.notification.request.content.userInfo
 
-        Logger.log("Notification tapped: \(userInfo)", level: .debug)
+        Log.debug("Notification tapped: \(userInfo)")
 
         // Handle different notification types
         if let type = userInfo["type"] as? String {
@@ -297,7 +297,7 @@ extension LocalNotificationManager: UNUserNotificationCenterDelegate {
             userInfo: ["chatID": chatID]
         )
 
-        Logger.log("Opening chat: \(chatID)", level: .debug)
+        Log.debug("Opening chat: \(chatID)")
     }
 
     /// Handle opening chats list
@@ -308,7 +308,7 @@ extension LocalNotificationManager: UNUserNotificationCenterDelegate {
             object: nil
         )
 
-        Logger.log("Opening chats list", level: .debug)
+        Log.debug("Opening chats list")
     }
 }
 
