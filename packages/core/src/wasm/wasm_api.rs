@@ -1,80 +1,98 @@
 use wasm_bindgen::prelude::*;
 use std::collections::HashMap;
-use std::sync::Mutex;
-use once_cell::sync::Lazy;
+use std::cell::RefCell;
+use std::rc::Rc;
 use uuid::Uuid;
 
 use crate::state::app::{AppState, ConnectionState};
 use crate::crypto::suites::classic::ClassicSuiteProvider;
-use crate::utils::error::{Result, ConstructError};
+use crate::utils::error::ConstructError;
 
+// Use thread_local for single-threaded WASM context.
+// Rc<RefCell<T>> is the standard pattern for shared mutable data on a single thread.
+// - Rc: Allows multiple owners (cheaply cloneable reference count).
+// - RefCell: Allows interior mutability (borrow/borrow_mut).
+thread_local! {
+    static APP_STATES: RefCell<HashMap<String, Rc<RefCell<AppState<ClassicSuiteProvider>>>>> = RefCell::new(HashMap::new());
+}
 
-// Global state manager to hold AppState instances
-static APP_STATES: Lazy<Mutex<HashMap<String, Mutex<AppState<ClassicSuiteProvider>>>>> = Lazy::new(|| {
-    Mutex::new(HashMap::new())
-});
-
-// Internal helper to run a synchronous closure on an AppState
-fn with_app_state<F, T>(state_id: &str, mut f: F) -> std::result::Result<T, ConstructError>
+// Internal helper to run a synchronous, non-mutating closure on an AppState.
+fn with_app_state<F, T>(state_id: &str, f: F) -> Result<T, ConstructError>
 where
-    F: FnMut(&mut AppState<ClassicSuiteProvider>) -> std::result::Result<T, ConstructError>,
+    F: FnOnce(&mut AppState<ClassicSuiteProvider>) -> Result<T, ConstructError>,
 {
-    let states = APP_STATES.lock().unwrap();
-    if let Some(state_mutex) = states.get(state_id) {
-        let mut state = state_mutex.lock().unwrap();
-        f(&mut state)
+    APP_STATES.with(|states_cell| {
+        let states = states_cell.borrow();
+        if let Some(state_rc) = states.get(state_id) {
+            let mut state = state_rc.borrow_mut();
+            f(&mut state)
+        } else {
+            Err(ConstructError::NotFound(format!("AppState with ID {} not found", state_id)))
+        }
+    })
+}
+
+// Internal helper for async operations.
+// It clones the Rc to move ownership into the async block, avoiding borrow issues.
+async fn with_app_state_async<F, Fut, T>(state_id: &str, f: F) -> Result<T, JsValue>
+where
+    F: FnOnce(Rc<RefCell<AppState<ClassicSuiteProvider>>>) -> Fut,
+    Fut: std::future::Future<Output = Result<T, ConstructError>>,
+{
+    let state_rc = APP_STATES.with(|states_cell| {
+        states_cell.borrow().get(state_id).cloned()
+    });
+
+    if let Some(rc) = state_rc {
+        f(rc).await.map_err(Into::into)
     } else {
-        Err(ConstructError::NotFound(format!("AppState with ID {} not found", state_id)))
+        Err(JsValue::from_str(&ConstructError::NotFound(format!("State {} not found", state_id)).to_string()))
     }
 }
 
 
 #[wasm_bindgen]
-pub async fn create_app_state(db_name: String) -> std::result::Result<String, JsValue> {
+pub async fn create_app_state(db_name: String) -> Result<String, JsValue> {
     let _ = db_name;
     console_error_panic_hook::set_once();
-    let state = AppState::<ClassicSuiteProvider>::new().await.map_err(Into::<JsValue>::into)?;
+    let state = AppState::<ClassicSuiteProvider>::new().await?;
     let state_id = Uuid::new_v4().to_string();
-    let mut states = APP_STATES.lock().unwrap();
-    states.insert(state_id.clone(), Mutex::new(state));
+    let state_rc = Rc::new(RefCell::new(state));
+
+    APP_STATES.with(|states_cell| {
+        states_cell.borrow_mut().insert(state_id.clone(), state_rc);
+    });
     Ok(state_id)
 }
 
 #[wasm_bindgen]
 pub fn destroy_app_state(state_id: String) {
-    let mut states = APP_STATES.lock().unwrap();
-    states.remove(&state_id);
+    APP_STATES.with(|states_cell| {
+        states_cell.borrow_mut().remove(&state_id);
+    });
 }
 
-// NOTE: The async functions below are not ideal because they lock a std::sync::Mutex
-// across an .await point, which can lead to deadlocks if the executor is multi-threaded.
-// However, wasm-bindgen's executor on the main browser thread is single-threaded,
-// so this should be safe in this specific context. A more robust solution would
-// involve using an async-aware mutex if this code were to be used in a multi-threaded
-// environment.
+type JsResult<T> = Result<T, JsValue>;
 
 #[wasm_bindgen]
-pub async fn app_state_initialize_user(state_id: String, username: String, password: String) -> std::result::Result<(), JsValue> {
-    let states = APP_STATES.lock().unwrap();
-    let state_mutex = states.get(&state_id).ok_or_else(|| JsValue::from_str(&ConstructError::NotFound(format!("State {} not found", state_id)).to_string()))?;
-    let mut state = state_mutex.lock().unwrap();
-    state.initialize_user(username, password).await.map_err(Into::<JsValue>::into)
+pub async fn app_state_initialize_user(state_id: String, username: String, password: String) -> JsResult<()> {
+    with_app_state_async(&state_id, |cell| async move {
+        cell.borrow_mut().initialize_user(username, password).await
+    }).await
 }
 
 #[wasm_bindgen]
-pub async fn app_state_finalize_registration(state_id: String, server_user_id: String, session_token: String, password: String) -> std::result::Result<(), JsValue> {
-    let states = APP_STATES.lock().unwrap();
-    let state_mutex = states.get(&state_id).ok_or_else(|| JsValue::from_str(&ConstructError::NotFound(format!("State {} not found", state_id)).to_string()))?;
-    let mut state = state_mutex.lock().unwrap();
-    state.finalize_registration(server_user_id, session_token, password).await.map_err(Into::<JsValue>::into)
+pub async fn app_state_finalize_registration(state_id: String, server_user_id: String, session_token: String, password: String) -> JsResult<()> {
+    with_app_state_async(&state_id, |cell| async move {
+        cell.borrow_mut().finalize_registration(server_user_id, session_token, password).await
+    }).await
 }
 
 #[wasm_bindgen]
-pub async fn app_state_load_user(state_id: String, user_id: String, password: String) -> std::result::Result<(), JsValue> {
-    let states = APP_STATES.lock().unwrap();
-    let state_mutex = states.get(&state_id).ok_or_else(|| JsValue::from_str(&ConstructError::NotFound(format!("State {} not found", state_id)).to_string()))?;
-    let mut state = state_mutex.lock().unwrap();
-    state.load_user(user_id, password).await.map_err(Into::<JsValue>::into)
+pub async fn app_state_load_user(state_id: String, user_id: String, password: String) -> JsResult<()> {
+    with_app_state_async(&state_id, |cell| async move {
+        cell.borrow_mut().load_user(user_id, password).await
+    }).await
 }
 
 #[wasm_bindgen]
@@ -88,48 +106,44 @@ pub fn app_state_get_username(state_id: String) -> Option<String> {
 }
 
 #[wasm_bindgen]
-pub async fn app_state_add_contact(state_id: String, contact_id: String, username: String) -> std::result::Result<(), JsValue> {
-    let states = APP_STATES.lock().unwrap();
-    let state_mutex = states.get(&state_id).ok_or_else(|| JsValue::from_str(&ConstructError::NotFound(format!("State {} not found", state_id)).to_string()))?;
-    let mut state = state_mutex.lock().unwrap();
-    state.add_contact(contact_id, username).await.map_err(Into::<JsValue>::into)
+pub async fn app_state_add_contact(state_id: String, contact_id: String, username: String) -> JsResult<()> {
+    with_app_state_async(&state_id, |cell| async move {
+        cell.borrow_mut().add_contact(contact_id, username).await
+    }).await
 }
 
 #[wasm_bindgen]
-pub fn app_state_get_contacts(state_id: String) -> std::result::Result<JsValue, JsValue> {
-    let contacts = with_app_state(&state_id, |state| {
+pub fn app_state_get_contacts(state_id: String) -> JsResult<JsValue> {
+    let contacts_val = with_app_state(&state_id, |state| {
         let contacts = state.get_contacts();
-        // This serialization can't fail
-        Ok(serde_json::to_value(contacts).unwrap())
-    }).map_err(Into::<JsValue>::into)?;
-    Ok(serde_wasm_bindgen::to_value(&contacts)?)
+        serde_json::to_value(contacts).map_err(|e| ConstructError::SerializationError(e.to_string()))
+    })?;
+    Ok(serde_wasm_bindgen::to_value(&contacts_val)?)
 }
 
 #[wasm_bindgen]
-pub async fn app_state_send_message(state_id: String, to_contact_id: String, session_id: String, text: String) -> std::result::Result<String, JsValue> {
-    let states = APP_STATES.lock().unwrap();
-    let state_mutex = states.get(&state_id).ok_or_else(|| JsValue::from_str(&ConstructError::NotFound(format!("State {} not found", state_id)).to_string()))?;
-    let mut state = state_mutex.lock().unwrap();
-    state.send_message(&to_contact_id, &session_id, &text).await.map_err(Into::<JsValue>::into)
+pub async fn app_state_send_message(state_id: String, to_contact_id: String, session_id: String, text: String) -> JsResult<String> {
+    with_app_state_async(&state_id, |cell| async move {
+        cell.borrow_mut().send_message(&to_contact_id, &session_id, &text).await
+    }).await
 }
 
 #[wasm_bindgen]
-pub async fn app_state_load_conversation(state_id: String, contact_id: String) -> std::result::Result<JsValue, JsValue> {
-    let states = APP_STATES.lock().unwrap();
-    let state_mutex = states.get(&state_id).ok_or_else(|| JsValue::from_str(&ConstructError::NotFound(format!("State {} not found", state_id)).to_string()))?;
-    let mut state = state_mutex.lock().unwrap();
-    let conversation = state.load_conversation(&contact_id).await?;
+pub async fn app_state_load_conversation(state_id: String, contact_id: String) -> JsResult<JsValue> {
+    let conversation = with_app_state_async(&state_id, |cell| async move {
+        cell.borrow_mut().load_conversation(&contact_id).await
+    }).await?;
     Ok(serde_wasm_bindgen::to_value(&conversation)?)
 }
 
 #[wasm_bindgen]
-pub fn app_state_connect(state_id: String, server_url: String) -> std::result::Result<(), JsValue> {
-    with_app_state(&state_id, |state| state.connect(&server_url)).map_err(Into::<JsValue>::into)
+pub fn app_state_connect(state_id: String, server_url: String) -> JsResult<()> {
+    with_app_state(&state_id, |state| state.connect(&server_url)).map_err(Into::into)
 }
 
 #[wasm_bindgen]
-pub fn app_state_disconnect(state_id: String) -> std::result::Result<(), JsValue> {
-    with_app_state(&state_id, |state| state.disconnect()).map_err(Into::<JsValue>::into)
+pub fn app_state_disconnect(state_id: String) -> JsResult<()> {
+    with_app_state(&state_id, |state| state.disconnect()).map_err(Into::into)
 }
 
 #[wasm_bindgen]
@@ -168,6 +182,6 @@ pub fn app_state_reset_reconnect(state_id: String) {
 }
 
 #[wasm_bindgen]
-pub fn app_state_register_on_server(state_id: String, password: String) -> std::result::Result<(), JsValue> {
-    with_app_state(&state_id, |state| state.register_on_server(password.clone())).map_err(Into::<JsValue>::into)
+pub fn app_state_register_on_server(state_id: String, password: String) -> JsResult<()> {
+    with_app_state(&state_id, |state| state.register_on_server(password.clone())).map_err(Into::into)
 }
