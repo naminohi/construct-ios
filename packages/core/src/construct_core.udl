@@ -8,6 +8,25 @@ dictionary RegistrationBundleJson {
     string suite_id;
 };
 
+dictionary EncryptedMessageComponents {
+    sequence<u8> ephemeral_public_key;
+    u32 message_number;
+    string content;
+};
+
+dictionary SessionInitResult {
+    string session_id;
+    string decrypted_message;
+};
+
+dictionary PrivateKeysJson {
+    string identity_secret;
+    string signing_secret;
+    string signed_prekey_secret;
+    string prekey_signature;
+    string suite_id;
+};
+
 [Error]
 enum CryptoError {
     "InitializationFailed",
@@ -18,6 +37,7 @@ enum CryptoError {
     "InvalidKeyData",
     "InvalidCiphertext",
     "SerializationFailed",
+    "MessagePackDeserializationFailed",
 };
 
 interface ClassicCryptoCore {
@@ -25,16 +45,25 @@ interface ClassicCryptoCore {
     string export_registration_bundle_json();
 
     [Throws=CryptoError]
+    string export_private_keys_json();
+
+    [Throws=CryptoError]
     string init_session(string contact_id, sequence<u8> recipient_bundle);
 
     [Throws=CryptoError]
-    sequence<u8> encrypt_message(string session_id, string plaintext);
+    SessionInitResult init_receiving_session(string contact_id, sequence<u8> recipient_bundle, sequence<u8> first_message);
 
     [Throws=CryptoError]
-    string decrypt_message(string session_id, sequence<u8> ciphertext);
+    EncryptedMessageComponents encrypt_message(string session_id, string plaintext);
+
+    [Throws=CryptoError]
+    string decrypt_message(string session_id, sequence<u8> ephemeral_public_key, u32 message_number, string content);
 };
 
 namespace construct_core {
     [Throws=CryptoError]
     ClassicCryptoCore create_crypto_core();
+
+    [Throws=CryptoError]
+    ClassicCryptoCore create_crypto_core_from_keys_json(string keys_json);
 };

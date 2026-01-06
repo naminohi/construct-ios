@@ -95,12 +95,16 @@ pub struct ReconnectState {
 impl ReconnectState {
     /// Создать новое состояние переподключения
     pub fn new() -> Self {
+        let cfg = crate::config::Config::global();
+        let initial_delay = cfg.websocket_retry_initial_ms as u32;
+        let max_delay = cfg.websocket_retry_max_ms as u32;
+
         Self {
             attempts: 0,
             max_attempts: 0,        // Бесконечные попытки
-            current_delay_ms: 1000, // Начинаем с 1 секунды
-            initial_delay_ms: 1000,
-            max_delay_ms: 30000, // Максимум 30 секунд
+            current_delay_ms: initial_delay,
+            initial_delay_ms: initial_delay,
+            max_delay_ms: max_delay,
             enabled: true,
         }
     }
@@ -156,15 +160,7 @@ pub struct AppState<P: CryptoProvider> {
     conversations_manager: ConversationsManager,
 
     // === Хранилище ===
-    #[cfg(target_arch = "wasm32")]
-    storage: IndexedDbStorage,
-
-    #[cfg(not(target_arch = "wasm32"))]
     storage: MemoryStorage,
-
-    // === Сетевое соединение ===
-    #[cfg(target_arch = "wasm32")]
-    transport: Option<WebSocketTransport>,
 
     // === Состояние соединения ===
     connection_state: ConnectionState,
@@ -607,32 +603,16 @@ impl<P: CryptoProvider> AppState<P> {
     // === Очистка ===
 
     /// Очистить все данные
-    #[cfg(target_arch = "wasm32")]
-    pub async fn clear_all_data(&mut self) -> Result<()> {
+    pub fn clear_all_data(&mut self) -> Result<()> {
         // Очистить кеши
         self.message_cache.clear();
         self.conversations_manager.clear_all();
         self.contact_manager.clear_all();
 
-        // Сбросить состояние
-        self.user_id = None;
-        self.username = None;
-        self.active_conversation = None;
-        self.connection_state = ConnectionState::Disconnected;
-
-        // TODO: Очистить IndexedDB полностью
-
-        Ok(())
-    }
-
-    /// Очистить все данные (non-WASM версия)
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn clear_all_data(&mut self) -> Result<()> {
-        self.message_cache.clear();
-        self.conversations_manager.clear_all();
-        self.contact_manager.clear_all();
+        // Очистить хранилище
         self.storage.clear_all()?;
 
+        // Сбросить состояние
         self.user_id = None;
         self.username = None;
         self.active_conversation = None;
@@ -697,7 +677,7 @@ impl<P: CryptoProvider> AppState<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::classic_suite::ClassicSuiteProvider;
+    use crate::crypto::suites::classic::ClassicSuiteProvider;
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))]

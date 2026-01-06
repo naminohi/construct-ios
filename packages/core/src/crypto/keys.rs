@@ -100,6 +100,40 @@ impl<P: CryptoProvider> KeyManager<P> {
         Ok(())
     }
 
+    /// Инициализировать с существующими ключами (для восстановления из storage)
+    pub fn initialize_from_keys(
+        &mut self,
+        identity_secret_bytes: Vec<u8>,
+        signing_secret_bytes: Vec<u8>,
+        prekey_secret_bytes: Vec<u8>,
+        prekey_signature: Vec<u8>,
+    ) -> Result<()> {
+        // Создать ключи из байтов
+        let identity_secret = P::kem_private_key_from_bytes(identity_secret_bytes);
+        let identity_public = P::from_private_key_to_public_key(&identity_secret)
+            .map_err(|e| ConstructError::CryptoError(format!("Failed to derive public key: {:?}", e)))?;
+
+        let signing_secret = P::signature_private_key_from_bytes(signing_secret_bytes);
+        let signing_public = P::from_signature_private_to_public(&signing_secret)
+            .map_err(|e| ConstructError::CryptoError(format!("Failed to derive verifying key: {:?}", e)))?;
+
+        let prekey_secret = P::kem_private_key_from_bytes(prekey_secret_bytes);
+        let prekey_public = P::from_private_key_to_public_key(&prekey_secret)
+            .map_err(|e| ConstructError::CryptoError(format!("Failed to derive prekey public: {:?}", e)))?;
+
+        // Сохранить ключи
+        self.identity_key = Some((identity_secret, identity_public));
+        self.signing_key = Some((signing_secret, signing_public));
+        self.current_signed_prekey = Some(PrekeyStore {
+            key_pair: (prekey_secret, prekey_public),
+            signature: prekey_signature,
+            created_at: 0,  // Не важно для восстановленных ключей
+            key_id: 1,
+        });
+
+        Ok(())
+    }
+
     /// Получить identity public key
     pub fn identity_public_key(&self) -> Result<&P::KemPublicKey> {
         self.identity_key
@@ -158,8 +192,8 @@ impl<P: CryptoProvider> KeyManager<P> {
 
         self.current_signed_prekey = Some(prekey_store);
 
-        // Очищаем старые prekeys (старше 30 дней)
-        self.cleanup_old_prekeys(30 * 24 * 3600);
+        // Очищаем старые prekeys (используя конфигурируемый период)
+        self.cleanup_old_prekeys(crate::config::Config::global().prekey_cleanup_period_secs);
 
         Ok(())
     }
@@ -182,12 +216,52 @@ impl<P: CryptoProvider> KeyManager<P> {
     }
 
     /// Экспорт регистрационного bundle
-    pub fn export_registration_bundle(&self) -> Result<crate::crypto::RegistrationBundle> {
+    ///
+    /// TODO(ARCHITECTURE): Этот метод возвращает конкретный тип X3DHPublicKeyBundle
+    /// См. полное описание: packages/core/ARCHITECTURE_TODOS.md
+    ///
+    /// ПРОБЛЕМА:
+    /// - KeyManager<P> generic только по CryptoProvider
+    /// - Не знает о handshake protocol (X3DH, PQ-X3DH, etc.)
+    /// - Поэтому возвращает конкретный тип X3DHPublicKeyBundle
+    /// - Это создаёт несоответствие с Client<P, H, M> где H - generic handshake protocol
+    ///
+    /// ПОСЛЕДСТВИЯ:
+    /// - Client::get_registration_bundle() не может использовать этот метод
+    /// - Потому что возвращаемые типы не совпадают:
+    ///   - Этот метод: X3DHPublicKeyBundle (конкретный)
+    ///   - Client метод: H::RegistrationBundle (generic)
+    /// - Приходится обходить Client и вызывать этот метод напрямую
+    ///
+    /// ПРАВИЛЬНОЕ РЕШЕНИЕ:
+    /// Сделать KeyManager generic по handshake protocol:
+    /// ```rust,ignore
+    /// pub struct KeyManager<P: CryptoProvider, H: KeyAgreement<P>> {
+    ///     // ...
+    /// }
+    ///
+    /// impl<P: CryptoProvider, H: KeyAgreement<P>> KeyManager<P, H> {
+    ///     pub fn export_registration_bundle(&self) -> Result<H::RegistrationBundle> {
+    ///         // Делегировать создание bundle протоколу handshake
+    ///         H::export_from_key_manager(self)
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// Это потребует:
+    /// 1. Добавить в trait KeyAgreement метод export_from_key_manager()
+    /// 2. Обновить KeyManager<P> -> KeyManager<P, H>
+    /// 3. Обновить все места использования KeyManager
+    ///
+    /// Смотрите также:
+    /// - client_api.rs:137-161 - проблема в Client::get_registration_bundle()
+    /// - uniffi_bindings.rs:93-118 - workaround и полное описание решений
+    pub fn export_registration_bundle(&self) -> Result<crate::crypto::handshake::x3dh::X3DHPublicKeyBundle> {
         let identity_public = self.identity_public_key()?.as_ref().to_vec();
         let verifying_key = self.verifying_key()?.as_ref().to_vec();
         let prekey = self.current_signed_prekey()?;
 
-        Ok(crate::crypto::RegistrationBundle {
+        Ok(crate::crypto::handshake::x3dh::X3DHPublicKeyBundle {
             identity_public,
             signed_prekey_public: prekey.key_pair.1.as_ref().to_vec(),
             signature: prekey.signature.clone(),
@@ -197,12 +271,12 @@ impl<P: CryptoProvider> KeyManager<P> {
     }
 
     /// Экспорт публичного key bundle
-    pub fn export_public_bundle(&self) -> Result<crate::crypto::PublicKeyBundle> {
+    pub fn export_public_bundle(&self) -> Result<crate::crypto::handshake::x3dh::X3DHPublicKeyBundle> {
         let identity_public = self.identity_public_key()?.as_ref().to_vec();
         let verifying_key = self.verifying_key()?.as_ref().to_vec();
         let prekey = self.current_signed_prekey()?;
 
-        Ok(crate::crypto::PublicKeyBundle {
+        Ok(crate::crypto::handshake::x3dh::X3DHPublicKeyBundle {
             identity_public,
             signed_prekey_public: prekey.key_pair.1.as_ref().to_vec(),
             signature: prekey.signature.clone(),

@@ -22,11 +22,23 @@ pub trait CryptoProvider: Send + Sync + 'static {
     /// Creates a KEM public key from raw bytes
     fn kem_public_key_from_bytes(bytes: Vec<u8>) -> Self::KemPublicKey;
 
+    /// Creates a KEM private key from raw bytes
+    fn kem_private_key_from_bytes(bytes: Vec<u8>) -> Self::KemPrivateKey;
+
+    /// Creates an AEAD key from raw bytes
+    fn aead_key_from_bytes(bytes: Vec<u8>) -> Self::AeadKey;
+
     /// Creates a Signature public key from raw bytes
     fn signature_public_key_from_bytes(bytes: Vec<u8>) -> Self::SignaturePublicKey;
 
+    /// Creates a Signature private key from raw bytes
+    fn signature_private_key_from_bytes(bytes: Vec<u8>) -> Self::SignaturePrivateKey;
+
     /// Generates a new Signature key pair.
     fn generate_signature_keys() -> Result<(Self::SignaturePrivateKey, Self::SignaturePublicKey), CryptoError>;
+
+    /// Derives a Signature public key from a Signature private key.
+    fn from_signature_private_to_public(private_key: &Self::SignaturePrivateKey) -> Result<Self::SignaturePublicKey, CryptoError>;
 
     /// Signs a message with the given private key.
     fn sign(private_key: &Self::SignaturePrivateKey, message: &[u8]) -> Result<Vec<u8>, CryptoError>;

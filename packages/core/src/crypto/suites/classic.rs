@@ -1,4 +1,4 @@
-use crate::crypto::CryptoProvider;
+use crate::crypto::provider::CryptoProvider;
 use crate::error::CryptoError;
 use chacha20poly1305::{
     aead::{Aead, Payload},
@@ -10,9 +10,6 @@ use rand::rngs::OsRng;
 use rand_core::RngCore;
 use sha2::Sha256;
 use x25519_dalek::{EphemeralSecret, PublicKey as KemPublicKeyDalek, StaticSecret};
-
-// Suite ID for the classic suite as per API_V3_SPEC.md
-const CLASSIC_SUITE_ID: u16 = 1;
 
 /// Concrete implementation of `CryptoProvider` for the classic suite.
 pub struct ClassicSuiteProvider;
@@ -47,8 +44,23 @@ impl CryptoProvider for ClassicSuiteProvider {
         bytes
     }
 
+    fn kem_private_key_from_bytes(bytes: Vec<u8>) -> Self::KemPrivateKey {
+        // For ClassicSuiteProvider, KemPrivateKey is Vec<u8>, so just return it
+        bytes
+    }
+
+    fn aead_key_from_bytes(bytes: Vec<u8>) -> Self::AeadKey {
+        // For ClassicSuiteProvider, AeadKey is Vec<u8>, so just return it
+        bytes
+    }
+
     fn signature_public_key_from_bytes(bytes: Vec<u8>) -> Self::SignaturePublicKey {
         // For ClassicSuiteProvider, SignaturePublicKey is Vec<u8>, so just return it
+        bytes
+    }
+
+    fn signature_private_key_from_bytes(bytes: Vec<u8>) -> Self::SignaturePrivateKey {
+        // For ClassicSuiteProvider, SignaturePrivateKey is Vec<u8>, so just return it
         bytes
     }
 
@@ -60,6 +72,18 @@ impl CryptoProvider for ClassicSuiteProvider {
             signing_key.to_bytes().to_vec(),
             verifying_key.to_bytes().to_vec(),
         ))
+    }
+
+    fn from_signature_private_to_public(
+        private_key: &Self::SignaturePrivateKey,
+    ) -> Result<Self::SignaturePublicKey, CryptoError> {
+        let bytes_slice: &[u8] = private_key.as_ref();
+        let bytes: &[u8; 32] = bytes_slice
+            .try_into()
+            .map_err(|_| CryptoError::InvalidInputError("Invalid signing key length".to_string()))?;
+        let signing_key = SigningKey::from_bytes(bytes);
+        let verifying_key = signing_key.verifying_key();
+        Ok(verifying_key.to_bytes().to_vec())
     }
 
     fn sign(private_key: &Self::SignaturePrivateKey, message: &[u8]) -> Result<Vec<u8>, CryptoError> {
@@ -77,33 +101,21 @@ impl CryptoProvider for ClassicSuiteProvider {
         message: &[u8],
         signature: &[u8],
     ) -> Result<(), CryptoError> {
-        eprintln!("[ClassicSuite] verify called");
-        eprintln!("[ClassicSuite] public_key length: {}", public_key.len());
-        eprintln!("[ClassicSuite] message length: {}", message.len());
-        eprintln!("[ClassicSuite] signature length: {}", signature.len());
-
         let vk_slice: &[u8] = public_key.as_ref();
         let vk_bytes: &[u8; 32] = vk_slice
             .try_into()
             .map_err(|_| CryptoError::InvalidInputError("Invalid verifying key length".to_string()))?;
-        eprintln!("[ClassicSuite] Converting to VerifyingKey...");
         let verifying_key = VerifyingKey::from_bytes(vk_bytes)
             .map_err(|e| CryptoError::InvalidInputError(format!("Invalid verifying key: {}", e)))?;
-        eprintln!("[ClassicSuite] VerifyingKey created");
 
         let sig_bytes: &[u8; 64] = signature
             .try_into()
             .map_err(|_| CryptoError::InvalidInputError("Invalid signature length".to_string()))?;
-        eprintln!("[ClassicSuite] Creating Signature object...");
         let signature_obj = Signature::from_bytes(sig_bytes);
-        eprintln!("[ClassicSuite] Signature object created");
 
-        eprintln!("[ClassicSuite] Calling verifying_key.verify()...");
-        let result = verifying_key
+        verifying_key
             .verify(message, &signature_obj)
-            .map_err(|e| CryptoError::SignatureVerificationError(e.to_string()));
-        eprintln!("[ClassicSuite] verify completed: {:?}", result.is_ok());
-        result
+            .map_err(|e| CryptoError::SignatureVerificationError(e.to_string()))
     }
 
     fn kem_encapsulate(
@@ -132,34 +144,19 @@ impl CryptoProvider for ClassicSuiteProvider {
         private_key: &Self::KemPrivateKey,
         ciphertext: &[u8],
     ) -> Result<Vec<u8>, CryptoError> {
-        eprintln!("[ClassicSuite] kem_decapsulate called");
-        eprintln!("[ClassicSuite] private_key length: {}", private_key.len());
-        eprintln!("[ClassicSuite] ciphertext length: {}", ciphertext.len());
-
         let pk_slice: &[u8] = private_key.as_ref();
         let bytes: &[u8; 32] = pk_slice
             .try_into()
             .map_err(|_| CryptoError::InvalidInputError("Invalid KEM private key length".to_string()))?;
-        eprintln!("[ClassicSuite] Creating StaticSecret...");
         let static_secret = StaticSecret::from(*bytes);
-        eprintln!("[ClassicSuite] StaticSecret created");
 
         let ct_bytes: &[u8; 32] = ciphertext
             .try_into()
             .map_err(|_| CryptoError::InvalidInputError("Invalid KEM ciphertext length".to_string()))?;
-        eprintln!("[ClassicSuite] Creating ephemeral PublicKey...");
         let ephemeral_public_key = KemPublicKeyDalek::from(*ct_bytes);
-        eprintln!("[ClassicSuite] ephemeral PublicKey created");
 
-        eprintln!("[ClassicSuite] Performing Diffie-Hellman...");
         let shared_secret = static_secret.diffie_hellman(&ephemeral_public_key);
-        eprintln!("[ClassicSuite] Diffie-Hellman completed");
-
-        eprintln!("[ClassicSuite] Converting shared_secret to bytes...");
-        let result = shared_secret.to_bytes().to_vec();
-        eprintln!("[ClassicSuite] kem_decapsulate completed, result length: {}", result.len());
-
-        Ok(result)
+        Ok(shared_secret.to_bytes().to_vec())
     }
 
     fn aead_encrypt(
@@ -263,6 +260,6 @@ impl CryptoProvider for ClassicSuiteProvider {
     }
 
     fn suite_id() -> u16 {
-        CLASSIC_SUITE_ID
+        crate::config::Config::global().classic_suite_id
     }
 }
