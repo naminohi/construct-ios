@@ -11,7 +11,12 @@ class WebSocketManager: NSObject, ObservableObject {
 
     private var webSocketTask: URLSessionWebSocketTask?
     private var url: URL {
-        URL(string: APIConstants.activeServerURL)!
+        let raw = APIConstants.activeServerURL
+            guard let url = URL(string: raw) else {
+                Log.error("❌ Invalid WebSocket URL: \(raw)", category: "WebSocket")
+                fatalError("Invalid WebSocket URL: \(raw)")
+            }
+            return url
     }
     private var session: URLSession!
 
@@ -36,7 +41,7 @@ class WebSocketManager: NSObject, ObservableObject {
             switch self {
             case .connected: return "Connected"
             case .disconnected: return "Disconnected"
-            case .reconnecting(let attempt): return "Reconnecting... )"
+            case .reconnecting: return "Reconnecting..."
             }
         }
     }

@@ -39,7 +39,7 @@ class EnergyMonitor {
     private func setupNetworkMonitoring() {
         pathMonitor.pathUpdateHandler = { [weak self] path in
             self?.currentPath = path
-            Logger.log("Network status changed: \(path.status)", level: .debug)
+            Log.error("Network status changed: \(path.status)")
         }
         pathMonitor.start(queue: monitorQueue)
     }
@@ -54,23 +54,23 @@ class EnergyMonitor {
     func shouldPerformBackgroundFetch() -> Bool {
         // Check network availability first (fastest check)
         guard isNetworkAvailable() else {
-            Logger.log("❌ Network not available, skipping fetch", level: .debug)
+            Log.debug("❌ Network not available, skipping fetch")
             return false
         }
 
         // Check Low Power Mode
         if isLowPowerModeEnabled() {
-            Logger.log("❌ Low Power Mode enabled, skipping fetch", level: .debug)
+            Log.debug("❌ Low Power Mode enabled, skipping fetch")
             return false
         }
 
         // Check battery level
         if isBatteryLow() && !isCharging() {
-            Logger.log("❌ Battery low and not charging, skipping fetch", level: .debug)
+            Log.debug("❌ Battery low and not charging, skipping fetch")
             return false
         }
 
-        Logger.log("✅ Energy conditions favorable for background fetch", level: .debug)
+        Log.debug("✅ Energy conditions favorable for background fetch")
         return true
     }
 

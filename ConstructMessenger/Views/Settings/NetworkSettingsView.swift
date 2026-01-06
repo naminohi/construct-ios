@@ -95,8 +95,8 @@ struct NetworkSettingsView: View {
                     Text("environment")
                         .foregroundColor(.secondary)
                     Spacer()
-                    Text(ServerEnvironment.current.displayName)
-                        .fontWeight(.medium)
+//                    Text(ServerEnvironment.current.displayName)
+//                        .fontWeight(.medium)
                 }
 
                 HStack {
@@ -141,7 +141,7 @@ struct NetworkSettingsView: View {
             print("⚠️ Using custom server: \(url)")
         } else {
             storedServerURL = nil
-            print("✅ Reset to default server: \(ServerEnvironment.current.serverURL)")
+//            print("✅ Reset to default server: \(ServerEnvironment.current.serverURL)")
         }
 
         // Notify and reconnect

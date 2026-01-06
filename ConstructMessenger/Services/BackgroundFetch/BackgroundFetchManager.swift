@@ -9,6 +9,7 @@ import Foundation
 import BackgroundTasks
 import Combine
 import UIKit
+import os.log
 
 /// Manages background task scheduling and execution for message fetching
 /// Uses BGTaskScheduler for intelligent, energy-efficient background operations
@@ -48,7 +49,7 @@ class BackgroundFetchManager: NSObject {
 
     private override init() {
         super.init()
-        Logger.log("BackgroundFetchManager initialized", level: .info)
+        Log.info("BackgroundFetchManager initialized")
     }
 
     // MARK: - Registration
@@ -73,7 +74,7 @@ class BackgroundFetchManager: NSObject {
             self.handleMaintenance(task: task as! BGProcessingTask)
         }
 
-        Logger.log("Background tasks registered successfully", level: .info)
+        Log.info("Background tasks registered successfully")
     }
 
     // MARK: - Scheduling
@@ -93,9 +94,9 @@ class BackgroundFetchManager: NSObject {
 
         do {
             try BGTaskScheduler.shared.submit(request)
-            Logger.log("Background fetch scheduled successfully", level: .info)
+            Log.info("Background fetch scheduled successfully")
         } catch {
-            Logger.log("Failed to schedule background fetch: \(error)", level: .error)
+            Log.error("Failed to schedule background fetch: \(error)")
         }
     }
 
@@ -113,9 +114,9 @@ class BackgroundFetchManager: NSObject {
 
         do {
             try BGTaskScheduler.shared.submit(request)
-            Logger.log("Maintenance task scheduled successfully", level: .info)
+            Log.info("Maintenance task scheduled successfully")
         } catch {
-            Logger.log("Failed to schedule maintenance task: \(error)", level: .error)
+            Log.error("Failed to schedule maintenance task: \(error)")
         }
     }
 
@@ -123,28 +124,28 @@ class BackgroundFetchManager: NSObject {
     func cancelAllBackgroundTasks() {
         BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.messageRefreshTaskID)
         BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.maintenanceTaskID)
-        Logger.log("All background tasks cancelled", level: .info)
+        Log.info("All background tasks cancelled")
     }
 
     // MARK: - Task Handlers
 
     /// Handle BGAppRefreshTask for message fetching
     private func handleMessageRefresh(task: BGAppRefreshTask) {
-        Logger.log("📬 Background message refresh started", level: .info)
+        Log.info("📬 Background message refresh started")
 
         // Schedule next refresh immediately
         scheduleBackgroundFetch()
 
         // Set expiration handler (iOS gives 30 seconds)
         task.expirationHandler = {
-            Logger.log("⏰ Background task expired", level: .warning)
+            Log.error("⏰ Background task expired")
             self.cleanupFetch()
             task.setTaskCompleted(success: false)
         }
 
         // Check if we should perform fetch (battery, network, etc.)
         guard energyMonitor.shouldPerformBackgroundFetch() else {
-            Logger.log("⚠️ Skipping background fetch due to energy conditions", level: .info)
+            Log.info("⚠️ Skipping background fetch due to energy conditions")
             task.setTaskCompleted(success: true)
             return
         }
@@ -153,13 +154,13 @@ class BackgroundFetchManager: NSObject {
         performQuickMessageFetch { result in
             switch result {
             case .success(let messageCount):
-                Logger.log("✅ Background fetch completed: \(messageCount) new messages", level: .info)
+                Log.info("✅ Background fetch completed: \(messageCount) new messages")
                 self.lastFetchDate = Date()
                 self.lastFetchResult = .success(messageCount)
                 task.setTaskCompleted(success: true)
 
             case .failure(let error):
-                Logger.log("❌ Background fetch failed: \(error)", level: .error)
+                Log.error("❌ Background fetch failed: \(error)")
                 self.lastFetchResult = .failure(error)
                 task.setTaskCompleted(success: false)
             }
@@ -168,17 +169,17 @@ class BackgroundFetchManager: NSObject {
 
     /// Handle BGProcessingTask for maintenance operations
     private func handleMaintenance(task: BGProcessingTask) {
-        Logger.log("🔧 Maintenance task started", level: .info)
+        Log.info("🔧 Maintenance task started")
 
         // Set expiration handler
         task.expirationHandler = {
-            Logger.log("⏰ Maintenance task expired", level: .warning)
+            Log.error("⏰ Maintenance task expired")
             task.setTaskCompleted(success: false)
         }
 
         // Perform maintenance operations
         performMaintenance { success in
-            Logger.log("Maintenance task completed: \(success)", level: .info)
+            Log.info("Maintenance task completed: \(success)")
             task.setTaskCompleted(success: success)
 
             // Schedule next maintenance
@@ -227,7 +228,7 @@ class BackgroundFetchManager: NSObject {
     private func cleanupFetch() {
         // Disconnect WebSocket if connected
         // Cancel any pending operations
-        Logger.log("Cleaning up fetch resources", level: .debug)
+        Log.error("Cleaning up fetch resources")
     }
 
     /// Perform maintenance operations (cache cleanup, etc.)
@@ -249,7 +250,7 @@ class BackgroundFetchManager: NSObject {
     func enableBackgroundFetch() {
         isBackgroundFetchEnabled = true
         scheduleBackgroundFetch()
-        Logger.log("Background fetch enabled by user", level: .info)
+        Log.info("Background fetch enabled by user")
     }
 
     /// Disable background fetch
@@ -257,7 +258,7 @@ class BackgroundFetchManager: NSObject {
     func disableBackgroundFetch() {
         isBackgroundFetchEnabled = false
         cancelAllBackgroundTasks()
-        Logger.log("Background fetch disabled by user", level: .info)
+        Log.info("Background fetch disabled by user")
     }
 
     /// Get readable status string for UI

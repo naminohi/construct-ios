@@ -14,10 +14,8 @@ struct ContactQRCodeView: View {
     let username: String
 
     private var contactLink: String {
-        let link = "construct://add-contact?id=\(userId)&username=\(username)"
+        let link = generateContactLink(userId: userId, username: username)
         print("🔗 ContactQRCodeView: Generated link: \(link)")
-        print("   userId: \(userId)")
-        print("   username: \(username)")
         return link
     }
 
@@ -106,6 +104,14 @@ struct ContactQRCodeView: View {
         }
 
         return nil
+    }
+    
+    private func generateContactLink(userId: String, username: String) -> String {
+        let encodedUsername = username.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? username
+
+        let httpsLink = "https://konstruct.cc/add?id=\(userId)&username=\(encodedUsername)"
+
+        return httpsLink
     }
 }
 

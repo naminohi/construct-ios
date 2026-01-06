@@ -15,7 +15,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil
     ) -> Bool {
 
-        Logger.log("Application did finish launching", level: .info)
+        Log.info("Application did finish launching")
 
         // CRITICAL: Register background tasks BEFORE app finishes launching
         // This must be done early in the launch process
@@ -28,9 +28,9 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 
         if isBackgroundFetchEnabled {
             BackgroundFetchManager.shared.scheduleBackgroundFetch()
-            Logger.log("Background fetch is enabled, scheduled first task", level: .info)
+            Log.info("Background fetch is enabled, scheduled first task")
         } else {
-            Logger.log("Background fetch is disabled by user", level: .info)
+            Log.info("Background fetch is disabled by user")
         }
 
         // Initialize local notification manager
@@ -56,7 +56,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     // MARK: - Application Lifecycle
 
     func applicationWillTerminate(_ application: UIApplication) {
-        Logger.log("Application will terminate", level: .info)
+        Log.info("Application will terminate")
 
         // Cancel all scheduled background tasks if user has disabled them
         let userDefaults = UserDefaults.standard
@@ -68,7 +68,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {
-        Logger.log("Application did become active", level: .debug)
+        Log.debug("Application did become active")
 
         // Clear badge when app becomes active
         LocalNotificationManager.shared.clearBadge()
@@ -78,7 +78,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     }
 
     func applicationDidEnterBackground(_ application: UIApplication) {
-        Logger.log("Application did enter background", level: .debug)
+        Log.debug("Application did enter background")
 
         // Ensure background fetch is scheduled if enabled
         let userDefaults = UserDefaults.standard
