@@ -26,8 +26,8 @@ class NetworkReachabilityManager: ObservableObject {
         case unknown
     }
     
-    private let monitor = NWPathMonitor()
-    private let queue = DispatchQueue(label: "NetworkReachability")
+    private var monitor: NWPathMonitor?
+    private var queue: DispatchQueue?
     private var cancellables = Set<AnyCancellable>()
     
     // Publishers for other components
@@ -35,6 +35,11 @@ class NetworkReachabilityManager: ObservableObject {
     let connectionTypePublisher = PassthroughSubject<ConnectionType, Never>()
     
     private init() {
+        // Always set default values first
+        isReachable = true
+        connectionType = .wifi
+        
+        // Start monitoring (will skip if in preview)
         startMonitoring()
     }
     
@@ -43,7 +48,23 @@ class NetworkReachabilityManager: ObservableObject {
     }
     
     func startMonitoring() {
-        monitor.pathUpdateHandler = { [weak self] path in
+        // Skip in preview mode
+        if PreviewDetector.isRunningInPreview {
+            Log.info("🌐 NetworkReachabilityManager: Skipping monitoring in preview mode", category: "NetworkReachability")
+            return
+        }
+        
+        // Check if Network framework is available (should always be on iOS, but safety check)
+        #if !os(iOS)
+        Log.info("🌐 Network framework may not be available on this platform", category: "NetworkReachability")
+        #endif
+        
+        // Create monitor and queue only when needed (not in preview)
+        // Wrap in do-catch for safety, though NWPathMonitor() shouldn't throw
+        let newMonitor = NWPathMonitor()
+        let newQueue = DispatchQueue(label: "com.construct.network.reachability")
+        
+        newMonitor.pathUpdateHandler = { [weak self] path in
             guard let self = self else { return }
             
             DispatchQueue.main.async {
@@ -72,21 +93,26 @@ class NetworkReachabilityManager: ObservableObject {
                     self.connectionTypePublisher.send(self.connectionType)
                     
                     // Post notification for other components
-                    NotificationCenter.default.post(
+                    let notification = Notification(
                         name: .networkReachabilityChanged,
                         object: nil,
                         userInfo: ["isReachable": self.isReachable, "connectionType": self.connectionType]
                     )
+                    NotificationCenter.default.post(notification)
                 }
             }
         }
         
-        monitor.start(queue: queue)
+        newMonitor.start(queue: newQueue)
+        self.monitor = newMonitor
+        self.queue = newQueue
         Log.info("🌐 Network reachability monitoring started", category: "NetworkReachability")
     }
     
     func stopMonitoring() {
-        monitor.cancel()
+        monitor?.cancel()
+        monitor = nil
+        queue = nil
         Log.info("🌐 Network reachability monitoring stopped", category: "NetworkReachability")
     }
     

@@ -10,6 +10,7 @@ import SwiftUI
 struct AuthView: View {
     @EnvironmentObject var viewModel: AuthViewModel
     @State private var showingRegister = false
+    @State private var showNetworkSettings = false
 
     var body: some View {
         NavigationStack {
@@ -60,6 +61,19 @@ struct AuthView: View {
                 }
                 .padding()
             
+        }.overlay(alignment: .topTrailing) {
+            Button {
+                showNetworkSettings = true
+            } label: {
+                Image(systemName: "network")
+                    .font(.system(size: 20))
+                    .foregroundColor(.blue)
+                    .padding(12)
+            }
+            .padding(16)
+        }
+        .sheet(isPresented: $showNetworkSettings) {
+            PreAuthNetworkSettingsView()
         }
     }
 }

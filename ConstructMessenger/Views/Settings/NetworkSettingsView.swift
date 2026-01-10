@@ -12,6 +12,9 @@ struct NetworkSettingsView: View {
     @State private var useCustomServer = false
     @State private var customServerURL = ""
     @State private var showingReconnectAlert = false
+    @ObservedObject private var reachabilityManager = NetworkReachabilityManager.shared
+    @ObservedObject private var wsManager = WebSocketManager.shared
+    @State private var lastConnectionError: String?
 
     var body: some View {
         List {
@@ -23,9 +26,34 @@ struct NetworkSettingsView: View {
                     Spacer()
                     HStack(spacing: 4) {
                         Circle()
-                            .fill(WebSocketManager.shared.isConnected ? Color.green : Color.red)
+                            .fill(wsManager.isConnected ? Color.green : Color.red)
                             .frame(width: 8, height: 8)
-                        Text(WebSocketManager.shared.isConnected ? "connected" : "disconnected")
+                        Text(wsManager.isConnected ? "connected" : wsManager.connectionStatus.displayText)
+                            .fontWeight(.medium)
+                    }
+                }
+                
+                // Network Reachability Status
+                HStack {
+                    Text("network_reachability")
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(reachabilityManager.isReachable ? Color.green : Color.red)
+                            .frame(width: 8, height: 8)
+                        Text(reachabilityManager.isReachable ? "reachable" : "unreachable")
+                            .fontWeight(.medium)
+                    }
+                }
+                
+                // Connection Type
+                if reachabilityManager.isReachable {
+                    HStack {
+                        Text("connection_type")
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(connectionTypeDisplayName)
                             .fontWeight(.medium)
                     }
                 }
@@ -36,6 +64,28 @@ struct NetworkSettingsView: View {
                     Text(APIConstants.activeServerURL)
                         .font(.system(size: 12, design: .monospaced))
                         .foregroundColor(.blue)
+                }
+                
+                // Default Server URL
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("default_server")
+                        .foregroundColor(.secondary)
+                    Text(APIConstants.websocketURL)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+                
+                // Last Connection Error (if any)
+                if let error = lastConnectionError {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("last_error")
+                            .foregroundColor(.secondary)
+                            .font(.caption)
+                        Text(error)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.red)
+                            .textSelection(.enabled)
+                    }
                 }
             } header: {
                 Text("connection")
@@ -119,6 +169,11 @@ struct NetworkSettingsView: View {
             // Initialize state based on stored value
             useCustomServer = storedServerURL != nil
             customServerURL = storedServerURL ?? ""
+            loadLastConnectionError()
+        }
+        .onReceive(wsManager.errorPublisher) { error in
+            lastConnectionError = error.localizedDescription
+            Log.error("Connection error received in NetworkSettingsView: \(error.localizedDescription)", category: "NetworkSettings")
         }
         .alert("reconnect_required", isPresented: $showingReconnectAlert) {
             Button("ok") { }
@@ -152,9 +207,33 @@ struct NetworkSettingsView: View {
     }
 
     private func reconnectToServer() {
+        lastConnectionError = nil
         WebSocketManager.shared.disconnect()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             WebSocketManager.shared.connect()
+        }
+    }
+    
+    private func loadLastConnectionError() {
+        // This is a placeholder - in a real implementation, you might want to store
+        // the last error in UserDefaults or a shared state
+        lastConnectionError = nil
+    }
+    
+    private var connectionTypeDisplayName: String {
+        switch reachabilityManager.connectionType {
+        case .wifi:
+            return "Wi-Fi"
+        case .cellular:
+            return "Cellular"
+        case .ethernet:
+            return "Ethernet"
+        case .other:
+            return "Other"
+        case .unavailable:
+            return "Unavailable"
+        case .unknown:
+            return "Unknown"
         }
     }
 }

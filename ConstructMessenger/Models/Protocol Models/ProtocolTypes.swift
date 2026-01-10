@@ -43,3 +43,12 @@ struct SignedPrekeyUpdate: Codable {
     let signature: String
 }
 
+// MARK: - Profile Sharing
+/// Profile data shared between users (encrypted E2E)
+struct ProfileShareData: Codable {
+    let type: String = "profile"  // Message type identifier
+    let displayName: String
+    let avatarData: String?  // Base64 encoded image data
+    let timestamp: Int64  // Unix timestamp when profile was shared
+}
+

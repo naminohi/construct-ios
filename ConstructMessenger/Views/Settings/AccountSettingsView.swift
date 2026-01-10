@@ -23,6 +23,10 @@ struct AccountSettingsView: View {
     @State private var passwordError: String?
     
     @State private var showingLogoutConfirmation = false
+    @State private var showingDeleteAccountWarning = false
+    @State private var showingDeleteAccountConfirmation = false
+    @State private var deleteAccountPassword = ""
+    @State private var deleteAccountError: String?
 
     private var passwordFooterText: Text {
         Text(String(format: NSLocalizedString("password_min_length_message", comment: ""), ValidationRules.minPasswordLength))
@@ -138,6 +142,28 @@ struct AccountSettingsView: View {
                     }
                 }
             }
+            
+            // MARK: - Delete Account Section
+            Section {
+                Button(role: .destructive) {
+                    showingDeleteAccountWarning = true
+                } label: {
+                    HStack {
+                        Spacer()
+                        Label {
+                            Text("delete_my_account")
+                                .fontWeight(.semibold)
+                        } icon: {
+                            Image(systemName: "trash")
+                        }
+                        Spacer()
+                    }
+                }
+            } footer: {
+                Text("delete_account_warning")
+                    .font(.caption)
+                    .foregroundColor(.red)
+            }
         }
         .navigationTitle("account")
         .navigationBarTitleDisplayMode(.inline)
@@ -152,6 +178,47 @@ struct AccountSettingsView: View {
             }
         } message: {
             Text("logout_confirmation")
+        }
+        .alert("delete_account_warning_title", isPresented: $showingDeleteAccountWarning) {
+            Button("cancel", role: .cancel) { }
+            Button("continue", role: .destructive) {
+                showingDeleteAccountWarning = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    showingDeleteAccountConfirmation = true
+                }
+            }
+        } message: {
+            Text("delete_account_warning_message")
+        }
+        .sheet(isPresented: $showingDeleteAccountConfirmation) {
+            DeleteAccountConfirmationView(
+                password: $deleteAccountPassword,
+                error: $deleteAccountError,
+                isDeleting: authViewModel.isLoading,
+                onDelete: {
+                    guard !deleteAccountPassword.isEmpty else {
+                        deleteAccountError = NSLocalizedString("password_required", comment: "")
+                        return
+                    }
+                    deleteAccountError = nil
+                    authViewModel.deleteAccount(password: deleteAccountPassword)
+                },
+                onCancel: {
+                    showingDeleteAccountConfirmation = false
+                    deleteAccountPassword = ""
+                    deleteAccountError = nil
+                }
+            )
+        }
+        .onChange(of: authViewModel.errorMessage) { errorMessage in
+            if let error = errorMessage, showingDeleteAccountConfirmation {
+                deleteAccountError = error
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("AccountDeleted"))) { _ in
+            showingDeleteAccountConfirmation = false
+            deleteAccountPassword = ""
+            deleteAccountError = nil
         }
         .sheet(isPresented: $showingImagePicker) {
             ImagePicker(onImagePicked: { image in
@@ -187,6 +254,79 @@ struct AccountSettingsView: View {
         newPassword = ""
         confirmPassword = ""
         passwordError = nil
+    }
+}
+
+// MARK: - Delete Account Confirmation View
+struct DeleteAccountConfirmationView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var password: String
+    @Binding var error: String?
+    let isDeleting: Bool
+    let onDelete: () -> Void
+    let onCancel: () -> Void
+    
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text("delete_account_confirmation_message")
+                        .font(.body)
+                        .foregroundColor(.primary)
+                } header: {
+                    Text("warning")
+                } footer: {
+                    Text("delete_account_irreversible_warning")
+                        .font(.caption)
+                        .foregroundColor(.red)
+                }
+                
+                Section {
+                    SecureField("password", text: $password)
+                        .textContentType(.password)
+                        .autocapitalization(.none)
+                        .disabled(isDeleting)
+                    
+                    if let errorMessage = error {
+                        Text(errorMessage)
+                            .font(.caption)
+                            .foregroundColor(.red)
+                    }
+                } header: {
+                    Text("confirm_password")
+                } footer: {
+                    Text("delete_account_password_hint")
+                        .font(.caption)
+                }
+            }
+            .navigationTitle("delete_my_account")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("cancel") {
+                        onCancel()
+                        dismiss()
+                    }
+                    .disabled(isDeleting)
+                }
+                
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(role: .destructive) {
+                        onDelete()
+                    } label: {
+                        if isDeleting {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                        } else {
+                            Text("delete_account")
+                                .fontWeight(.semibold)
+                        }
+                    }
+                    .disabled(isDeleting || password.isEmpty)
+                }
+            }
+        }
+        .interactiveDismissDisabled(isDeleting)
     }
 }
 

@@ -328,7 +328,7 @@ mod tests {
     #[test]
     fn test_x3dh_alice_bob_get_same_root_key() {
         // Bob регистрируется
-        let bob_bundle = X3DHProtocol::<ClassicSuiteProvider>::generate_registration_bundle().unwrap();
+        let _bob_bundle = X3DHProtocol::<ClassicSuiteProvider>::generate_registration_bundle().unwrap();
 
         // В реальности Bob сохраняет private keys, а public bundle идёт на сервер
         // Для теста мы эмулируем это через повторную генерацию с теми же ключами

@@ -392,12 +392,18 @@ class BackgroundFetchManager: NSObject, ObservableObject {
         let dbUser: User
         if let existingUser = try? context.fetch(userFetch).first {
             dbUser = existingUser
+            // ✅ FIX: If existing user has UUID as username, it will be updated when publicKeyBundle is requested
+            // This happens automatically in ChatsViewModel.handleIncomingMessage
         } else {
             let newUser = User(context: context)
             newUser.id = userId
             newUser.username = userId // Temporary, will be updated when public key bundle is received
             newUser.displayName = userId
+            newUser.isSharingWithMe = false
+            newUser.isBlocked = false
+            newUser.amISharingWith = false
             dbUser = newUser
+            Log.debug("Created new user in BackgroundFetch: id=\(userId), username will be updated from publicKeyBundle", category: "BackgroundFetch")
         }
         
         let newChat = Chat(context: context)

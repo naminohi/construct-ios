@@ -108,6 +108,23 @@ class KeychainManager {
         delete(forKey: APIConstants.lastUsernameKey)
     }
     
+    // MARK: - Custom Server URL (persistent across app reinstalls)
+    func saveCustomServerURL(_ url: String) {
+        guard let data = url.data(using: .utf8) else { return }
+        // Use kSecAttrAccessibleAfterFirstUnlock to allow access after device unlock
+        // This persists across app reinstalls when iCloud Keychain is enabled
+        save(data, forKey: APIConstants.customServerURLKey, accessible: kSecAttrAccessibleAfterFirstUnlock)
+    }
+    
+    func loadCustomServerURL() -> String? {
+        guard let data = load(forKey: APIConstants.customServerURLKey) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+    
+    func deleteCustomServerURL() {
+        delete(forKey: APIConstants.customServerURLKey)
+    }
+    
     func deleteAllKeys() {
         delete(forKey: "identity_key")
         delete(forKey: "signed_prekey")

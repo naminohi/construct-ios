@@ -10,28 +10,52 @@ import SwiftUI
 struct MessageBubble: View {
     let message: Message
     let isLastInGroup: Bool
+    let isSelected: Bool
+    let isEditMode: Bool
     let onRetry: ((Message) -> Void)?
     let onReply: ((Message) -> Void)?
     let onDelete: ((Message) -> Void)?
+    let onSelect: ((Message) -> Void)?
+    let onEnterSelectMode: ((Message) -> Void)?
 
     @State private var showMessageInfo = false
 
     init(
         message: Message,
         isLastInGroup: Bool = true,
+        isSelected: Bool = false,
+        isEditMode: Bool = false,
         onRetry: ((Message) -> Void)? = nil,
         onReply: ((Message) -> Void)? = nil,
-        onDelete: ((Message) -> Void)? = nil
+        onDelete: ((Message) -> Void)? = nil,
+        onSelect: ((Message) -> Void)? = nil,
+        onEnterSelectMode: ((Message) -> Void)? = nil
     ) {
         self.message = message
         self.isLastInGroup = isLastInGroup
+        self.isSelected = isSelected
+        self.isEditMode = isEditMode
         self.onRetry = onRetry
         self.onReply = onReply
         self.onDelete = onDelete
+        self.onSelect = onSelect
+        self.onEnterSelectMode = onEnterSelectMode
     }
 
     var body: some View {
-        HStack {
+        HStack(spacing: 8) {
+            // Selection checkbox in edit mode
+            if isEditMode {
+                Button {
+                    onSelect?(message)
+                } label: {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .foregroundColor(isSelected ? .blue : .gray)
+                        .font(.title3)
+                }
+                .buttonStyle(.plain)
+            }
+            
             if message.isSentByMe {
                 Spacer(minLength: 60)
             }
@@ -65,6 +89,11 @@ struct MessageBubble: View {
                 .background(message.isSentByMe ? Color.blue : Color.gray.opacity(0.2))
                 .foregroundColor(message.isSentByMe ? .white : .primary)
                 .cornerRadius(16)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 2)
+                )
+                .opacity(isSelected ? 0.8 : 1.0)
 
                 if isLastInGroup {
                     HStack(spacing: 4) {
@@ -80,59 +109,84 @@ struct MessageBubble: View {
                 }
             }
             .frame(maxWidth: UIScreen.main.bounds.width * 0.7, alignment: message.isSentByMe ? .trailing : .leading)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if isEditMode {
+                    onSelect?(message)
+                }
+            }
 
             if !message.isSentByMe {
                 Spacer(minLength: 60)
             }
         }
         .contextMenu {
-            // Reply - только для чужих сообщений или если есть callback
-            if let onReply = onReply {
-                Button {
-                    onReply(message)
-                } label: {
-                    Label("reply", systemImage: "arrowshape.turn.up.left")
+            // Context menu only available when not in edit mode
+            if !isEditMode {
+                // Reply - только для чужих сообщений или если есть callback
+                if let onReply = onReply {
+                    Button {
+                        onReply(message)
+                    } label: {
+                        Label("reply", systemImage: "arrowshape.turn.up.left")
+                    }
                 }
-            }
 
-            // Copy text
-            Button {
-                UIPasteboard.general.string = message.decryptedContent
-            } label: {
-                Label("copy", systemImage: "doc.on.doc")
-            }
-
-            // Message info
-            Button {
-                showMessageInfo = true
-            } label: {
-                Label("info", systemImage: "info.circle")
-            }
-
-            Divider()
-
-            // Delete - только для своих сообщений
-            if message.isSentByMe, let onDelete = onDelete {
-                Button(role: .destructive) {
-                    onDelete(message)
-                } label: {
-                    Label("delete", systemImage: "trash")
-                }
-            }
-
-            // Retry - только для failed/queued сообщений
-            if (message.deliveryStatus == .failed || message.deliveryStatus == .queued),
-               let onRetry = onRetry {
+                // Copy text
                 Button {
-                    onRetry(message)
+                    UIPasteboard.general.string = message.decryptedContent
                 } label: {
-                    Label("retry", systemImage: "arrow.clockwise")
+                    Label("copy", systemImage: "doc.on.doc")
+                }
+                
+                // Select messages - включить режим выбора нескольких сообщений
+                if let onEnterSelectMode = onEnterSelectMode {
+                    Button {
+                        // Включаем режим выбора и автоматически выделяем это сообщение
+                        onEnterSelectMode(message)
+                    } label: {
+                        Label("select_messages", systemImage: "checkmark.circle")
+                    }
+                }
+
+                // Message info - только для debug режима
+                #if DEBUG
+                if AppConstants.enableDebugLogging {
+                    Button {
+                        showMessageInfo = true
+                    } label: {
+                        Label("info", systemImage: "info.circle")
+                    }
+                }
+                #endif
+
+                Divider()
+
+                // Delete - теперь можно удалять любые сообщения (локально)
+                if let onDelete = onDelete {
+                    Button(role: .destructive) {
+                        onDelete(message)
+                    } label: {
+                        Label("delete", systemImage: "trash")
+                    }
+                }
+
+                // Retry - только для failed/queued сообщений
+                if (message.deliveryStatus == .failed || message.deliveryStatus == .queued),
+                   let onRetry = onRetry {
+                    Button {
+                        onRetry(message)
+                    } label: {
+                        Label("retry", systemImage: "arrow.clockwise")
+                    }
                 }
             }
         }
+        #if DEBUG
         .sheet(isPresented: $showMessageInfo) {
             MessageInfoSheet(message: message)
         }
+        #endif
     }
 
     @ViewBuilder

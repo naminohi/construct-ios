@@ -34,7 +34,7 @@ struct ChatRowView: View {
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(chat.otherUser?.username ?? NSLocalizedString("unknown", comment: "Unknown user"))
+                Text(chat.otherUser?.displayName ?? chat.otherUser?.username ?? NSLocalizedString("unknown", comment: "Unknown user"))
                     .fontWeight(.semibold)
 
                 if let lastMessage = chat.lastMessageText {
@@ -49,7 +49,7 @@ struct ChatRowView: View {
     }
 
     private var initials: String {
-        guard let displayName = chat.otherUser?.username else { return "?" }
+        guard let displayName = chat.otherUser?.displayName ?? chat.otherUser?.username else { return "?" }
         let components = displayName.split(separator: " ")
         if components.count >= 2 {
             return String(components[0].prefix(1) + components[1].prefix(1)).uppercased()

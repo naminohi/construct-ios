@@ -562,7 +562,6 @@ pub fn create_crypto_core_from_keys_json(keys_json: String) -> Result<Arc<Classi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::handshake::x3dh::X3DHPublicKeyBundle;
 
     /// Helper to convert RegistrationBundleJson to KeyBundle format
     fn convert_bundle_for_init(bundle_json: &str) -> Vec<u8> {

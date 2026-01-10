@@ -4,9 +4,13 @@
 //
 //  Created by Maxim Eliseyev on 31.12.2025.
 //
+//  ⚠️ DEBUG ONLY: This view is only available in DEBUG builds
+//  It shows technical information about messages for debugging purposes
+//
 
 import SwiftUI
 
+#if DEBUG
 struct MessageInfoSheet: View {
     @Environment(\.dismiss) private var dismiss
     let message: Message
@@ -175,18 +179,19 @@ struct InfoRow: View {
     }
 }
 
-#Preview {
-    let container = PreviewHelpers.createPreviewContainer()
-    let context = container.viewContext
+    #Preview {
+        let container = PreviewHelpers.createPreviewContainer()
+        let context = container.viewContext
 
-    let user = PreviewHelpers.createSampleUser(context: context, username: "alice", displayName: "Alice")
-    let chat = PreviewHelpers.createSampleChat(context: context, with: user)
-    let message = PreviewHelpers.createSampleMessage(
-        context: context,
-        chat: chat,
-        isSentByMe: true,
-        text: "Hello, this is a test message!"
-    )
+        let user = PreviewHelpers.createSampleUser(context: context, username: "alice", displayName: "Alice")
+        let chat = PreviewHelpers.createSampleChat(context: context, with: user)
+        let message = PreviewHelpers.createSampleMessage(
+            context: context,
+            chat: chat,
+            isSentByMe: true,
+            text: "Hello, this is a test message!"
+        )
 
-    return MessageInfoSheet(message: message)
-}
+        return MessageInfoSheet(message: message)
+    }
+#endif

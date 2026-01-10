@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import MessagePack
 import os.log
+import CoreData
 
 class WebSocketManager: NSObject, ObservableObject {
     static let shared = WebSocketManager()
@@ -10,13 +11,14 @@ class WebSocketManager: NSObject, ObservableObject {
     @Published var connectionStatus: ConnectionStatus = .disconnected
 
     private var webSocketTask: URLSessionWebSocketTask?
-    private var url: URL {
+    private var url: URL? {
         let raw = APIConstants.activeServerURL
-            guard let url = URL(string: raw) else {
-                Log.error("❌ Invalid WebSocket URL: \(raw)", category: "WebSocket")
-                fatalError("Invalid WebSocket URL: \(raw)")
-            }
-            return url
+        guard let url = URL(string: raw) else {
+            Log.error("❌ Invalid WebSocket URL: \(raw)", category: "WebSocket")
+            errorPublisher.send(NetworkError.connectionFailed)
+            return nil
+        }
+        return url
     }
     private var session: URLSession!
 
@@ -33,7 +35,8 @@ class WebSocketManager: NSObject, ObservableObject {
     private var pingTimer: Timer?
     
     // Message tracking for offline scenarios
-    private let messageQueueManager = MessageQueueManager.shared
+    // Use lazy to avoid circular dependency: MessageQueueManager -> WebSocketManager -> MessageQueueManager
+    private lazy var messageQueueManager = MessageQueueManager.shared
 
     enum ConnectionStatus {
         case connected
@@ -61,7 +64,24 @@ class WebSocketManager: NSObject, ObservableObject {
             return
         }
 
-        Log.info("Connecting to: \(url.absoluteString)", category: "WebSocket")
+        guard let url = url else {
+            let errorMsg = "❌ Cannot connect: Invalid WebSocket URL: \(APIConstants.activeServerURL)"
+            Log.error(errorMsg, category: "WebSocket")
+            errorPublisher.send(NetworkError.connectionFailed)
+            return
+        }
+
+        // Check network reachability before attempting connection
+        let reachabilityManager = NetworkReachabilityManager.shared
+        if !reachabilityManager.isReachable {
+            let errorMsg = "⚠️ Network is not reachable. Connection type: \(reachabilityManager.connectionType)"
+            Log.info(errorMsg, category: "WebSocket")
+            // Still attempt connection - reachability might be wrong in emulator
+        }
+
+        Log.info("🔌 Connecting to: \(url.absoluteString)", category: "WebSocket")
+        Log.info("🌐 Network reachability: \(reachabilityManager.isReachable ? "YES" : "NO"), Type: \(reachabilityManager.connectionType)", category: "WebSocket")
+        
         let request = URLRequest(url: url)
         webSocketTask = session.webSocketTask(with: request)
         webSocketTask?.resume()
@@ -161,19 +181,17 @@ class WebSocketManager: NSObject, ObservableObject {
     // MARK: - Message Status Helpers
     
     private func markMessageAsQueued(messageId: String) {
-        DispatchQueue.global(qos: .utility).async {
-            guard let context = PersistenceController.shared.container.viewContext else { return }
+        let context = PersistenceController.shared.container.viewContext
+        
+        context.perform {
+            let fetchRequest: NSFetchRequest<Message> = Message.fetchRequest()
+            fetchRequest.predicate = NSPredicate(format: "id == %@", messageId)
             
-            context.perform {
-                let fetchRequest: NSFetchRequest<Message> = Message.fetchRequest()
-                fetchRequest.predicate = NSPredicate(format: "id == %@", messageId)
-                
-                if let message = try? context.fetch(fetchRequest).first {
-                    if message.deliveryStatus != .queued {
-                        message.deliveryStatus = .queued
-                        try? context.save()
-                        Log.debug("📝 Marked message \(messageId) as queued", category: "WebSocket")
-                    }
+            if let message = try? context.fetch(fetchRequest).first {
+                if message.deliveryStatus != .queued {
+                    message.deliveryStatus = .queued
+                    try? context.save()
+                    Log.debug("📝 Marked message \(messageId) as queued", category: "WebSocket")
                 }
             }
         }
@@ -182,24 +200,22 @@ class WebSocketManager: NSObject, ObservableObject {
     private func handleSendError(messageId: String, error: Error) {
         messageQueueManager.markMessageAsFailed(messageId)
         
-        DispatchQueue.global(qos: .utility).async {
-            guard let context = PersistenceController.shared.container.viewContext else { return }
+        let context = PersistenceController.shared.container.viewContext
+        
+        context.perform {
+            let fetchRequest: NSFetchRequest<Message> = Message.fetchRequest()
+            fetchRequest.predicate = NSPredicate(format: "id == %@", messageId)
             
-            context.perform {
-                let fetchRequest: NSFetchRequest<Message> = Message.fetchRequest()
-                fetchRequest.predicate = NSPredicate(format: "id == %@", messageId)
-                
-                if let message = try? context.fetch(fetchRequest).first {
-                    // Check if we should retry or mark as failed
-                    if message.retryCount < FeatureFlags.maxMessageRetryAttempts {
-                        message.deliveryStatus = .queued
-                        Log.warning("⚠️ Message \(messageId) send failed, queued for retry (attempt \(message.retryCount + 1))", category: "WebSocket")
-                    } else {
-                        message.deliveryStatus = .failed
-                        Log.error("❌ Message \(messageId) send failed after \(message.retryCount) attempts, marking as failed", category: "WebSocket")
-                    }
-                    try? context.save()
+            if let message = try? context.fetch(fetchRequest).first {
+                // Check if we should retry or mark as failed
+                if message.retryCount < FeatureFlags.maxMessageRetryAttempts {
+                    message.deliveryStatus = .queued
+                    Log.info("⚠️ Message \(messageId) send failed, queued for retry (attempt \(message.retryCount + 1))", category: "WebSocket")
+                } else {
+                    message.deliveryStatus = .failed
+                    Log.error("❌ Message \(messageId) send failed after \(message.retryCount) attempts, marking as failed", category: "WebSocket")
                 }
+                try? context.save()
             }
         }
     }
@@ -345,9 +361,15 @@ class WebSocketManager: NSObject, ObservableObject {
     /// - Parameter completion: Called with result containing array of messages or error
     func fetchOfflineMessages(completion: @escaping (Result<[ChatMessage], Error>) -> Void) {
         Log.info("📥 Starting background fetch for offline messages", category: "WebSocket")
-        
+
         // Create a temporary WebSocket connection for background fetch
         // Use a simple configuration without delegate for background fetch
+        guard let url = url else {
+            Log.error("❌ Cannot fetch offline messages: Invalid WebSocket URL", category: "WebSocket")
+            completion(.failure(NetworkError.connectionFailed))
+            return
+        }
+
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 15.0
         config.timeoutIntervalForResource = 20.0
@@ -363,7 +385,7 @@ class WebSocketManager: NSObject, ObservableObject {
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
             if !didComplete {
                 didComplete = true
-                tempTask.cancel(with: .goingAway, reason: nil)
+                tempTask.cancel(with: URLSessionWebSocketTask.CloseCode.goingAway, reason: nil)
                 completion(.failure(BackgroundFetchError.timeout))
             }
         }
@@ -423,7 +445,7 @@ class WebSocketManager: NSObject, ObservableObject {
                                 // Disconnect after receiving messages
                                 if !didComplete {
                                     didComplete = true
-                                    tempTask.cancel(with: .goingAway, reason: nil)
+                                    tempTask.cancel(with: URLSessionWebSocketTask.CloseCode.goingAway, reason: nil)
                                     completion(.success(messages))
                                 }
                                 
@@ -436,7 +458,7 @@ class WebSocketManager: NSObject, ObservableObject {
                                 Log.error("❌ Server error: \(errorData.message)", category: "WebSocket")
                                 if !didComplete {
                                     didComplete = true
-                                    tempTask.cancel(with: .goingAway, reason: nil)
+                                    tempTask.cancel(with: URLSessionWebSocketTask.CloseCode.goingAway, reason: nil)
                                     completion(.failure(NetworkError.serverError(errorData.message)))
                                 }
                                 
@@ -444,7 +466,7 @@ class WebSocketManager: NSObject, ObservableObject {
                                 Log.error("❌ Session expired during background fetch", category: "WebSocket")
                                 if !didComplete {
                                     didComplete = true
-                                    tempTask.cancel(with: .goingAway, reason: nil)
+                                    tempTask.cancel(with: URLSessionWebSocketTask.CloseCode.goingAway, reason: nil)
                                     completion(.failure(BackgroundFetchError.notAuthenticated))
                                 }
                                 
@@ -461,7 +483,7 @@ class WebSocketManager: NSObject, ObservableObject {
                             Log.error("Failed to decode server message: \(error)", category: "WebSocket")
                             if !didComplete {
                                 didComplete = true
-                                tempTask.cancel(with: .goingAway, reason: nil)
+                                tempTask.cancel(with: URLSessionWebSocketTask.CloseCode.goingAway, reason: nil)
                                 completion(.failure(NetworkError.decodingFailed))
                             }
                         }
@@ -493,7 +515,7 @@ class WebSocketManager: NSObject, ObservableObject {
             guard let sessionToken = SessionManager.shared.sessionToken else {
                 if !didComplete {
                     didComplete = true
-                    tempTask.cancel(with: .goingAway, reason: nil)
+                    tempTask.cancel(with: URLSessionWebSocketTask.CloseCode.goingAway, reason: nil)
                     completion(.failure(BackgroundFetchError.notAuthenticated))
                 }
                 return
@@ -508,7 +530,7 @@ class WebSocketManager: NSObject, ObservableObject {
                         Log.error("Failed to authenticate background fetch: \(error)", category: "WebSocket")
                         if !didComplete {
                             didComplete = true
-                            tempTask.cancel(with: .goingAway, reason: nil)
+                            tempTask.cancel(with: URLSessionWebSocketTask.CloseCode.goingAway, reason: nil)
                             completion(.failure(error))
                         }
                     } else {
@@ -521,7 +543,7 @@ class WebSocketManager: NSObject, ObservableObject {
                 Log.error("Failed to encode connect message: \(error)", category: "WebSocket")
                 if !didComplete {
                     didComplete = true
-                    tempTask.cancel(with: .goingAway, reason: nil)
+                    tempTask.cancel(with: URLSessionWebSocketTask.CloseCode.goingAway, reason: nil)
                     completion(.failure(error))
                 }
             }
@@ -568,7 +590,37 @@ extension WebSocketManager: URLSessionWebSocketDelegate {
     nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         if let error = error {
             DispatchQueue.main.async {
-                Log.error("WebSocket task failed: \(error.localizedDescription)", category: "WebSocket")
+                let errorDescription = error.localizedDescription
+                let nsError = error as NSError
+                Log.error("❌ WebSocket task failed: \(errorDescription)", category: "WebSocket")
+                Log.error("   Error domain: \(nsError.domain), Code: \(nsError.code)", category: "WebSocket")
+                Log.error("   User info: \(nsError.userInfo)", category: "WebSocket")
+                
+                // Log URL that failed
+                if let url = self.url {
+                    Log.error("   Failed URL: \(url.absoluteString)", category: "WebSocket")
+                }
+                
+                // Check for common error types
+                if nsError.domain == NSURLErrorDomain {
+                    switch nsError.code {
+                    case NSURLErrorNotConnectedToInternet:
+                        Log.error("   Reason: No internet connection", category: "WebSocket")
+                    case NSURLErrorTimedOut:
+                        Log.error("   Reason: Connection timeout", category: "WebSocket")
+                    case NSURLErrorCannotFindHost:
+                        Log.error("   Reason: Cannot find host (DNS failure)", category: "WebSocket")
+                    case NSURLErrorCannotConnectToHost:
+                        Log.error("   Reason: Cannot connect to host (firewall/port issue?)", category: "WebSocket")
+                    case NSURLErrorSecureConnectionFailed:
+                        Log.error("   Reason: SSL/TLS connection failed (certificate issue?)", category: "WebSocket")
+                    case NSURLErrorServerCertificateUntrusted:
+                        Log.error("   Reason: Server certificate untrusted", category: "WebSocket")
+                    default:
+                        Log.error("   Reason: Other network error (code: \(nsError.code))", category: "WebSocket")
+                    }
+                }
+                
                 self.isConnected = false
                 self.connectionStatus = .disconnected
                 // Send error only if we're not already reconnecting

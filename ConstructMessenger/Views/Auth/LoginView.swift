@@ -12,7 +12,7 @@ struct LoginView: View {
 
     @State private var username = ""
     @State private var password = ""
-    
+
     init(viewModel: AuthViewModel) {
         self.viewModel = viewModel
         // Загружаем последний использованный username при инициализации
@@ -44,13 +44,13 @@ struct LoginView: View {
                     Text("password")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    
+
                 }
                 SecureField("enter_password", text: $password)
                     .textFieldStyle(.roundedBorder)
                     .textContentType(.password)
             }
-            
+
             Spacer()
 
             Button {
@@ -64,8 +64,6 @@ struct LoginView: View {
                     .cornerRadius(10)
             }
             .disabled(!isValid || viewModel.isLoading)
-
-            
         }
     }
 

@@ -6,6 +6,10 @@
         <attribute name="id" attributeType="String"/>
         <attribute name="publicKey" optional="YES" attributeType="String"/>
         <attribute name="username" attributeType="String"/>
+        <attribute name="isSharingWithMe" optional="YES" attributeType="Boolean" defaultValueString="NO" usesScalarType="YES"/>
+        <attribute name="isBlocked" optional="YES" attributeType="Boolean" defaultValueString="NO" usesScalarType="YES"/>
+        <attribute name="sharedWithMeAt" optional="YES" attributeType="Date" usesScalarType="NO"/>
+        <attribute name="amISharingWith" optional="YES" attributeType="Boolean" defaultValueString="NO" usesScalarType="YES"/>
         <relationship name="chats" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="Chat" inverseName="otherUser" inverseEntity="Chat"/>
         <uniquenessConstraints>
             <uniquenessConstraint>

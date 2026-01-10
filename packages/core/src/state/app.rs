@@ -284,9 +284,9 @@ impl<P: CryptoProvider> AppState<P> {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn finalize_registration(
         &mut self,
-        server_user_id: String,
+        _server_user_id: String,
         _session_token: String,
-        password: String,
+        _password: String,
     ) -> Result<()> {
         unimplemented!()
     }
@@ -299,7 +299,7 @@ impl<P: CryptoProvider> AppState<P> {
 
     /// Загрузить существующего пользователя (non-WASM версия)
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn load_user(&mut self, user_id: String, password: String) -> Result<()> {
+    pub fn load_user(&mut self, _user_id: String, _password: String) -> Result<()> {
         unimplemented!()
     }
 
@@ -365,9 +365,9 @@ impl<P: CryptoProvider> AppState<P> {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn send_message(
         &mut self,
-        to_contact_id: &str,
+        _to_contact_id: &str,
         _session_id: &str,
-        plaintext: &str,
+        _plaintext: &str,
     ) -> Result<String> {
         unimplemented!()
     }
@@ -402,7 +402,7 @@ impl<P: CryptoProvider> AppState<P> {
 
     /// Загрузить беседу (non-WASM версия)
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn load_conversation(&mut self, contact_id: &str) -> Result<Vec<StoredMessage>> {
+    pub fn load_conversation(&mut self, _contact_id: &str) -> Result<Vec<StoredMessage>> {
         unimplemented!()
     }
 

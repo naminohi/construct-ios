@@ -283,8 +283,8 @@ where
     pub fn init_receiving_session(
         &mut self,
         contact_id: &str,
-        remote_identity: &P::KemPublicKey,
-        first_message: &M::EncryptedMessage,
+        _remote_identity: &P::KemPublicKey,
+        _first_message: &M::EncryptedMessage,
     ) -> Result<String, String> {
         use tracing::info;
 

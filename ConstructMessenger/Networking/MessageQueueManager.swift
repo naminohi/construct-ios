@@ -24,8 +24,12 @@ class MessageQueueManager: ObservableObject {
     private let pendingSendsQueue = DispatchQueue(label: "MessageQueueManager.pendingSends")
     
     private init() {
-        setupSubscribers()
-        startPeriodicCheck()
+        // Skip setup in preview mode
+        if !PreviewDetector.isRunningInPreview {
+            setupSubscribers()
+            startPeriodicCheck()
+            Log.info("📦 MessageQueueManager initialized", category: "MessageQueue")
+        }
     }
     
     deinit {
@@ -98,7 +102,12 @@ class MessageQueueManager: ObservableObject {
     
     /// Check for messages that have been stuck in sending state too long
     private func checkForStuckMessages() {
-        guard let context = PersistenceController.shared.container.viewContext else { return }
+        // Safety check: ensure Core Data is available
+        let context = PersistenceController.shared.container.viewContext
+        guard context.persistentStoreCoordinator != nil else {
+            Log.info("⚠️ Core Data store coordinator unavailable, skipping stuck message check", category: "MessageQueue")
+            return
+        }
         
         let timeout = APIConstants.messageSendTimeout
         
@@ -131,7 +140,7 @@ class MessageQueueManager: ObservableObject {
                     // If message has been in sending state for more than timeout, mark as queued
                     let timeSinceSent = now.timeIntervalSince(message.timestamp)
                     if timeSinceSent > timeout {
-                        Log.warning("⏱️ Message \(message.id) stuck in sending state for \(Int(timeSinceSent))s, marking as queued", category: "MessageQueue")
+                        Log.info("⏱️ Message \(message.id) stuck in sending state for \(Int(timeSinceSent))s, marking as queued", category: "MessageQueue")
                         message.deliveryStatus = .queued
                         // Remove from pending sends if present
                         self.markMessageAsFailed(message.id)
@@ -169,7 +178,7 @@ class MessageQueueManager: ObservableObject {
                 
                 if let message = try? context.fetch(fetchRequest).first {
                     if message.deliveryStatus == .sending {
-                        Log.warning("⏱️ Message \(messageId) timed out, marking as queued", category: "MessageQueue")
+                        Log.info("⏱️ Message \(messageId) timed out, marking as queued", category: "MessageQueue")
                         message.deliveryStatus = .queued
                         self.markMessageAsFailed(messageId)
                     }
@@ -194,7 +203,11 @@ class MessageQueueManager: ObservableObject {
             return
         }
         
-        guard let context = PersistenceController.shared.container.viewContext else { return }
+        let context = PersistenceController.shared.container.viewContext
+        guard context.persistentStoreCoordinator != nil else {
+            Log.info("⚠️ Core Data store coordinator unavailable, cannot process queued messages", category: "MessageQueue")
+            return
+        }
         
         context.perform {
             let fetchRequest: NSFetchRequest<Message> = Message.fetchRequest()
@@ -221,7 +234,10 @@ class MessageQueueManager: ObservableObject {
     
     /// Get count of queued messages
     func getQueuedMessageCount() -> Int {
-        guard let context = PersistenceController.shared.container.viewContext else { return 0 }
+        let context = PersistenceController.shared.container.viewContext
+        guard context.persistentStoreCoordinator != nil else {
+            return 0
+        }
         
         let fetchRequest: NSFetchRequest<Message> = Message.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "deliveryStatusRaw == %d", DeliveryStatus.queued.rawValue)

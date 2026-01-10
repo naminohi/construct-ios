@@ -16,6 +16,7 @@ struct RegisterView: View {
     @State private var confirmPassword = ""
     @State private var showPasswordGenerator = false
     @State private var passwordStrength: PasswordStrength = .veryWeak
+    @State private var showNetworkSettings = false
 
     private var passwordPlaceholder: String {
         String(format: NSLocalizedString("min_password_placeholder", comment: "Placeholder for password field with minimum length"), ValidationRules.minPasswordLength)
@@ -65,12 +66,12 @@ struct RegisterView: View {
                     .onChange(of: password) { newValue in
                         passwordStrength = PasswordGenerator.shared.strength(of: newValue)
                     }
-                
+
                 if !password.isEmpty {
                     HStack {
                         Text(passwordStrength.description)
                             .font(.caption)
-                            .foregroundColor(passwordStrength == .veryWeak || passwordStrength == .weak ? .red : 
+                            .foregroundColor(passwordStrength == .veryWeak || passwordStrength == .weak ? .red :
                                             passwordStrength == .medium ? .orange : .green)
                         Spacer()
                     }
@@ -90,7 +91,7 @@ struct RegisterView: View {
                     .textFieldStyle(.roundedBorder)
                     .textContentType(.newPassword)
             }
-            
+
             Spacer()
 
             Button {
@@ -108,7 +109,6 @@ struct RegisterView: View {
                     .cornerRadius(10)
             }
             .disabled(!isValid || viewModel.isLoading)
-
         }
     }
 

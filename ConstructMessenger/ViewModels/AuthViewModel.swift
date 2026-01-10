@@ -193,6 +193,23 @@ class AuthViewModel: ObservableObject {
         
         wsManager.disconnect()
     }
+    
+    func deleteAccount(password: String) {
+        guard let token = SessionManager.shared.sessionToken else {
+            errorMessage = "Session expired. Please login again."
+            return
+        }
+        
+        isLoading = true
+        errorMessage = nil
+        
+        Log.info("🗑️ Requesting account deletion", category: "AuthViewModel")
+        let deleteAccountData = DeleteAccountData(sessionToken: token, password: password)
+        wsManager.send(.deleteAccount(deleteAccountData))
+        
+        // Set timeout for account deletion request
+        startAuthTimeout()
+    }
 
     // MARK: - Timeout Helpers
     private func startAuthTimeout() {
@@ -249,6 +266,9 @@ class AuthViewModel: ObservableObject {
         case .logoutSuccess:
             // Client-side logout already handled
             break
+            
+        case .deleteAccountSuccess:
+            handleDeleteAccountSuccess()
 
         default:
             // Other messages are not handled by this view model
@@ -307,6 +327,57 @@ class AuthViewModel: ObservableObject {
         errorMessage = "Session expired. Please login again."
     }
     
+    private func handleDeleteAccountSuccess() {
+        Log.info("✅ Account deletion successful", category: "AuthViewModel")
+        cancelTimeouts()
+        isLoading = false
+        
+        // Clear all user data
+        SessionManager.shared.clearSession()
+        KeychainManager.shared.deleteLastUsername()
+        
+        // Clear CoreData - delete all user's data
+        let context = PersistenceController.shared.container.viewContext
+        
+        // Delete all chats and messages
+        let chatFetchRequest: NSFetchRequest<Chat> = Chat.fetchRequest()
+        if let chats = try? context.fetch(chatFetchRequest) {
+            for chat in chats {
+                context.delete(chat)
+            }
+        }
+        
+        // Delete all users
+        let userFetchRequest: NSFetchRequest<User> = User.fetchRequest()
+        if let users = try? context.fetch(userFetchRequest) {
+            for user in users {
+                context.delete(user)
+            }
+        }
+        
+        // Save changes
+        do {
+            try context.save()
+            Log.info("✅ All user data deleted from CoreData", category: "AuthViewModel")
+        } catch {
+            Log.error("❌ Failed to delete user data from CoreData: \(error)", category: "AuthViewModel")
+        }
+        
+        // Disconnect WebSocket
+        wsManager.disconnect()
+        
+        // Reset auth state
+        isAuthenticated = false
+        currentUserId = nil
+        currentUsername = nil
+        currentDisplayName = nil
+        
+        // Notify UI that account was deleted
+        NotificationCenter.default.post(name: NSNotification.Name("AccountDeleted"), object: nil)
+        
+        Log.info("✅ Account deletion complete - user logged out", category: "AuthViewModel")
+    }
+    
     // MARK: - Core Data Integration
     
     /// Finds or creates the User entity and loads local data into the AuthViewModel
@@ -325,6 +396,9 @@ class AuthViewModel: ObservableObject {
                 user.id = userId
                 user.username = self.currentUsername ?? ""
                 user.displayName = self.currentUsername ?? "" // Default display name to username
+                user.isSharingWithMe = false
+                user.isBlocked = false
+                user.amISharingWith = false
                 try viewContext.save()
                 print("✨ Created new user in Core Data for ID: \(userId)")
             }

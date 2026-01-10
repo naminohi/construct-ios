@@ -66,6 +66,9 @@ class ChatsViewModel: ObservableObject {
             dbUser.id = user.id
             dbUser.username = user.username
             dbUser.displayName = user.username
+            dbUser.isSharingWithMe = false
+            dbUser.isBlocked = false
+            dbUser.amISharingWith = false
             Log.debug("Created new user: id=\(user.id), username=\(user.username), displayName=\(user.username)", category: "ChatsViewModel")
         }
 
@@ -120,18 +123,37 @@ class ChatsViewModel: ObservableObject {
 
         // Check if we have a pending first message from this user
         guard let firstMessage = pendingFirstMessages[data.userId] else {
-            // No pending message - this bundle was requested for outgoing session (handled in ChatViewModel)
-            Log.debug("ChatsViewModel: No pending first message for \(data.userId) - assuming this is for ChatViewModel to handle", category: "ChatsViewModel")
+            // No pending message - this bundle was requested for updating username or outgoing session
+            Log.debug("ChatsViewModel: No pending first message for \(data.userId) - updating username or for ChatViewModel", category: "ChatsViewModel")
 
-            // Update username for existing user if found
+            // ✅ FIX: Always update username for existing user if found (even if no pending message)
+            // This handles the case when we request publicKeyBundle just to update username
             guard let context = viewContext else { return }
-            let userFetch: NSFetchRequest<User> = User.fetchRequest()
-            userFetch.predicate = NSPredicate(format: "id == %@", data.userId)
-            if let existingUser = try? context.fetch(userFetch).first {
-                existingUser.username = data.username
-                existingUser.displayName = data.username
+            
+            // Find user in any chat
+            let chatFetch: NSFetchRequest<Chat> = Chat.fetchRequest()
+            chatFetch.predicate = NSPredicate(format: "otherUser.id == %@", data.userId)
+            
+            if let existingChat = try? context.fetch(chatFetch).first,
+               let user = existingChat.otherUser {
+                let oldUsername = user.username
+                user.username = data.username
+                user.displayName = data.username
                 try? context.save()
-                Log.info("Updated username for user: \(data.username)", category: "ChatsViewModel")
+                Log.info("🔄 Updated username from '\(oldUsername)' to '\(data.username)' for existing user \(data.userId)", category: "ChatsViewModel")
+            } else {
+                // Try to find user directly
+                let userFetch: NSFetchRequest<User> = User.fetchRequest()
+                userFetch.predicate = NSPredicate(format: "id == %@", data.userId)
+                if let existingUser = try? context.fetch(userFetch).first {
+                    let oldUsername = existingUser.username
+                    existingUser.username = data.username
+                    existingUser.displayName = data.username
+                    try? context.save()
+                    Log.info("🔄 Updated username from '\(oldUsername)' to '\(data.username)' for user \(data.userId)", category: "ChatsViewModel")
+                } else {
+                    Log.debug("⚠️ User \(data.userId) not found in database for username update", category: "ChatsViewModel")
+                }
             }
             return
         }
@@ -198,6 +220,9 @@ class ChatsViewModel: ObservableObject {
                     newUser.id = data.userId
                     newUser.username = data.username
                     newUser.displayName = data.username
+                    newUser.isSharingWithMe = false
+                    newUser.isBlocked = false
+                    newUser.amISharingWith = false
                     dbUser = newUser
                     Log.debug("Created new user in fallback: id=\(data.userId), username=\(data.username)", category: "ChatsViewModel")
                 }
@@ -260,6 +285,9 @@ class ChatsViewModel: ObservableObject {
                 newUser.id = otherUserId
                 newUser.username = otherUserId  // Temporary: will be updated from publicKeyBundle
                 newUser.displayName = otherUserId
+                newUser.isSharingWithMe = false
+                newUser.isBlocked = false
+                newUser.amISharingWith = false
                 dbUser = newUser
                 Log.debug("Created new user in handleIncomingMessage: id=\(otherUserId)", category: "ChatsViewModel")
             }
@@ -319,6 +347,21 @@ class ChatsViewModel: ObservableObject {
                 return
             }
             decryptedContent = content
+            
+            // ✅ FIX: Check if username is still UUID (not yet updated from publicKeyBundle)
+            // If username equals userId (UUID format), request publicKeyBundle to get real username
+            if let user = chat.otherUser, (user.username == user.id || user.username == otherUserId) {
+                // Username is still UUID - request publicKeyBundle to update it
+                Log.info("🔄 Username for user \(otherUserId) is still UUID (\(user.username)), requesting publicKeyBundle to update", category: "ChatsViewModel")
+                wsManager.send(.getPublicKey(GetPublicKeyData(userId: otherUserId)))
+            }
+            
+            // ✅ Handle profile sharing messages
+            if let profileData = try? parseProfileMessage(decryptedContent) {
+                handleProfileMessage(profileData, from: otherUserId)
+                // Don't save profile messages as regular chat messages
+                return
+            }
         }
 
         saveMessage(for: chat, with: message, decryptedContent: decryptedContent)
@@ -334,6 +377,46 @@ class ChatsViewModel: ObservableObject {
         Log.info("📬 Sent ACK 'delivered' to server for message: \(message.id)", category: "ChatsViewModel")
 
         // ✅ REMOVED DUPLICATE: saveMessage() already calls context.save() internally
+    }
+    
+    // MARK: - Profile Sharing
+    private func parseProfileMessage(_ content: String) -> ProfileShareData? {
+        guard let data = content.data(using: .utf8) else { return nil }
+        guard let json = try? JSONDecoder().decode(ProfileShareData.self, from: data),
+              json.type == "profile" else { return nil }
+        return json
+    }
+    
+    private func handleProfileMessage(_ profileData: ProfileShareData, from userId: String) {
+        guard let context = viewContext else { return }
+        
+        let userFetchRequest: NSFetchRequest<User> = User.fetchRequest()
+        userFetchRequest.predicate = NSPredicate(format: "id == %@", userId)
+        
+        guard let user = try? context.fetch(userFetchRequest).first else {
+            Log.error("❌ User not found for profile update: \(userId)", category: "ChatsViewModel")
+            return
+        }
+        
+        // Update user's display name
+        user.displayName = profileData.displayName
+        
+        // Update avatar if provided
+        if let avatarBase64 = profileData.avatarData,
+           let avatarData = Data(base64Encoded: avatarBase64) {
+            user.avatarData = avatarData
+        }
+        
+        // Mark as sharing with us
+        user.isSharingWithMe = true
+        user.sharedWithMeAt = Date()
+        
+        do {
+            try context.save()
+            Log.info("✅ Profile data updated for user \(userId): displayName=\(profileData.displayName)", category: "ChatsViewModel")
+        } catch {
+            Log.error("❌ Failed to save profile data: \(error)", category: "ChatsViewModel")
+        }
     }
     
     private func saveMessage(for chat: Chat, with messageData: ChatMessage, decryptedContent: String) {

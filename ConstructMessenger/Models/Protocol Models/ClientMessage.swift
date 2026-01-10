@@ -16,6 +16,7 @@ enum ClientMessage: Codable {
     case sendMessage(ChatMessage)
     case rotatePrekey(RotatePrekeyData)
     case logout(LogoutData)
+    case deleteAccount(DeleteAccountData)
     case getOfflineMessages
     case acknowledgeMessage(AcknowledgeMessageData)
 
@@ -27,7 +28,7 @@ enum ClientMessage: Codable {
     }
 
     private enum MessageType: String, Codable {
-        case register, login, connect, getPublicKey, sendMessage, rotatePrekey, logout, getOfflineMessages, acknowledgeMessage
+        case register, login, connect, getPublicKey, sendMessage, rotatePrekey, logout, deleteAccount, getOfflineMessages, acknowledgeMessage
     }
 
     init(from decoder: Decoder) throws {
@@ -55,6 +56,9 @@ enum ClientMessage: Codable {
         case .logout:
             let payload = try container.decode(LogoutData.self, forKey: .payload)
             self = .logout(payload)
+        case .deleteAccount:
+            let payload = try container.decode(DeleteAccountData.self, forKey: .payload)
+            self = .deleteAccount(payload)
         case .getOfflineMessages:
             self = .getOfflineMessages
         case .acknowledgeMessage:
@@ -86,6 +90,9 @@ enum ClientMessage: Codable {
             try container.encode(data, forKey: .payload)
         case .logout(let data):
             try container.encode(MessageType.logout, forKey: .type)
+            try container.encode(data, forKey: .payload)
+        case .deleteAccount(let data):
+            try container.encode(MessageType.deleteAccount, forKey: .type)
             try container.encode(data, forKey: .payload)
         case .getOfflineMessages:
             try container.encode(MessageType.getOfflineMessages, forKey: .type)
@@ -151,4 +158,9 @@ struct LogoutData: Codable {
 struct AcknowledgeMessageData: Codable {
     let messageId: String
     let status: String  // "delivered" when recipient receives the message
+}
+
+struct DeleteAccountData: Codable {
+    let sessionToken: String
+    let password: String
 }

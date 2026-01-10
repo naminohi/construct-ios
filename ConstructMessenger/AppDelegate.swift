@@ -36,14 +36,10 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         // Initialize local notification manager
         // This ensures it's ready when needed
         _ = LocalNotificationManager.shared
-        
-        // Initialize network reachability monitoring
-        // This starts monitoring network state for offline/online scenarios
-        _ = NetworkReachabilityManager.shared
-        
-        // Initialize message queue manager
-        // This handles automatic retry and queue processing for offline messages
-        _ = MessageQueueManager.shared
+
+        // NOTE: NetworkReachabilityManager and MessageQueueManager will be initialized
+        // lazily when first accessed. This avoids potential circular dependencies
+        // and initialization issues at app startup.
 
         return true
     }
