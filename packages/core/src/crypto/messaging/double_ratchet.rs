@@ -299,6 +299,11 @@ impl<P: CryptoProvider> SecureMessaging<P> for DoubleRatchetSession<P> {
             "Encrypting message"
         );
 
+        // Apply padding to hide message length (traffic analysis protection)
+        use crate::traffic_protection::padding::pad_message_default;
+        let padded_plaintext = pad_message_default(plaintext)
+            .map_err(|e| format!("Padding failed: {}", e))?;
+
         let (message_key, next_chain_key) =
             P::kdf_ck(&self.sending_chain_key).map_err(|e| format!("KDF (CK) failed: {}", e))?;
         self.sending_chain_key = next_chain_key;
@@ -321,7 +326,7 @@ impl<P: CryptoProvider> SecureMessaging<P> for DoubleRatchetSession<P> {
         associated_data.extend_from_slice(&dh_public_key);
         associated_data.extend_from_slice(&message_number.to_be_bytes());
 
-        let ciphertext = P::aead_encrypt(&message_key, &nonce, plaintext, Some(&associated_data))
+        let ciphertext = P::aead_encrypt(&message_key, &nonce, &padded_plaintext, Some(&associated_data))
             .map_err(|e| format!("Encryption failed: {}", e))?;
 
         trace!(
@@ -557,21 +562,22 @@ impl<P: CryptoProvider> DoubleRatchetSession<P> {
         associated_data.extend_from_slice(&encrypted.dh_public_key);
         associated_data.extend_from_slice(&encrypted.message_number.to_be_bytes());
 
-        let result = P::aead_decrypt(
+        let padded_plaintext = P::aead_decrypt(
             message_key,
             &encrypted.nonce,
             &encrypted.ciphertext,
             Some(&associated_data),
         )
-        .map_err(|e| format!("Decryption failed: {}", e));
+        .map_err(|e| format!("Decryption failed: {}", e))?;
 
-        if result.is_ok() {
-            debug!(target: "crypto::double_ratchet", "Decryption successful");
-        } else {
-            debug!(target: "crypto::double_ratchet", "Decryption failed");
-        }
+        debug!(target: "crypto::double_ratchet", "Decryption successful");
 
-        result
+        // Remove padding to recover original plaintext (traffic analysis protection)
+        use crate::traffic_protection::padding::unpad_message;
+        let plaintext = unpad_message(&padded_plaintext)
+            .map_err(|e| format!("Unpadding failed: {}", e))?;
+
+        Ok(plaintext)
     }
 
     // Helper functions to convert between bytes and keys

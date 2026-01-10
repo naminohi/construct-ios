@@ -27,9 +27,9 @@ pub mod state;
 pub mod utils;
 pub mod error;
 
-// Traffic Protection (Sealed Sender, Padding, Cover Traffic)
-// TODO: Uncomment when implementing TRAFFIC_PROTECTION_IMPLEMENTATION_PLAN.md
-// pub mod traffic_protection;
+// Traffic Protection (Padding, Cover Traffic, Timing Jitter)
+// Implementation of TRAFFIC_PROTECTION_IMPLEMENTATION_PLAN.md (no Sealed Sender)
+pub mod traffic_protection;
 
 // Re-exports для удобства
 pub use api::MessengerAPI;
