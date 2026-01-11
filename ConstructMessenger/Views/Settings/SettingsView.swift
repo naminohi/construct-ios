@@ -93,6 +93,7 @@ struct SettingsView: View {
                                 .foregroundColor(.green)
                         }
                     }
+
                     NavigationLink(destination: AppearanceSettingsView()) {
                         Label {
                             Text("appearance")

@@ -379,7 +379,10 @@
 				DEVELOPMENT_TEAM = PK2473XF3P;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/ConstructMessenger";
+				HEADER_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/ConstructMessenger",
+					"$(PROJECT_DIR)/packages/core/bindings/ios",
+				);
 				INFOPLIST_FILE = ConstructMessenger/Info.plist;
 				INFOPLIST_KEY_BGTaskSchedulerPermittedIdentifiers = "com.construct.message-refresh com.construct.maintenance";
 				INFOPLIST_KEY_CFBundleDisplayName = Konstruct;
@@ -432,7 +435,10 @@
 				DEVELOPMENT_TEAM = PK2473XF3P;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/ConstructMessenger";
+				HEADER_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/ConstructMessenger",
+					"$(PROJECT_DIR)/packages/core/bindings/ios",
+				);
 				INFOPLIST_FILE = ConstructMessenger/Info.plist;
 				INFOPLIST_KEY_BGTaskSchedulerPermittedIdentifiers = "com.construct.message-refresh com.construct.maintenance";
 				INFOPLIST_KEY_CFBundleDisplayName = Konstruct;

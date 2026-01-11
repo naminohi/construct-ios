@@ -158,8 +158,16 @@ class ChatViewModel: ObservableObject {
     func sendMessage(text: String, replyTo: Message? = nil) {
         Log.info("📤 sendMessage called", category: "ChatViewModel")
 
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            Log.debug("❌ Empty message, ignoring", category: "ChatViewModel")
+        // Validate message size
+        do {
+            try MessageValidator.validateText(text)
+        } catch let error as MessageValidationError {
+            errorMessage = error.localizedDescription
+            Log.error("❌ Message validation failed: \(error.localizedDescription)", category: "ChatViewModel")
+            return
+        } catch {
+            errorMessage = "Failed to validate message: \(error.localizedDescription)"
+            Log.error("❌ Unexpected validation error: \(error)", category: "ChatViewModel")
             return
         }
 

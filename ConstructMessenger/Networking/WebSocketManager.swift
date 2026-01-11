@@ -91,7 +91,10 @@ class WebSocketManager: NSObject, ObservableObject {
     // MARK: - Ping / Keep-Alive
     private func startPingTimer() {
         stopPingTimer()
-        pingTimer = Timer.scheduledTimer(withTimeInterval: 25.0, repeats: true) { [weak self] _ in
+        pingTimer = Timer.scheduledTimer(
+            withTimeInterval: WebSocketConfig.pingInterval,
+            repeats: true
+        ) { [weak self] _ in
             self?.sendPing()
         }
     }
@@ -118,9 +121,41 @@ class WebSocketManager: NSObject, ObservableObject {
     func send(_ message: ClientMessage) {
         send(message, messageId: nil)
     }
-    
+
     /// Send message with optional message ID tracking for offline scenarios
     func send(_ message: ClientMessage, messageId: String? = nil) {
+        // ✅ Traffic Protection: Apply timing jitter to real messages (not dummy/connect)
+        let shouldApplyJitter: Bool
+        switch message {
+        case .sendMessage:
+            // Real user message - apply high priority jitter
+            shouldApplyJitter = true
+        case .dummy, .connect, .getOfflineMessages:
+            // No jitter for these
+            shouldApplyJitter = false
+        default:
+            // Low priority jitter for other messages
+            shouldApplyJitter = true
+        }
+
+        if shouldApplyJitter {
+            let isHighPriority: Bool
+            if case .sendMessage = message {
+                isHighPriority = true  // User messages are high priority
+            } else {
+                isHighPriority = false  // Other messages are low priority
+            }
+
+            TrafficProtectionService.shared.applyTimingJitter(isHighPriority: isHighPriority) { [weak self] in
+                self?.sendInternal(message, messageId: messageId)
+            }
+        } else {
+            sendInternal(message, messageId: messageId)
+        }
+    }
+
+    /// Internal send without jitter (called after jitter delay)
+    private func sendInternal(_ message: ClientMessage, messageId: String? = nil) {
         // ✅ FIX: Queue message if not connected, except for Connect which is handled automatically
         guard let task = webSocketTask, isConnected else {
             // Queue non-Connect messages for later sending
@@ -131,7 +166,7 @@ class WebSocketManager: NSObject, ObservableObject {
             }
             Log.info("Queueing message - WebSocket not yet connected", category: "WebSocket")
             messageQueue.append(message)
-            
+
             // If we have a messageId, mark it as queued in Core Data
             if let messageId = messageId {
                 markMessageAsQueued(messageId: messageId)
@@ -154,7 +189,7 @@ class WebSocketManager: NSObject, ObservableObject {
                 if let error = error {
                     Log.error("WebSocket send error: \(error.localizedDescription)", category: "WebSocket")
                     self?.errorPublisher.send(error)
-                    
+
                     // If we have a messageId, mark it as failed/queued
                     if let messageId = messageId {
                         self?.handleSendError(messageId: messageId, error: error)
@@ -164,6 +199,11 @@ class WebSocketManager: NSObject, ObservableObject {
                     // ACK will confirm actual delivery
                     if let messageId = messageId {
                         Log.debug("✅ Message \(messageId) sent to WebSocket", category: "WebSocket")
+                    }
+
+                    // ✅ Traffic Protection: Record real message sent for coalescing
+                    if case .sendMessage = message {
+                        TrafficProtectionService.shared.recordRealMessageSent()
                     }
                 }
             }
@@ -290,7 +330,10 @@ class WebSocketManager: NSObject, ObservableObject {
         DispatchQueue.main.async {
             self.connectionStatus = .reconnecting(attempt: self.reconnectAttempts)
         }
-        let delay = min(pow(2.0, Double(reconnectAttempts - 1)), 30.0)
+        let delay = min(
+            pow(WebSocketConfig.reconnectBaseDelay, Double(reconnectAttempts - 1)),
+            WebSocketConfig.reconnectMaxDelay
+        )
         reconnectTimer?.invalidate()
         reconnectTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             self?.attemptReconnect()
@@ -371,15 +414,15 @@ class WebSocketManager: NSObject, ObservableObject {
         }
 
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 15.0
-        config.timeoutIntervalForResource = 20.0
+        config.timeoutIntervalForRequest = WebSocketConfig.backgroundFetchRequestTimeout
+        config.timeoutIntervalForResource = WebSocketConfig.backgroundFetchResourceTimeout
         let tempSession = URLSession(configuration: config)
         let request = URLRequest(url: url)
         let tempTask = tempSession.webSocketTask(with: request)
-        
+
         var messages: [ChatMessage] = []
         var didComplete = false
-        let timeout: TimeInterval = 15.0
+        let timeout: TimeInterval = WebSocketConfig.backgroundFetchTimeout
         
         // Set timeout
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
@@ -508,9 +551,9 @@ class WebSocketManager: NSObject, ObservableObject {
         
         // Start connection
         tempTask.resume()
-        
+
         // Authenticate after a short delay to allow connection to establish
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
+        DispatchQueue.global().asyncAfter(deadline: .now() + WebSocketConfig.authenticationDelay) {
             guard !didComplete else { return }
             guard let sessionToken = SessionManager.shared.sessionToken else {
                 if !didComplete {
@@ -561,9 +604,9 @@ extension WebSocketManager: URLSessionWebSocketDelegate {
 
             // ✅ FIX: Authenticate immediately after connection
             self.authenticateSession()
-            
+
             // Flush any queued messages after a short delay to ensure authentication completes
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + WebSocketConfig.messageQueueFlushDelay) {
                 self.onConnectionEstablished()
             }
 

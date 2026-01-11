@@ -210,7 +210,7 @@ struct MessageBubble: View {
 
         case .delivered:
             // Два зеленых чекмарка - сообщение доставлено получателю
-            HStack(spacing: -2) {
+            HStack(spacing: -8) {
                 Image(systemName: "checkmark")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(.green)

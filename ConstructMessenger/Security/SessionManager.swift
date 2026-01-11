@@ -11,10 +11,6 @@ class SessionManager {
     static let shared = SessionManager()
     private init() {}
 
-    private let sessionTokenKey = "com.construct.sessionToken"
-    private let userIdKey = "com.construct.userId"
-    private let expiresKey = "com.construct.sessionExpires"  // ✅ FIXED: Track expiration
-
     var currentUserId: String? {
         KeychainManager.shared.loadUserId()
     }
@@ -25,7 +21,7 @@ class SessionManager {
 
     // ✅ FIXED: Get session expiration timestamp
     var sessionExpires: Date? {
-        guard let timestamp = UserDefaults.standard.object(forKey: expiresKey) as? TimeInterval else {
+        guard let timestamp = UserDefaults.standard.object(forKey: UserDefaultsKey.sessionExpires.key) as? TimeInterval else {
             return nil
         }
         return Date(timeIntervalSince1970: timestamp)
@@ -46,13 +42,13 @@ class SessionManager {
         KeychainManager.shared.saveUserId(userId)
         KeychainManager.shared.saveSessionToken(token)
         // Save expiration timestamp
-        UserDefaults.standard.set(TimeInterval(expires), forKey: expiresKey)
+        UserDefaults.standard.set(TimeInterval(expires), forKey: UserDefaultsKey.sessionExpires.key)
         print("✅ Session saved - expires at: \(Date(timeIntervalSince1970: TimeInterval(expires)))")
     }
 
     func clearSession() {
         KeychainManager.shared.deleteSessionToken()
         // Clear expiration timestamp
-        UserDefaults.standard.removeObject(forKey: expiresKey)
+        UserDefaults.standard.removeObject(forKey: UserDefaultsKey.sessionExpires.key)
     }
 }

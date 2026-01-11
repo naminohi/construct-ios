@@ -19,6 +19,7 @@ enum ClientMessage: Codable {
     case deleteAccount(DeleteAccountData)
     case getOfflineMessages
     case acknowledgeMessage(AcknowledgeMessageData)
+    case dummy(DummyMessageData)  // Traffic protection: dummy message
 
     // MARK: - Codable Implementation
     
@@ -28,7 +29,7 @@ enum ClientMessage: Codable {
     }
 
     private enum MessageType: String, Codable {
-        case register, login, connect, getPublicKey, sendMessage, rotatePrekey, logout, deleteAccount, getOfflineMessages, acknowledgeMessage
+        case register, login, connect, getPublicKey, sendMessage, rotatePrekey, logout, deleteAccount, getOfflineMessages, acknowledgeMessage, dummy
     }
 
     init(from decoder: Decoder) throws {
@@ -64,6 +65,9 @@ enum ClientMessage: Codable {
         case .acknowledgeMessage:
             let payload = try container.decode(AcknowledgeMessageData.self, forKey: .payload)
             self = .acknowledgeMessage(payload)
+        case .dummy:
+            let payload = try container.decode(DummyMessageData.self, forKey: .payload)
+            self = .dummy(payload)
         }
     }
 
@@ -98,6 +102,9 @@ enum ClientMessage: Codable {
             try container.encode(MessageType.getOfflineMessages, forKey: .type)
         case .acknowledgeMessage(let data):
             try container.encode(MessageType.acknowledgeMessage, forKey: .type)
+            try container.encode(data, forKey: .payload)
+        case .dummy(let data):
+            try container.encode(MessageType.dummy, forKey: .type)
             try container.encode(data, forKey: .payload)
         }
     }
@@ -163,4 +170,10 @@ struct AcknowledgeMessageData: Codable {
 struct DeleteAccountData: Codable {
     let sessionToken: String
     let password: String
+}
+
+/// Dummy message for traffic analysis protection
+/// Server will ignore these messages but they help mask real traffic patterns
+struct DummyMessageData: Codable {
+    let payload: Data  // Random bytes, encrypted if needed
 }

@@ -17,6 +17,19 @@ pub mod cover_traffic;
 pub mod timing;
 
 // Re-exports
-pub use padding::{pad_message, unpad_message, PaddingError};
-pub use cover_traffic::{generate_dummy_message, is_dummy_message, CoverTrafficConfig};
-pub use timing::{jittered_interval, random_send_delay, TimingConfig};
+pub use padding::{pad_message, unpad_message, pad_message_default, PaddingError, DEFAULT_BLOCK_SIZE};
+pub use cover_traffic::{
+    generate_dummy_message,
+    is_dummy_message,
+    CoverTrafficConfig,
+    CoverTrafficManager,
+    EnergyMetrics,
+};
+pub use timing::{
+    jittered_interval,
+    random_send_delay,
+    heartbeat_interval,
+    battery_aware_jitter,
+    recommended_send_delay,
+    TimingConfig,
+};

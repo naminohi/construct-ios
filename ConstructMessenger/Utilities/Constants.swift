@@ -107,6 +107,64 @@ struct ValidationRules {
     static let usernamePattern = "^[a-zA-Z0-9_]{3,30}$"
 }
 
+// MARK: - Message Size Limits
+struct MessageSizeLimits {
+    // Text Message Limits
+    // Note: These are for encrypted content, actual plaintext will be smaller due to encryption overhead
+    static let maxTextMessageBytes: Int = 100 * 1024 * 1024  // 100 MB (encrypted)
+    static let maxPlaintextMessageBytes: Int = 50 * 1024 * 1024  // 50 MB (plaintext, conservative estimate)
+
+    // File Attachment Limits
+    static let maxFileAttachmentBytes: Int64 = 500 * 1024 * 1024  // 500 MB
+
+    // Specific file type limits (can be more restrictive)
+    static let maxImageBytes: Int64 = 100 * 1024 * 1024  // 100 MB for images
+    static let maxVideoBytes: Int64 = 500 * 1024 * 1024  // 500 MB for videos
+    static let maxDocumentBytes: Int64 = 200 * 1024 * 1024  // 200 MB for documents
+    static let maxAudioBytes: Int64 = 100 * 1024 * 1024  // 100 MB for audio
+
+    // Total message size (text + all attachments)
+    static let maxTotalMessageBytes: Int64 = 500 * 1024 * 1024  // 500 MB total
+
+    // Supported file types
+    static let supportedImageTypes: Set<String> = ["jpg", "jpeg", "png", "gif", "heic", "heif", "webp"]
+    static let supportedVideoTypes: Set<String> = ["mp4", "mov", "m4v", "avi", "mkv"]
+    static let supportedDocumentTypes: Set<String> = ["pdf", "doc", "docx", "txt", "rtf", "pages", "numbers", "key"]
+    static let supportedAudioTypes: Set<String> = ["mp3", "m4a", "wav", "aac", "flac", "ogg"]
+
+    // Helper functions
+    static func maxSizeForFileType(_ fileExtension: String) -> Int64 {
+        let ext = fileExtension.lowercased()
+
+        if supportedImageTypes.contains(ext) {
+            return maxImageBytes
+        } else if supportedVideoTypes.contains(ext) {
+            return maxVideoBytes
+        } else if supportedDocumentTypes.contains(ext) {
+            return maxDocumentBytes
+        } else if supportedAudioTypes.contains(ext) {
+            return maxAudioBytes
+        } else {
+            return maxFileAttachmentBytes
+        }
+    }
+
+    static func isFileTypeSupported(_ fileExtension: String) -> Bool {
+        let ext = fileExtension.lowercased()
+        return supportedImageTypes.contains(ext) ||
+               supportedVideoTypes.contains(ext) ||
+               supportedDocumentTypes.contains(ext) ||
+               supportedAudioTypes.contains(ext)
+    }
+
+    static func formatFileSize(_ bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useKB, .useMB, .useGB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: bytes)
+    }
+}
+
 // MARK: - App Constants
 struct AppConstants {
     static let appName = "Konstruct"
@@ -126,6 +184,97 @@ struct FeatureFlags {
     static let enableOfflineQueue = true
     static let enablePushNotifications = false // Пока не реализовано
     static let maxMessageRetryAttempts = 3
+}
+
+// MARK: - Traffic Protection Configuration
+struct TrafficProtectionConfig {
+    // Battery Awareness
+    static let batteryLevelThreshold: Float = 0.2  // 20% - disable below this
+    static let defaultBatteryLevel: Float = 1.0    // Assume full battery if unknown
+
+    // Timing Intervals (milliseconds) - Optimized for energy efficiency
+    #if DEBUG
+    // Debug: Shorter intervals for testing
+    static let minIntervalMs: UInt64 = 30_000      // 30 seconds minimum
+    static let maxIntervalMs: UInt64 = 300_000     // 5 minutes maximum
+    static let schedulerCheckInterval: TimeInterval = 30.0  // Check every 30 seconds
+    #else
+    // Release: Longer intervals for battery life (max 30 dummies/hour instead of 120)
+    static let minIntervalMs: UInt64 = 120_000     // 2 minutes minimum
+    static let maxIntervalMs: UInt64 = 900_000     // 15 minutes maximum
+    static let schedulerCheckInterval: TimeInterval = 120.0  // Check every 2 minutes
+    #endif
+
+    static let coalesceWindowMs: UInt64 = 15_000   // 15 seconds coalescing window (increased)
+
+    // Message Configuration
+    static let messageSize: UInt64 = 255           // Match PKCS7 padding block size
+    static let coalesceWithRealMessages = true     // Enable smart coalescing
+
+    // Jitter Configuration (milliseconds)
+    static let highPriorityMaxJitterMs: UInt64 = 50    // User messages: 0-50ms
+    static let lowPriorityMaxJitterMs: UInt64 = 100    // Other messages: 0-100ms
+    static let batteryJitterReductionFactor: Float = 0.5  // 50% reduction at low battery
+
+    // Feature Flags
+    #if DEBUG
+    static let allowUserToggle = true              // Allow users to disable in debug
+    #else
+    static let allowUserToggle = false             // Always enabled in release
+    #endif
+}
+
+// MARK: - WebSocket Configuration
+struct WebSocketConfig {
+    // Connection Timeouts
+    static let pingInterval: TimeInterval = 25.0          // Send ping every 25 seconds
+    static let reconnectBaseDelay: TimeInterval = 2.0     // Base delay for exponential backoff
+    static let reconnectMaxDelay: TimeInterval = 30.0     // Max reconnect delay
+
+    // Background Fetch Timeouts
+    static let backgroundFetchTimeout: TimeInterval = 15.0
+    static let backgroundFetchRequestTimeout: TimeInterval = 15.0
+    static let backgroundFetchResourceTimeout: TimeInterval = 20.0
+
+    // Connection Delays
+    static let authenticationDelay: TimeInterval = 0.5    // Delay before authenticating
+    static let messageQueueFlushDelay: TimeInterval = 0.1 // Delay before flushing queue
+}
+
+// MARK: - UserDefaults Keys
+enum UserDefaultsKey: String {
+    // Traffic Protection
+    case trafficProtectionEnabled = "trafficProtection_enabled"
+
+    // Background Fetch
+    case backgroundFetchEnabled = "backgroundFetch_enabled"
+    case backgroundFetchIntervalMinutes = "backgroundFetch_intervalMinutes"
+
+    // Session
+    case sessionExpires = "session_expires"
+
+    // Server Configuration
+    case customServerURL = "customServerURL"
+
+    // App Theme
+    case appTheme = "appTheme"
+
+    // Helper methods
+    var key: String { rawValue }
+}
+
+// MARK: - Log Categories
+enum LogCategory: String {
+    case trafficProtection = "TrafficProtection"
+    case webSocket = "WebSocket"
+    case cryptoManager = "CryptoManager"
+    case backgroundFetch = "BackgroundFetch"
+    case deepLink = "DeepLink"
+    case network = "Network"
+    case auth = "Auth"
+    case general = "General"
+
+    var name: String { rawValue }
 }
 
 // MARK: - Debug Helpers

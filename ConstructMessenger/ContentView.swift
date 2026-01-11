@@ -21,6 +21,7 @@ struct ContentView: View {
         Group {
             if authViewModel.isAuthenticated {
                 MainTabView()
+                    .environmentObject(authViewModel)
                     .environmentObject(chatsViewModel)
             } else {
                 AuthView()

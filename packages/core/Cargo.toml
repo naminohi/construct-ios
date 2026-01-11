@@ -67,3 +67,6 @@ hex = "0.4"
 
 [build-dependencies]
 uniffi = { version = "0.28", features = ["build"] }
+
+[package.metadata.uniffi.bindings]
+swift = true
