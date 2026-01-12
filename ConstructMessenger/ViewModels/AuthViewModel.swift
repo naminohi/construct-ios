@@ -145,12 +145,17 @@ class AuthViewModel: ObservableObject {
             let jsonEncoder = JSONEncoder()
             jsonEncoder.outputFormatting = .sortedKeys
             let bundleDataJSON = try jsonEncoder.encode(bundleData)
+            
+            // Step 2.5: Sign the BundleData JSON with Ed25519 signing key
+            // The signature from registrationBundle is for signed_prekey, not for BundleData
+            // We need to create a new signature for the BundleData JSON string
+            let bundleDataSignature = try CryptoManager.shared.signBundleData(bundleDataJSON)
 
             // Step 3: Create the final UploadableKeyBundle.
             let uploadableBundle = UploadableKeyBundle(
                 masterIdentityKey: registrationBundle.verifyingKey,
                 bundleData: bundleDataJSON.base64EncodedString(), // This is still Base64 encoded JSON string
-                signature: registrationBundle.signature
+                signature: bundleDataSignature
             )
 
             // Step 4: Send to server. The publicKey is now the native UploadableKeyBundle object, and displayName is removed.

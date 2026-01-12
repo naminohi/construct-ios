@@ -550,6 +550,8 @@ public protocol ClassicCryptoCoreProtocol : AnyObject {
     
     func removeSession(contactId: String)  -> Bool
     
+    func signBundleData(bundleDataJson: [UInt8]) throws  -> String
+    
 }
 
 open class ClassicCryptoCore:
@@ -683,6 +685,14 @@ open func removeSession(contactId: String) -> Bool {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_construct_core_fn_method_classiccryptocore_remove_session(self.uniffiClonePointer(),
         FfiConverterString.lower(contactId),$0
+    )
+})
+}
+    
+open func signBundleData(bundleDataJson: [UInt8])throws  -> String {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCryptoError.lift) {
+    uniffi_construct_core_fn_method_classiccryptocore_sign_bundle_data(self.uniffiClonePointer(),
+        FfiConverterSequenceUInt8.lower(bundleDataJson),$0
     )
 })
 }
@@ -1825,6 +1835,9 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_construct_core_checksum_method_classiccryptocore_remove_session() != 58665) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_construct_core_checksum_method_classiccryptocore_sign_bundle_data() != 37789) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_construct_core_checksum_method_trafficprotectionmanager_current_interval_ms() != 19714) {

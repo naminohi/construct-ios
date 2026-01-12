@@ -45,10 +45,57 @@ struct SignedPrekeyUpdate: Codable {
 
 // MARK: - Profile Sharing
 /// Profile data shared between users (encrypted E2E)
+/// Avatar is uploaded via Media Upload API, only mediaId and encrypted key are sent
 struct ProfileShareData: Codable {
-    let type: String = "profile"  // Message type identifier
+    let type: String  // Message type identifier
     let displayName: String
-    let avatarData: String?  // Base64 encoded image data
+    let avatarMediaId: String?  // Media ID from Media Upload API
+    let avatarMediaUrl: String?  // Media URL for downloading
+    let avatarMediaKey: String?  // Encrypted media key (encrypted with Double Ratchet for recipient)
+    let avatarMediaType: String?  // MIME type (e.g., "image/jpeg")
     let timestamp: Int64  // Unix timestamp when profile was shared
+    
+    // Backward compatibility: support old format with avatarData (base64)
+    let avatarData: String?  // Deprecated: Base64 encoded image data (for backward compatibility)
+    
+    init(displayName: String, avatarMediaId: String?, avatarMediaUrl: String?, avatarMediaKey: String?, avatarMediaType: String?, timestamp: Int64) {
+        self.type = "profile"
+        self.displayName = displayName
+        self.avatarMediaId = avatarMediaId
+        self.avatarMediaUrl = avatarMediaUrl
+        self.avatarMediaKey = avatarMediaKey
+        self.avatarMediaType = avatarMediaType
+        self.timestamp = timestamp
+        self.avatarData = nil  // Deprecated
+    }
+    
+    // Custom decoder to handle both new and old formats
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.type = try container.decodeIfPresent(String.self, forKey: .type) ?? "profile"
+        self.displayName = try container.decode(String.self, forKey: .displayName)
+        
+        // New format: media via Media Upload API
+        self.avatarMediaId = try container.decodeIfPresent(String.self, forKey: .avatarMediaId)
+        self.avatarMediaUrl = try container.decodeIfPresent(String.self, forKey: .avatarMediaUrl)
+        self.avatarMediaKey = try container.decodeIfPresent(String.self, forKey: .avatarMediaKey)
+        self.avatarMediaType = try container.decodeIfPresent(String.self, forKey: .avatarMediaType)
+        
+        // Old format: base64 data (backward compatibility)
+        self.avatarData = try container.decodeIfPresent(String.self, forKey: .avatarData)
+        
+        self.timestamp = try container.decode(Int64.self, forKey: .timestamp)
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case type
+        case displayName
+        case avatarMediaId
+        case avatarMediaUrl
+        case avatarMediaKey
+        case avatarMediaType
+        case avatarData  // Deprecated
+        case timestamp
+    }
 }
 

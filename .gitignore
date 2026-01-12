@@ -30,6 +30,10 @@ out/
 .vercel/
 .turbo/
 
+# Static library symbol files (macOS)
+__.SYMDEF
+*.SYMDEF
+
 # Environment
 .env
 .env.local

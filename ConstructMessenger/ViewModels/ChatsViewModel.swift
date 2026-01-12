@@ -357,10 +357,14 @@ class ChatsViewModel: ObservableObject {
             }
             
             // ✅ Handle profile sharing messages
-            if let profileData = try? parseProfileMessage(decryptedContent) {
+            if let profileData = parseProfileMessage(decryptedContent) {
+                Log.info("📥 Received profile message from \(otherUserId)", category: "ChatsViewModel")
                 handleProfileMessage(profileData, from: otherUserId)
                 // Don't save profile messages as regular chat messages
                 return
+            } else {
+                // Debug: Log when content doesn't match profile message format
+                Log.debug("📝 Content is not a profile message, treating as regular message", category: "ChatsViewModel")
             }
         }
 
@@ -381,9 +385,26 @@ class ChatsViewModel: ObservableObject {
     
     // MARK: - Profile Sharing
     private func parseProfileMessage(_ content: String) -> ProfileShareData? {
-        guard let data = content.data(using: .utf8) else { return nil }
-        guard let json = try? JSONDecoder().decode(ProfileShareData.self, from: data),
-              json.type == "profile" else { return nil }
+        guard let data = content.data(using: .utf8) else {
+            Log.debug("❌ parseProfileMessage: Failed to convert content to data", category: "ChatsViewModel")
+            return nil
+        }
+        
+        // Debug: Log the content being parsed
+        Log.debug("📥 Attempting to parse profile message, content length: \(content.count)", category: "ChatsViewModel")
+        Log.debug("   Content preview: \(content.prefix(100))", category: "ChatsViewModel")
+        
+        guard let json = try? JSONDecoder().decode(ProfileShareData.self, from: data) else {
+            Log.debug("❌ parseProfileMessage: Failed to decode ProfileShareData", category: "ChatsViewModel")
+            return nil
+        }
+        
+        guard json.type == "profile" else {
+            Log.debug("❌ parseProfileMessage: type is not 'profile', got: '\(json.type)'", category: "ChatsViewModel")
+            return nil
+        }
+        
+        Log.info("✅ Successfully parsed profile message: displayName=\(json.displayName), avatarMediaId=\(json.avatarMediaId ?? "nil"), avatarData=\(json.avatarData != nil ? "present" : "nil")", category: "ChatsViewModel")
         return json
     }
     
@@ -402,8 +423,59 @@ class ChatsViewModel: ObservableObject {
         user.displayName = profileData.displayName
         
         // Update avatar if provided
-        if let avatarBase64 = profileData.avatarData,
-           let avatarData = Data(base64Encoded: avatarBase64) {
+        // Priority: new format (Media Upload API) > old format (base64)
+        if let avatarMediaId = profileData.avatarMediaId,
+           let avatarMediaUrl = profileData.avatarMediaUrl,
+           let avatarMediaKey = profileData.avatarMediaKey {
+            // New format: download and decrypt media from Media Upload API
+            Task {
+                do {
+                    Log.info("📥 Downloading avatar from Media Upload API: \(avatarMediaId)", category: "ChatsViewModel")
+                    
+                    // The avatarMediaKey is base64-encoded raw key (JSON is already E2E encrypted)
+                    guard let keyData = Data(base64Encoded: avatarMediaKey) else {
+                        Log.error("❌ Failed to decode avatar media key", category: "ChatsViewModel")
+                        return
+                    }
+                    
+                    // Download encrypted media
+                    guard let url = URL(string: avatarMediaUrl) else {
+                        Log.error("❌ Invalid avatar media URL", category: "ChatsViewModel")
+                        return
+                    }
+                    
+                    let (encryptedData, response) = try await URLSession.shared.data(from: url)
+                    
+                    guard let httpResponse = response as? HTTPURLResponse,
+                          httpResponse.statusCode == 200 else {
+                        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+                        Log.error("❌ Failed to download avatar: HTTP \(statusCode)", category: "ChatsViewModel")
+                        return
+                    }
+                    
+                    // Decrypt media using the key
+                    let decryptedData = try CryptoManager.shared.decryptMediaData(encryptedData, with: keyData)
+                    
+                    await MainActor.run {
+                        user.avatarData = decryptedData
+                        user.isSharingWithMe = true
+                        user.sharedWithMeAt = Date()
+                        
+                        do {
+                            try context.save()
+                            Log.info("✅ Avatar downloaded and saved for user \(userId)", category: "ChatsViewModel")
+                        } catch {
+                            Log.error("❌ Failed to save avatar: \(error)", category: "ChatsViewModel")
+                        }
+                    }
+                } catch {
+                    Log.error("❌ Failed to download avatar: \(error.localizedDescription)", category: "ChatsViewModel")
+                    // Continue - displayName was already updated
+                }
+            }
+        } else if let avatarBase64 = profileData.avatarData,
+                  let avatarData = Data(base64Encoded: avatarBase64) {
+            // Old format: base64 data (backward compatibility)
             user.avatarData = avatarData
         }
         

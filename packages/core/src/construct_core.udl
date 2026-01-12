@@ -45,6 +45,9 @@ interface ClassicCryptoCore {
     string export_registration_bundle_json();
 
     [Throws=CryptoError]
+    string sign_bundle_data(sequence<u8> bundle_data_json);
+
+    [Throws=CryptoError]
     string export_private_keys_json();
 
     [Throws=CryptoError]

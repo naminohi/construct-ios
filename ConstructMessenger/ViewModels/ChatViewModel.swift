@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import CoreData
+import UIKit
 import os.log
 
 @MainActor
@@ -8,12 +9,23 @@ class ChatViewModel: ObservableObject {
     @Published var messages: [Message] = []
     @Published var isSending = false
     @Published var errorMessage: String?
+    @Published var isLoadingMore = false
+    @Published var hasMoreMessages = true
 
     // ✅ FIXED: Track session initialization state
     @Published var isSessionReady = false
 
     // ✅ FIXED: Queue for pending messages before session is ready
     private var pendingMessages: [(text: String, timestamp: Date)] = []
+    
+    // ✅ NEW: Track public key fetch timeout
+    private var publicKeyFetchTimer: Timer?
+    private let publicKeyFetchTimeout: TimeInterval = 10.0 // 10 seconds timeout
+    
+    // ✅ NEW: Pagination support
+    private let initialMessageLimit = 50
+    private var oldestLoadedTimestamp: Date?
+    private var allLoadedMessageIds: Set<String> = []
 
     let chat: Chat
     private var recipientBundle: (identityPublic: String, signedPrekeyPublic: String, signature: String, verifyingKey: String)?
@@ -66,7 +78,7 @@ class ChatViewModel: ObservableObject {
         NotificationCenter.default.publisher(for: .NSManagedObjectContextObjectsDidChange, object: viewContext)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                self?.loadMessages()
+                self?.reloadMessages()
             }
             .store(in: &cancellables)
     }
@@ -133,30 +145,220 @@ class ChatViewModel: ObservableObject {
             return
         }
 
+        // ✅ NEW: Cancel any existing timer
+        publicKeyFetchTimer?.invalidate()
+        
+        // ✅ NEW: Set timeout timer
+        publicKeyFetchTimer = Timer.scheduledTimer(withTimeInterval: publicKeyFetchTimeout, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            if !self.isSessionReady {
+                Log.error("⏱️ Timeout waiting for public key bundle from server", category: "ChatViewModel")
+                self.errorMessage = "Failed to establish secure connection: server did not respond"
+                self.isSessionReady = false
+            }
+        }
+
         wsManager.send(.getPublicKey(GetPublicKeyData(userId: userId)))
     }
 
+    // ✅ NEW: Load initial messages (last N messages)
     private func loadMessages() {
-        Log.debug("📥 Loading messages for chat \(chat.id)", category: "ChatViewModel")
+        Log.debug("📥 Loading initial messages for chat \(chat.id)", category: "ChatViewModel")
 
         let fetchRequest: NSFetchRequest<Message> = Message.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "chat == %@", chat)
-        fetchRequest.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: true)]
+        // Sort by descending timestamp to get the newest messages first
+        fetchRequest.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: false)]
+        fetchRequest.fetchLimit = initialMessageLimit
 
         if let fetchedMessages = try? viewContext.fetch(fetchRequest) {
-            messages = fetchedMessages
-            Log.debug("📬 Loaded \(fetchedMessages.count) messages", category: "ChatViewModel")
-            for (index, msg) in fetchedMessages.enumerated() {
-                Log.debug("  Message \(index): id=\(msg.id), isSentByMe=\(msg.isSentByMe), text=\(msg.decryptedContent?.prefix(20) ?? "nil")", category: "ChatViewModel")
-            }
+            // Reverse to get chronological order (oldest first)
+            messages = Array(fetchedMessages.reversed())
+            oldestLoadedTimestamp = messages.first?.timestamp
+            allLoadedMessageIds = Set(messages.map { $0.id })
+            
+            // Check if there are more messages to load
+            checkIfHasMoreMessages()
+            
+            Log.debug("📬 Loaded \(messages.count) messages (most recent)", category: "ChatViewModel")
         } else {
             Log.error("❌ Failed to fetch messages", category: "ChatViewModel")
         }
     }
+    
+    // ✅ NEW: Load more messages (older messages)
+    func loadMoreMessages() {
+        guard !isLoadingMore, hasMoreMessages, let oldestTimestamp = oldestLoadedTimestamp else {
+            return
+        }
+        
+        isLoadingMore = true
+        Log.debug("📥 Loading more messages before \(oldestTimestamp)", category: "ChatViewModel")
+        
+        let fetchRequest: NSFetchRequest<Message> = Message.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "chat == %@ AND timestamp < %@", chat, oldestTimestamp as NSDate)
+        fetchRequest.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: false)]
+        fetchRequest.fetchLimit = initialMessageLimit
+        
+        if let fetchedMessages = try? viewContext.fetch(fetchRequest) {
+            let newMessages = fetchedMessages.filter { !allLoadedMessageIds.contains($0.id) }
+            
+            if newMessages.isEmpty {
+                hasMoreMessages = false
+                isLoadingMore = false
+                return
+            }
+            
+            // Reverse to get chronological order
+            let reversedNewMessages = Array(newMessages.reversed())
+            
+            // Prepend older messages to the beginning
+            messages = reversedNewMessages + messages
+            oldestLoadedTimestamp = messages.first?.timestamp
+            allLoadedMessageIds.formUnion(Set(newMessages.map { $0.id }))
+            
+            // Check if there are more messages
+            checkIfHasMoreMessages()
+            
+            Log.debug("📬 Loaded \(newMessages.count) more messages (total: \(messages.count))", category: "ChatViewModel")
+        } else {
+            Log.error("❌ Failed to fetch more messages", category: "ChatViewModel")
+        }
+        
+        isLoadingMore = false
+    }
+    
+    // ✅ NEW: Check if there are more messages to load
+    private func checkIfHasMoreMessages() {
+        guard let oldestTimestamp = oldestLoadedTimestamp else {
+            hasMoreMessages = false
+            return
+        }
+        
+        let fetchRequest: NSFetchRequest<Message> = Message.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "chat == %@ AND timestamp < %@", chat, oldestTimestamp as NSDate)
+        fetchRequest.fetchLimit = 1
+        
+        hasMoreMessages = (try? viewContext.fetch(fetchRequest).first) != nil
+    }
+    
+    // ✅ NEW: Reload messages when new ones are added (called from Core Data notifications)
+    // MARK: - Delete Messages
+    
+    func deleteMessage(_ message: Message) {
+        // ✅ FIX: Check if message is valid and in correct context
+        guard !message.isDeleted,
+              message.managedObjectContext == viewContext else {
+            Log.error("❌ Message is deleted or not in the correct context", category: "ChatViewModel")
+            // Remove from array if it's already deleted
+            let messageId = message.id
+            messages.removeAll { $0.id == messageId }
+            return
+        }
+        
+        // ✅ FIX: Get message ID before deletion
+        let messageId = message.id
+        
+        // ✅ FIX: Remove from array BEFORE deleting from context to prevent crash
+        messages.removeAll { $0.id == messageId }
+        
+        viewContext.delete(message)
+        
+        do {
+            try viewContext.save()
+            
+            // ✅ FIX: Update chat's lastMessageText and lastMessageTime if needed
+            if let lastMessage = messages.last {
+                chat.lastMessageText = lastMessage.decryptedContent
+                chat.lastMessageTime = lastMessage.timestamp
+                try? viewContext.save()
+            } else {
+                // No messages left, clear chat metadata
+                chat.lastMessageText = nil
+                chat.lastMessageTime = nil
+                try? viewContext.save()
+            }
+            
+            Log.info("✅ Message deleted: \(messageId)", category: "ChatViewModel")
+        } catch {
+            Log.error("❌ Failed to delete message: \(error)", category: "ChatViewModel")
+            // Reload messages on error to ensure consistency
+            reloadMessages()
+        }
+    }
+    
+    func deleteMessages(withIds messageIds: Set<String>) {
+        guard !messageIds.isEmpty else { return }
+        
+        let fetchRequest: NSFetchRequest<Message> = Message.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "id IN %@", messageIds)
+        
+        guard let messagesToDelete = try? viewContext.fetch(fetchRequest) else {
+            Log.error("❌ Failed to fetch messages for deletion", category: "ChatViewModel")
+            return
+        }
+        
+        for message in messagesToDelete {
+            viewContext.delete(message)
+        }
+        
+        do {
+            try viewContext.save()
+            
+            // ✅ FIX: Immediately remove from messages array to prevent crash
+            messages.removeAll { messageIds.contains($0.id) }
+            
+            // ✅ FIX: Update chat's lastMessageText and lastMessageTime if needed
+            if let lastMessage = messages.last {
+                chat.lastMessageText = lastMessage.decryptedContent
+                chat.lastMessageTime = lastMessage.timestamp
+                try? viewContext.save()
+            } else {
+                // No messages left, clear chat metadata
+                chat.lastMessageText = nil
+                chat.lastMessageTime = nil
+                try? viewContext.save()
+            }
+            
+            Log.info("✅ Deleted \(messagesToDelete.count) messages", category: "ChatViewModel")
+        } catch {
+            Log.error("❌ Failed to delete messages: \(error)", category: "ChatViewModel")
+            // Reload messages on error to ensure consistency
+            reloadMessages()
+        }
+    }
+    
+    private func reloadMessages() {
+        // Check for new messages that were added
+        let fetchRequest: NSFetchRequest<Message> = Message.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "chat == %@", chat)
+        fetchRequest.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: false)]
+        fetchRequest.fetchLimit = initialMessageLimit
+        
+        if let allMessages = try? viewContext.fetch(fetchRequest) {
+            let reversedAllMessages = Array(allMessages.reversed())
+            let newMessageIds = Set(reversedAllMessages.map { $0.id })
+            
+            // Check if we have any new messages
+            if !newMessageIds.isSubset(of: allLoadedMessageIds) {
+                // Reload initial messages to include new ones
+                messages = reversedAllMessages
+                oldestLoadedTimestamp = messages.first?.timestamp
+                allLoadedMessageIds = newMessageIds
+                checkIfHasMoreMessages()
+            }
+        }
+    }
 
     // MARK: - Send Message
-    func sendMessage(text: String, replyTo: Message? = nil) {
-        Log.info("📤 sendMessage called", category: "ChatViewModel")
+    func sendMessage(text: String, images: [UIImage] = [], replyTo: Message? = nil) {
+        Log.info("📤 sendMessage called with \(images.count) images", category: "ChatViewModel")
+
+        // Handle images if provided
+        if !images.isEmpty {
+            sendMediaMessage(images: images, caption: text, replyTo: replyTo)
+            return
+        }
 
         // Validate message size
         do {
@@ -347,7 +549,7 @@ class ChatViewModel: ObservableObject {
             }
         }
 
-        loadMessages()
+        // Messages will be reloaded via NotificationCenter observer
     }
 
     func retryMessage(_ message: Message) {
@@ -417,9 +619,17 @@ class ChatViewModel: ObservableObject {
                     processPendingMessages()
 
                 } catch {
-                    errorMessage = "Failed to initialize secure session: \(error.localizedDescription)"
-                    Log.error("❌ Failed to initialize session: \(error.localizedDescription)", category: "ChatViewModel")
+                    let errorMsg = "Failed to initialize secure session: \(error.localizedDescription)"
+                    errorMessage = errorMsg
                     isSessionReady = false
+                    Log.error("❌ Failed to initialize session: \(error.localizedDescription)", category: "ChatViewModel")
+                    
+                    // Log detailed error for debugging
+                    Log.error("   userId: \(data.userId)", category: "ChatViewModel")
+                    Log.error("   identityPublic: \(data.identityPublic.prefix(20))...", category: "ChatViewModel")
+                    Log.error("   signedPrekeyPublic: \(data.signedPrekeyPublic.prefix(20))...", category: "ChatViewModel")
+                    Log.error("   verifyingKey: \(data.verifyingKey.prefix(20))...", category: "ChatViewModel")
+                    Log.error("   signature: \(data.signature.prefix(20))...", category: "ChatViewModel")
                 }
             }
         // ✅ REMOVED: .message handling - ChatsViewModel handles ALL incoming messages
@@ -468,7 +678,7 @@ class ChatViewModel: ObservableObject {
                     Log.info("🔄 Matching ACK to most recent pending message: \(pendingMessage.id)", category: "ChatViewModel")
                     pendingMessage.deliveryStatus = deliveryStatus
                     try? viewContext.save()
-                    loadMessages()
+                    // Messages will be reloaded via NotificationCenter observer
                 } else {
                     Log.info("⚠️ No pending message found to match ACK", category: "ChatViewModel")
                 }
@@ -480,15 +690,138 @@ class ChatViewModel: ObservableObject {
     // ChatViewModel only displays messages already saved to Core Data
 
     // MARK: - Core Data Operations
+    // MARK: - Media Messages
+
+    private func sendMediaMessage(images: [UIImage], caption: String, replyTo: Message?) {
+        guard let recipientId = chat.otherUser?.id else {
+            Log.error("❌ No recipient ID for media message", category: "ChatViewModel")
+            errorMessage = "Cannot send media: no recipient"
+            return
+        }
+
+        guard isSessionReady else {
+            errorMessage = "Waiting for secure connection..."
+            Log.info("⏳ Media message blocked - session not ready", category: "ChatViewModel")
+            return
+        }
+
+        isSending = true
+        errorMessage = nil
+
+        Task {
+            do {
+                var mediaDataList: [MediaMessageData] = []
+
+                // Upload each image
+                for (index, image) in images.enumerated() {
+                    Log.info("📤 Uploading image \(index + 1)/\(images.count)", category: "ChatViewModel")
+
+                    let mediaData = try await MediaUploadService.shared.uploadImage(image, for: recipientId)
+                    mediaDataList.append(mediaData)
+
+                    Log.info("✅ Image \(index + 1) uploaded: \(mediaData.mediaId)", category: "ChatViewModel")
+                }
+
+                // Build message content with media references
+                let messageContent = buildMediaMessageContent(
+                    caption: caption,
+                    mediaList: mediaDataList
+                )
+
+                // Send as regular encrypted message
+                await MainActor.run {
+                    sendTextMessage(text: messageContent, replyTo: replyTo)
+                }
+
+            } catch {
+                await MainActor.run {
+                    Log.error("❌ Media upload failed: \(error.localizedDescription)", category: "ChatViewModel")
+                    errorMessage = error.localizedDescription
+                    isSending = false
+                }
+            }
+        }
+    }
+
+    private func buildMediaMessageContent(caption: String, mediaList: [MediaMessageData]) -> String {
+        // Build JSON content for media message
+        // Format: {"type":"media","caption":"...","media":[...]}
+        struct MediaContent: Codable {
+            let type: String
+            let caption: String
+            let media: [MediaMessageData]
+        }
+
+        let content = MediaContent(
+            type: "media",
+            caption: caption,
+            media: mediaList
+        )
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+
+        if let jsonData = try? encoder.encode(content),
+           let jsonString = String(data: jsonData, encoding: .utf8) {
+            return jsonString
+        }
+
+        // Fallback: just send caption
+        return caption
+    }
+
+    private func sendTextMessage(text: String, replyTo: Message?) {
+        // Reuse existing logic for sending text messages
+        guard let recipientId = chat.otherUser?.id,
+              let currentUserId = SessionManager.shared.currentUserId else {
+            isSending = false
+            return
+        }
+
+        do {
+            let components = try CryptoManager.shared.encryptMessage(text, for: recipientId)
+            let messageId = UUID().uuidString
+            let message = ChatMessage(
+                id: messageId,
+                from: currentUserId,
+                to: recipientId,
+                ephemeralPublicKey: components.ephemeralPublicKey,
+                messageNumber: components.messageNumber,
+                content: components.content,
+                timestamp: UInt64(Date().timeIntervalSince1970)
+            )
+
+            if !wsManager.isConnected {
+                saveMessage(message, decryptedContent: text, isSentByMe: true, status: .queued, replyTo: replyTo)
+                errorMessage = "Not connected. Message saved and will be sent when connection is restored."
+                isSending = false
+                return
+            }
+
+            saveMessage(message, decryptedContent: text, isSentByMe: true, status: .sending, replyTo: replyTo)
+            wsManager.send(.sendMessage(message))
+            isSending = false
+
+        } catch {
+            Log.error("❌ Failed to encrypt message: \(error)", category: "ChatViewModel")
+            errorMessage = "Failed to encrypt message"
+            isSending = false
+        }
+    }
+
     private func saveMessage(_ message: ChatMessage, decryptedContent: String, isSentByMe: Bool, status: DeliveryStatus, replyTo: Message? = nil) {
         Log.debug("💾 Saving message \(message.id), isSentByMe: \(isSentByMe), status: \(status)", category: "ChatViewModel")
 
         let fetchRequest: NSFetchRequest<Message> = Message.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "id == %@", message.id)
 
+        let messageTimestamp = Date(timeIntervalSince1970: TimeInterval(message.timestamp))
+        let isNewMessage: Bool
+        
         if let existing = try? viewContext.fetch(fetchRequest).first {
             Log.debug("📝 Updating existing message \(message.id)", category: "ChatViewModel")
             existing.deliveryStatus = status
+            isNewMessage = false
         } else {
             Log.debug("✨ Creating new message \(message.id)", category: "ChatViewModel")
             let newMessage = Message(context: viewContext)
@@ -497,7 +830,7 @@ class ChatViewModel: ObservableObject {
             newMessage.toUserId = message.to
             newMessage.encryptedContent = message.content
             newMessage.decryptedContent = decryptedContent
-            newMessage.timestamp = Date(timeIntervalSince1970: TimeInterval(message.timestamp))
+            newMessage.timestamp = messageTimestamp
             newMessage.isSentByMe = isSentByMe
             newMessage.deliveryStatus = status
             newMessage.retryCount = 0  // ✅ FIX: Initialize required field
@@ -508,13 +841,35 @@ class ChatViewModel: ObservableObject {
                 newMessage.replyToMessageId = replyMessage.id
                 newMessage.replyToContent = replyMessage.decryptedContent
             }
+            isNewMessage = true
         }
 
         do {
             try viewContext.save()
+            
+            // ✅ FIX: Update chat's lastMessageText and lastMessageTime when a new message is saved
+            // Compare timestamps to ensure we update with the most recent message
+            if isNewMessage {
+                if let lastTime = chat.lastMessageTime {
+                    if messageTimestamp > lastTime {
+                        chat.lastMessageText = decryptedContent
+                        chat.lastMessageTime = messageTimestamp
+                        try viewContext.save()
+                        Log.debug("✅ Updated chat.lastMessageText and lastMessageTime", category: "ChatViewModel")
+                    }
+                } else {
+                    // No previous message, always update
+                    chat.lastMessageText = decryptedContent
+                    chat.lastMessageTime = messageTimestamp
+                    try viewContext.save()
+                    Log.debug("✅ Updated chat.lastMessageText and lastMessageTime (first message)", category: "ChatViewModel")
+                }
+            }
+            
             Log.debug("✅ Message saved to Core Data", category: "ChatViewModel")
-            loadMessages()
-            Log.debug("📊 After loadMessages: \(messages.count) messages", category: "ChatViewModel")
+            // Messages will be reloaded via NotificationCenter observer
+            reloadMessages()
+            Log.debug("📊 After reloadMessages: \(messages.count) messages", category: "ChatViewModel")
         } catch {
             Log.error("Failed to save or update message: \(error.localizedDescription)", category: "ChatViewModel")
         }
@@ -527,7 +882,7 @@ class ChatViewModel: ObservableObject {
         if let message = try? viewContext.fetch(fetchRequest).first {
             message.deliveryStatus = status
             try? viewContext.save()
-            loadMessages()
+            // Messages will be reloaded via NotificationCenter observer
         }
     }
 }

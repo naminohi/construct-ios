@@ -269,6 +269,7 @@
 "delete_selected" = "Delete Selected";
 "message_selected" = "message selected";
 "messages_selected" = "messages selected";
+"load_older_messages" = "Load older messages";
 "network_reachability" = "Network Reachability";
 "reachable" = "Reachable";
 "unreachable" = "Unreachable";

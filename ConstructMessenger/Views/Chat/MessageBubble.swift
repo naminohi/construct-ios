@@ -93,7 +93,6 @@ struct MessageBubble: View {
                     RoundedRectangle(cornerRadius: 16)
                         .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 2)
                 )
-                .opacity(isSelected ? 0.8 : 1.0)
 
                 if isLastInGroup {
                     HStack(spacing: 4) {
@@ -150,13 +149,12 @@ struct MessageBubble: View {
                 }
 
                 // Message info - только для debug режима
+                // ⚠️ SECURITY: This code is completely removed in Release builds via #if DEBUG
                 #if DEBUG
-                if AppConstants.enableDebugLogging {
-                    Button {
-                        showMessageInfo = true
-                    } label: {
-                        Label("info", systemImage: "info.circle")
-                    }
+                Button {
+                    showMessageInfo = true
+                } label: {
+                    Label("info", systemImage: "info.circle")
                 }
                 #endif
 

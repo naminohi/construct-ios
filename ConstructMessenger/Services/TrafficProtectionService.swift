@@ -176,11 +176,12 @@ class TrafficProtectionService: ObservableObject {
             return
         }
 
-        // Convert to Data
+        // Convert to Base64 string for proper MessagePack serialization
         let dummyData = Data(data)
+        let payloadBase64 = dummyData.base64EncodedString()
 
         // Encode as ClientMessage.dummy
-        let dummyMessage = ClientMessage.dummy(DummyMessageData(payload: dummyData))
+        let dummyMessage = ClientMessage.dummy(DummyMessageData(payload: payloadBase64))
 
         // Send through WebSocket
         // WebSocketManager is not @MainActor, so we can call directly

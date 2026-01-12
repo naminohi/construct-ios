@@ -10,6 +10,7 @@ import CoreData
 
 struct ChatView: View {
     @Environment(\.managedObjectContext) private var viewContext
+    @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: ChatViewModel  // ✅ FIX: StateObject persists across view updates
     @State private var messageText = ""
     @State private var replyingTo: Message?
@@ -20,6 +21,10 @@ struct ChatView: View {
     @State private var scrollProxy: ScrollViewProxy?
     @State private var isEditMode = false
     @State private var selectedMessages: Set<String> = []
+    @State private var shouldScrollToBottom = true
+    @State private var scrollOffset: CGFloat = 0
+    @State private var dragOffset: CGFloat = 0
+    @GestureState private var dragState: CGFloat = 0
 
     init(chat: Chat, context: NSManagedObjectContext) {
         // ✅ FIX: Use StateObject initializer to create ViewModel only once
@@ -33,6 +38,34 @@ struct ChatView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 0) {
+                        // ✅ NEW: Load more messages indicator at the top
+                        if viewModel.hasMoreMessages && !filteredMessages.isEmpty {
+                            HStack {
+                                Spacer()
+                                if viewModel.isLoadingMore {
+                                    ProgressView()
+                                        .padding()
+                                } else {
+                                    Button {
+                                        viewModel.loadMoreMessages()
+                                    } label: {
+                                        Text(NSLocalizedString("load_older_messages", comment: "Load older messages button"))
+                                            .font(.caption)
+                                            .foregroundColor(.blue)
+                                            .padding(.vertical, 8)
+                                    }
+                                }
+                                Spacer()
+                            }
+                            .id("loadMoreIndicator")
+                            .onAppear {
+                                // Auto-load when scrolling near the top
+                                if !viewModel.isLoadingMore && !isSearchActive {
+                                    viewModel.loadMoreMessages()
+                                }
+                            }
+                        }
+                        
                         ForEach(Array(filteredMessages.enumerated()), id: \.element.id) { index, message in
                             VStack(spacing: 0) {
                                 MessageBubble(
@@ -47,7 +80,7 @@ struct ChatView: View {
                                         replyingTo = msg
                                     },
                                     onDelete: { msg in
-                                        deleteMessage(msg)
+                                        viewModel.deleteMessage(msg)
                                     },
                                     onSelect: { msg in
                                         toggleMessageSelection(msg)
@@ -57,7 +90,6 @@ struct ChatView: View {
                                             isEditMode = true
                                             isSearchActive = false
                                             searchText = ""
-                                            // Автоматически выделить сообщение, на которое нажали
                                             selectedMessages.insert(msg.id)
                                         }
                                     }
@@ -70,45 +102,60 @@ struct ChatView: View {
                                         .frame(height: spacingAfterMessage(at: index, in: filteredMessages))
                                 }
                             }
+                            .onAppear {
+
+                                if index == filteredMessages.count - 1 && shouldScrollToBottom && !hasScrolledToBottom {
+                                    DispatchQueue.main.async {
+                                        scrollToBottom(proxy: proxy)
+                                    }
+                                }
+                            }
                         }
                     }
                     .padding()
                     .background(
                         GeometryReader { geometry in
+                            Color.clear.preference(key: ScrollOffsetPreferenceKey.self, value: geometry.frame(in: .named("scroll")).minY)
                             Color.clear.onAppear {
-                                // Store proxy for later use
                                 scrollProxy = proxy
                             }
                         }
                     )
+                }
+                .coordinateSpace(name: "scroll")
+                .onPreferenceChange(ScrollOffsetPreferenceKey.self) { value in
+                    scrollOffset = value
                 }
                 .onAppear {
                     scrollProxy = proxy
                     if AppConstants.enableDebugLogging {
                         print("ChatView appeared with \(viewModel.messages.count) messages")
                     }
-                    // Reset scroll state when view appears
+
+                    shouldScrollToBottom = true
                     hasScrolledToBottom = false
-                    // Scroll to bottom on first appear if we have messages
-                    // Use multiple attempts to ensure scroll happens even if messages load asynchronously
-                    scrollToBottomIfNeeded(proxy: proxy, delay: 0.3)
-                    scrollToBottomIfNeeded(proxy: proxy, delay: 0.6)
+                    
+                    // Scroll to bottom when view appears if we have messages
+                    if !viewModel.messages.isEmpty {
+                        DispatchQueue.main.async {
+                            scrollToBottom(proxy: proxy)
+                        }
+                    }
                 }
                 .onChange(of: viewModel.messages.count) { count in
                     if AppConstants.enableDebugLogging {
                         print("ChatView: messages count changed to \(count)")
                     }
-                    // Scroll to bottom when messages are first loaded
-                    if !hasScrolledToBottom && !isSearchActive && !viewModel.messages.isEmpty {
-                        // First load - scroll to bottom
-                        scrollToBottomIfNeeded(proxy: proxy, delay: 0.2)
-                    } else if hasScrolledToBottom && !isSearchActive && !viewModel.messages.isEmpty {
-                        // New message arrived - scroll to bottom (only if we were already at bottom)
-                        scrollToBottomIfNeeded(proxy: proxy, delay: 0.1)
+
+                    if shouldScrollToBottom && !isSearchActive && !viewModel.messages.isEmpty {
+  
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            scrollToBottom(proxy: proxy)
+                        }
                     }
                 }
                 .onChange(of: searchText) { newValue in
-                    // When search changes, scroll to first matching message
+
                     if !newValue.isEmpty, !filteredMessages.isEmpty, let firstMatch = filteredMessages.first {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                             withAnimation {
@@ -117,8 +164,8 @@ struct ChatView: View {
                         }
                     } else if newValue.isEmpty {
                         // When search is cleared, scroll back to bottom
-                        hasScrolledToBottom = false
-                        scrollToBottomIfNeeded(proxy: proxy, delay: 0.1)
+                        shouldScrollToBottom = true
+                        scrollToBottom(proxy: proxy)
                     }
                 }
                 .onChange(of: isSearchActive) { active in
@@ -131,8 +178,8 @@ struct ChatView: View {
                     } else {
                         // When search is dismissed, scroll back to bottom
                         searchText = ""
-                        hasScrolledToBottom = false
-                        scrollToBottomIfNeeded(proxy: proxy, delay: 0.1)
+                        shouldScrollToBottom = true
+                        scrollToBottom(proxy: proxy)
                     }
                 }
                 .onChange(of: isEditMode) { editMode in
@@ -151,7 +198,27 @@ struct ChatView: View {
             messageInputView
         }
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
         .toolbar(content: toolbarContent)
+        .gesture(
+            DragGesture(minimumDistance: 10)
+                .updating($dragState) { value, state, _ in
+                    // Only allow swipe from left edge (right swipe)
+                    if value.startLocation.x < 20 && value.translation.width > 0 {
+                        state = min(value.translation.width, UIScreen.main.bounds.width * 0.5)
+                    }
+                }
+                .onEnded { value in
+                    // If swiped more than 100 points or 30% of screen width, dismiss
+                    let threshold = max(100, UIScreen.main.bounds.width * 0.3)
+                    if value.translation.width > threshold && value.startLocation.x < 20 {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            dismiss()
+                        }
+                    }
+                }
+        )
+        .offset(x: dragState)
         .overlay(alignment: .top, content: searchOverlay)
         .sheet(isPresented: $showingUserProfile) {
             if let user = viewModel.chat.otherUser {
@@ -164,23 +231,28 @@ struct ChatView: View {
     
     @ViewBuilder
     private var statusBanner: some View {
-        if viewModel.isSending {
-            statusBannerRow(text: "sending", color: .secondary)
+        if let errorMessage = viewModel.errorMessage, !errorMessage.isEmpty {
+            statusBannerRow(text: errorMessage, color: .red, isLocalized: false)
+        } else if viewModel.isSending {
+            statusBannerRow(text: NSLocalizedString("sending", comment: ""), color: .secondary)
         } else if !viewModel.isSessionReady {
-            statusBannerRow(text: "initializing_secure_connection", color: .orange, showProgress: true)
+            statusBannerRow(text: NSLocalizedString("initializing_secure_connection", comment: ""), color: .orange, showProgress: true)
         } else if !WebSocketManager.shared.isConnected {
-            statusBannerRow(text: "not_connected_to_server", color: .red)
+            statusBannerRow(text: NSLocalizedString("not_connected_to_server", comment: ""), color: .red)
         }
     }
     
     @ViewBuilder
-    private func statusBannerRow(text: String, color: Color, showProgress: Bool = false) -> some View {
+    private func statusBannerRow(text: String, color: Color, showProgress: Bool = false, isLocalized: Bool = true) -> some View {
         HStack(spacing: 8) {
             if showProgress {
                 ProgressView()
                     .scaleEffect(0.7)
             }
-            Text(text)
+            // If text is already a full message (contains spaces or special chars), use it directly
+            // Otherwise, try to localize it
+            let displayText = isLocalized ? NSLocalizedString(text, comment: "") : text
+            Text(displayText)
                 .font(.caption)
                 .foregroundColor(color)
         }
@@ -217,8 +289,8 @@ struct ChatView: View {
             text: $messageText,
             isSending: viewModel.isSending,
             replyingTo: replyingTo,
-            onSend: {
-                viewModel.sendMessage(text: messageText, replyTo: replyingTo)
+            onSend: { images in
+                viewModel.sendMessage(text: messageText, images: images, replyTo: replyingTo)
                 messageText = ""
                 replyingTo = nil
             },
@@ -239,11 +311,6 @@ struct ChatView: View {
                     Text(viewModel.chat.otherUser?.displayName ?? NSLocalizedString("chat", comment: "Default chat title"))
                         .font(.headline)
                         .foregroundColor(.primary)
-                    if let username = viewModel.chat.otherUser?.username {
-                        Text("@\(username)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
                 }
             }
         }
@@ -321,31 +388,18 @@ struct ChatView: View {
 
     // MARK: - Actions
     
-    private func scrollToBottomIfNeeded(proxy: ScrollViewProxy, delay: TimeInterval) {
+    private func scrollToBottom(proxy: ScrollViewProxy) {
         guard !isSearchActive, !viewModel.messages.isEmpty else { return }
         
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            if let lastMessage = viewModel.messages.last {
-                withAnimation(.easeOut(duration: delay > 0.2 ? 0.3 : 0.2)) {
-                    proxy.scrollTo(lastMessage.id, anchor: .bottom)
-                }
-                if !hasScrolledToBottom {
-                    hasScrolledToBottom = true
-                }
+        if let lastMessage = viewModel.messages.last {
+            withAnimation {
+                proxy.scrollTo(lastMessage.id, anchor: .bottom)
             }
+            hasScrolledToBottom = true
+            shouldScrollToBottom = false
         }
     }
 
-    private func deleteMessage(_ message: Message) {
-        viewContext.delete(message)
-        do {
-            try viewContext.save()
-            Log.info("✅ Message deleted: \(message.id)", category: "ChatView")
-        } catch {
-            Log.error("❌ Failed to delete message: \(error)", category: "ChatView")
-        }
-    }
-    
     private func toggleMessageSelection(_ message: Message) {
         if selectedMessages.contains(message.id) {
             selectedMessages.remove(message.id)
@@ -357,24 +411,12 @@ struct ChatView: View {
     private func deleteSelectedMessages() {
         guard !selectedMessages.isEmpty else { return }
         
-        for messageId in selectedMessages {
-            let fetchRequest: NSFetchRequest<Message> = Message.fetchRequest()
-            fetchRequest.predicate = NSPredicate(format: "id == %@", messageId)
-            
-            if let message = try? viewContext.fetch(fetchRequest).first {
-                viewContext.delete(message)
-            }
-        }
+        let messageIds = selectedMessages
+        viewModel.deleteMessages(withIds: messageIds)
         
-        do {
-            try viewContext.save()
-            Log.info("✅ Deleted \(selectedMessages.count) messages", category: "ChatView")
-            withAnimation {
-                selectedMessages.removeAll()
-                isEditMode = false
-            }
-        } catch {
-            Log.error("❌ Failed to delete selected messages: \(error)", category: "ChatView")
+        withAnimation {
+            selectedMessages.removeAll()
+            isEditMode = false
         }
     }
 
@@ -414,6 +456,14 @@ struct ChatView: View {
 
         // Otherwise, use compact spacing within the group
         return 4
+    }
+}
+
+// ✅ NEW: Preference key for tracking scroll offset
+private struct ScrollOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 

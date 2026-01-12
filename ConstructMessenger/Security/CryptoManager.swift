@@ -202,6 +202,27 @@ class CryptoManager {
             return nil
         }
     }
+    
+    /// Sign BundleData JSON with Ed25519 signing key
+    /// This creates the signature for UploadableKeyBundle.bundleData
+    func signBundleData(_ bundleDataJSON: Data) throws -> String {
+        guard let core = core else {
+            throw CryptoManagerError.coreNotInitialized
+        }
+        
+        do {
+            let bundleDataBytes = [UInt8](bundleDataJSON)
+            let signatureBase64 = try core.signBundleData(bundleDataJson: bundleDataBytes)
+            Log.debug("✅ BundleData signed successfully", category: "CryptoManager")
+            return signatureBase64
+        } catch let error as CryptoError {
+            Log.error("❌ Failed to sign BundleData: \(error)", category: "CryptoManager")
+            throw CryptoManagerError.invalidKeyData
+        } catch {
+            Log.error("❌ Unexpected error signing BundleData: \(error)", category: "CryptoManager")
+            throw CryptoManagerError.invalidKeyData
+        }
+    }
 
     // MARK: - Session Management
 

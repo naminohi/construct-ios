@@ -65,6 +65,17 @@ use crate::crypto::SuiteID;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 
+/// Build prologue for X3DH signature (как в Noise Protocol)
+/// Prologue включает протокол и suite ID для предотвращения key substitution attacks
+fn build_prologue(suite_id: SuiteID) -> Vec<u8> {
+    let protocol_name = b"X3DH";
+    let suite_id_bytes = suite_id.to_le_bytes();
+    let mut prologue = Vec::with_capacity(protocol_name.len() + suite_id_bytes.len());
+    prologue.extend_from_slice(protocol_name);
+    prologue.extend_from_slice(&suite_id_bytes);
+    prologue
+}
+
 /// Публичные ключи для инициации сессии
 ///
 /// Alice получает этот bundle от сервера перед началом handshake с Bob.
@@ -140,10 +151,15 @@ impl<P: CryptoProvider> KeyAgreement<P> for X3DHProtocol<P> {
             "Generated keys"
         );
 
-        // Подписываем signed prekey
-        debug!(target: "crypto::x3dh", "Signing signed prekey");
+        // Подписываем signed prekey с prologue (как в Noise Protocol)
+        // Prologue включает протокол и suite ID для предотвращения key substitution attacks
+        debug!(target: "crypto::x3dh", "Signing signed prekey with prologue");
+        let prologue = build_prologue(P::suite_id());
+        let mut message_to_sign = Vec::with_capacity(prologue.len() + signed_prekey_public.as_ref().len());
+        message_to_sign.extend_from_slice(&prologue);
+        message_to_sign.extend_from_slice(signed_prekey_public.as_ref());
         let signature =
-            P::sign(&signing_key, signed_prekey_public.as_ref()).map_err(|e| e.to_string())?;
+            P::sign(&signing_key, &message_to_sign).map_err(|e| e.to_string())?;
 
         debug!(
             target: "crypto::x3dh",
@@ -186,17 +202,31 @@ impl<P: CryptoProvider> KeyAgreement<P> for X3DHProtocol<P> {
         let remote_signed_prekey_public = P::kem_public_key_from_bytes(remote_bundle.signed_prekey_public.clone());
         let remote_verifying_key = P::signature_public_key_from_bytes(remote_bundle.verifying_key.clone());
 
-        // 1. Verify signature on signed prekey
-        debug!(target: "crypto::x3dh", "Step 1: Verifying signed prekey signature");
+        // 1. Verify signature on signed prekey with prologue (как в Noise Protocol)
+        debug!(target: "crypto::x3dh", "Step 1: Verifying signed prekey signature with prologue");
+        eprintln!("🔍 X3DH: Verifying signature on signed prekey with prologue");
+        eprintln!("   Signed prekey (hex): {}", hex::encode(remote_signed_prekey_public.as_ref()));
+        eprintln!("   Verifying key (hex): {}", hex::encode(remote_verifying_key.as_ref()));
+        eprintln!("   Signature (hex): {}", hex::encode(&remote_bundle.signature));
+        eprintln!("   Suite ID: {}", remote_bundle.suite_id);
+        
+        // Build prologue for verification (must match what was signed)
+        let prologue = build_prologue(remote_bundle.suite_id);
+        let mut message_to_verify = Vec::with_capacity(prologue.len() + remote_signed_prekey_public.as_ref().len());
+        message_to_verify.extend_from_slice(&prologue);
+        message_to_verify.extend_from_slice(remote_signed_prekey_public.as_ref());
+        
         P::verify(
             &remote_verifying_key,
-            remote_signed_prekey_public.as_ref(),
+            &message_to_verify,
             &remote_bundle.signature,
         )
         .map_err(|e| {
+            eprintln!("❌ X3DH: Signature verification failed: {:?}", e);
             debug!(target: "crypto::x3dh", error = %e, "Signature verification failed");
             format!("Signature verification failed: {}", e)
         })?;
+        eprintln!("✅ X3DH: Signature verified successfully");
         debug!(target: "crypto::x3dh", "Signature verified successfully");
 
         // 2. Perform three DH operations (Full X3DH)

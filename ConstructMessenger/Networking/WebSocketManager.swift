@@ -124,14 +124,15 @@ class WebSocketManager: NSObject, ObservableObject {
 
     /// Send message with optional message ID tracking for offline scenarios
     func send(_ message: ClientMessage, messageId: String? = nil) {
-        // ✅ Traffic Protection: Apply timing jitter to real messages (not dummy/connect)
+        // ✅ Traffic Protection: Apply timing jitter to real messages (not dummy/connect/getPublicKey)
+        // ⚠️ CRITICAL: getPublicKey must be sent immediately - it's required for session initialization
         let shouldApplyJitter: Bool
         switch message {
         case .sendMessage:
             // Real user message - apply high priority jitter
             shouldApplyJitter = true
-        case .dummy, .connect, .getOfflineMessages:
-            // No jitter for these
+        case .dummy, .connect, .getOfflineMessages, .getPublicKey:
+            // No jitter for these - they're critical for connection/session setup
             shouldApplyJitter = false
         default:
             // Low priority jitter for other messages
@@ -300,6 +301,17 @@ class WebSocketManager: NSObject, ObservableObject {
         do {
             let serverMessage: ServerMessage = try MessagePackHelper.decode(from: data)
             Log.debug("Received: \(serverMessage)", category: "WebSocket")
+
+            // Handle media token responses locally before publishing
+            switch serverMessage {
+            case .mediaToken(let data):
+                MediaUploadService.shared.handleMediaTokenResponse(data)
+            case .mediaTokenError(let data):
+                MediaUploadService.shared.handleMediaTokenError(data)
+            default:
+                break
+            }
+
             messagePublisher.send(serverMessage)
         } catch {
             Log.error("Failed to decode server message: \(error.localizedDescription)", category: "WebSocket")

@@ -6,13 +6,23 @@
 //
 
 import SwiftUI
+import PhotosUI
 
 struct MessageInputView: View {
     @Binding var text: String
     let isSending: Bool
     let replyingTo: Message?
-    let onSend: () -> Void
+    let onSend: ([UIImage]) -> Void  // Updated to pass images
     let onCancelReply: () -> Void
+
+    // Photo attachment state
+    @State private var selectedPhotos: [PhotosPickerItem] = []
+    @State private var selectedImages: [UIImage] = []
+    @State private var optimizedMedia: [OptimizedMedia] = []  // Optimized photos ready to send
+    @State private var showAttachmentMenu = false
+    @State private var showPhotoPicker = false  // Separate state for PhotosPicker
+    @State private var validationError: String?
+    @State private var isOptimizing = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,6 +43,7 @@ struct MessageInputView: View {
                             .lineLimit(1)
                             .foregroundColor(.primary)
                     }
+                    .fixedSize(horizontal: false, vertical: true)
 
                     Spacer()
 
@@ -46,34 +57,74 @@ struct MessageInputView: View {
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 8)
+                .frame(maxHeight: 50)
                 .background(Color(uiColor: .systemGray6))
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
+            // Photo preview (if photos selected)
+            if !selectedImages.isEmpty {
+                photoPreviewView
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
             // Input field
-            HStack(spacing: 16) {
-                HStack {
+            HStack(spacing: 8) {
+                // Attachment button (+ icon)
+                Button {
+                    showAttachmentMenu = true
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 28))
+                        .foregroundColor(.blue)
+                }
+                .confirmationDialog("Attach", isPresented: $showAttachmentMenu) {
+                    Button {
+                        showPhotoPicker = true
+                    } label: {
+                        Label("Photos", systemImage: "photo.on.rectangle")
+                    }
+
+                    Button("Camera") {
+                        // TODO: Implement camera
+                    }
+
+                    Button("Files") {
+                        // TODO: Implement file picker
+                    }
+
+                    Button("Cancel", role: .cancel) {}
+                }
+                // PhotosPicker as sheet (the correct way)
+                .photosPicker(
+                    isPresented: $showPhotoPicker,
+                    selection: $selectedPhotos,
+                    maxSelectionCount: 10,
+                    matching: .images
+                )
+
+                HStack(spacing: 0) {
                     TextField("message_placeholder", text: $text, axis: .vertical)
                         .lineLimit(1...5)
                         .padding(.leading, 12)
-                        .padding(.trailing, canSend ? 0 : 12)
+                        .padding(.trailing, canSend ? 8 : 12)
                         .padding(.vertical, 8)
 
                     if canSend {
                         Button {
-                            onSend()
+                            sendMessage()
                         } label: {
                             Image(systemName: "arrow.up.circle.fill")
                                 .font(.system(size: 32))
                                 .foregroundColor(canSend ? .blue : .gray)
-                                .padding(.trailing, 8)
+                                .padding(.trailing, 4)
                         }
                         .disabled(!canSend || isSending)
                         .transition(.scale.combined(with: .opacity))
                     }
                 }
                 .background(Color(uiColor: .systemGray6))
-                .clipShape(Capsule())
+                .clipShape(RoundedRectangle(cornerRadius: 20))
             }
             .padding(.horizontal)
             .padding(.vertical, 8)
@@ -81,9 +132,82 @@ struct MessageInputView: View {
         .background(Color(uiColor: .systemBackground))
         .animation(.easeInOut(duration: 0.2), value: canSend)
         .animation(.easeInOut(duration: 0.2), value: replyingTo != nil)
+        .animation(.easeInOut(duration: 0.2), value: !selectedImages.isEmpty)
+        .onChange(of: selectedPhotos) { _ in
+            Task {
+                await loadSelectedPhotos()
+            }
+        }
     }
 
     private var canSend: Bool {
-        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !selectedImages.isEmpty
+    }
+
+    // MARK: - Photo Preview
+    private var photoPreviewView: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(Array(selectedImages.enumerated()), id: \.offset) { index, image in
+                    ZStack(alignment: .topTrailing) {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: 80, height: 80)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                        // Remove button
+                        Button {
+                            removePhoto(at: index)
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.white)
+                                .background(Circle().fill(Color.black.opacity(0.5)))
+                        }
+                        .offset(x: 4, y: -4)
+                    }
+                }
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+        }
+        .background(Color(uiColor: .systemGray6))
+    }
+
+    // MARK: - Photo Loading
+    private func loadSelectedPhotos() async {
+        selectedImages.removeAll()
+
+        for item in selectedPhotos {
+            guard let data = try? await item.loadTransferable(type: Data.self),
+                  let image = UIImage(data: data) else {
+                continue
+            }
+
+            // Validate size
+            if let imageData = image.jpegData(compressionQuality: 0.8) {
+                let sizeInBytes = Int64(imageData.count)
+                if sizeInBytes > MessageSizeLimits.maxImageBytes {
+                    // TODO: Show error to user
+                    Log.error("Photo too large: \(MessageSizeLimits.formatFileSize(sizeInBytes))", category: "MessageInput")
+                    continue
+                }
+            }
+
+            selectedImages.append(image)
+        }
+    }
+
+    private func removePhoto(at index: Int) {
+        guard index < selectedImages.count && index < selectedPhotos.count else { return }
+        selectedImages.remove(at: index)
+        selectedPhotos.remove(at: index)
+    }
+
+    private func sendMessage() {
+        onSend(selectedImages)
+        // Clear photos after sending
+        selectedPhotos.removeAll()
+        selectedImages.removeAll()
     }
 }

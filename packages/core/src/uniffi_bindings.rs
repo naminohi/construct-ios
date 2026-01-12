@@ -144,6 +144,20 @@ impl ClassicCryptoCore {
             .map_err(|_| CryptoError::SerializationFailed)
     }
 
+    /// Sign BundleData JSON string with Ed25519 signing key
+    /// This is used for creating the signature in UploadableKeyBundle
+    pub fn sign_bundle_data(&self, bundle_data_json: Vec<u8>) -> Result<String, CryptoError> {
+        let client = self.inner.lock().unwrap();
+        
+        // Sign the BundleData JSON bytes
+        let signature = client.key_manager().sign(&bundle_data_json)
+            .map_err(|_| CryptoError::InitializationFailed)?;
+        
+        // Encode signature to base64
+        use base64::Engine;
+        Ok(base64::engine::general_purpose::STANDARD.encode(&signature))
+    }
+
     /// Export private keys as JSON string for persistence
     /// SECURITY: Only call this method to store keys in secure storage (Keychain)
     pub fn export_private_keys_json(&self) -> Result<String, CryptoError> {
@@ -287,9 +301,24 @@ impl ClassicCryptoCore {
         eprintln!("   Local identity (hex): {}", hex::encode(&local_bundle.identity_public));
         eprintln!("   Remote identity (hex): {}", hex::encode(&key_bundle.identity_public));
 
+        // Log bundle details before initialization
+        eprintln!("📦 Bundle details before init_session:");
+        eprintln!("   Remote identity (hex): {}", hex::encode(&key_bundle.identity_public));
+        eprintln!("   Remote signed prekey (hex): {}", hex::encode(&key_bundle.signed_prekey_public));
+        eprintln!("   Remote verifying key (hex): {}", hex::encode(&key_bundle.verifying_key));
+        eprintln!("   Signature (hex): {}", hex::encode(&key_bundle.signature));
+        eprintln!("   Suite ID: {}", key_bundle.suite_id);
+        
         // Initialize the session (returns internal session_id which we ignore)
         client.init_session(&contact_id, &public_bundle, &remote_identity)
-            .map_err(|_| CryptoError::SessionInitializationFailed)?;
+            .map_err(|e| {
+                // Log detailed error for debugging
+                eprintln!("❌ RUST ERROR: init_session failed: {}", e);
+                eprintln!("   Contact ID: {}", contact_id);
+                eprintln!("   Error details: {:?}", e);
+                tracing::error!("init_session failed: {:?}", e);
+                CryptoError::SessionInitializationFailed
+            })?;
 
         // Return contact_id as the session identifier for Swift
         // Sessions are looked up by contact_id, not by the internal random session_id

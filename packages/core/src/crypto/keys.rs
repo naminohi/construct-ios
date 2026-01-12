@@ -6,7 +6,19 @@ use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use std::collections::HashMap;
 use x25519_dalek::{PublicKey, StaticSecret};
 use crate::crypto::CryptoProvider;
+use crate::crypto::SuiteID;
 use std::marker::PhantomData;
+
+/// Build prologue for X3DH signature (как в Noise Protocol)
+/// Prologue включает протокол и suite ID для предотвращения key substitution attacks
+fn build_prologue(suite_id: SuiteID) -> Vec<u8> {
+    let protocol_name = b"X3DH";
+    let suite_id_bytes = suite_id.to_le_bytes();
+    let mut prologue = Vec::with_capacity(protocol_name.len() + suite_id_bytes.len());
+    prologue.extend_from_slice(protocol_name);
+    prologue.extend_from_slice(&suite_id_bytes);
+    prologue
+}
 
 /// Пара ключей X25519
 #[derive(Clone)]
@@ -173,7 +185,14 @@ impl<P: CryptoProvider> KeyManager<P> {
 
         // Генерируем новый prekey
         let key_pair = P::generate_kem_keys().map_err(|e| ConstructError::CryptoError(e.to_string()))?;
-        let signature = P::sign(signing_key, &key_pair.1.as_ref()).map_err(|e| ConstructError::CryptoError(e.to_string()))?;
+        
+        // Подписываем signed prekey с prologue (как в Noise Protocol)
+        // Prologue включает протокол и suite ID для предотвращения key substitution attacks
+        let prologue = build_prologue(P::suite_id());
+        let mut message_to_sign = Vec::with_capacity(prologue.len() + key_pair.1.as_ref().len());
+        message_to_sign.extend_from_slice(&prologue);
+        message_to_sign.extend_from_slice(key_pair.1.as_ref());
+        let signature = P::sign(signing_key, &message_to_sign).map_err(|e| ConstructError::CryptoError(e.to_string()))?;
 
         let key_id = self.next_prekey_id;
         self.next_prekey_id += 1;

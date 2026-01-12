@@ -39,7 +39,7 @@ uuid = { version = "1.0", features = ["v4", "serde", "js"] }
 tracing = "0.1"
 
 [workspace.package]
-version = "0.1.2"
+version = "0.2.0"
 authors = ["Konstruct Team"]
 edition = "2024"
 rust-version = "1.92"
