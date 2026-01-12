@@ -290,8 +290,10 @@ impl ClassicCryptoCore {
         );
 
         tracing::debug!(
-            "Alice init_session - remote_identity (Bob): {}",
-            hex::encode(&key_bundle.identity_public)
+            target: "crypto::uniffi",
+            contact_id = %contact_id,
+            remote_identity_len = key_bundle.identity_public.len(),
+            "Initializing session (sender side)"
         );
 
         let mut client = self.inner.lock().unwrap();
@@ -319,6 +321,11 @@ impl ClassicCryptoCore {
                     target: "crypto::uniffi",
                     contact_id = %contact_id,
                     error = %e,
+                    remote_identity_len = key_bundle.identity_public.len(),
+                    remote_signed_prekey_len = key_bundle.signed_prekey_public.len(),
+                    signature_len = key_bundle.signature.len(),
+                    verifying_key_len = key_bundle.verifying_key.len(),
+                    suite_id = key_bundle.suite_id,
                     "init_session failed"
                 );
                 CryptoError::SessionInitializationFailed
@@ -408,10 +415,12 @@ impl ClassicCryptoCore {
         );
 
         tracing::debug!(
-            "Bob receiving session - remote_identity: {}, remote_ephemeral: {}, dh_public_key: {}",
-            hex::encode(&key_bundle.identity_public),
-            hex::encode(&first_msg.ephemeral_public_key),
-            hex::encode(&encrypted_first_message.dh_public_key)
+            target: "crypto::uniffi",
+            contact_id = %contact_id,
+            remote_identity_len = key_bundle.identity_public.len(),
+            remote_ephemeral_len = first_msg.ephemeral_public_key.len(),
+            dh_public_key_len = encrypted_first_message.dh_public_key.len(),
+            "Initializing receiving session (receiver side)"
         );
 
         let mut client = self.inner.lock().unwrap();
@@ -476,14 +485,25 @@ impl ClassicCryptoCore {
 
         let encrypted_message = client
             .encrypt_message(contact_id, plaintext.as_bytes())
-            .map_err(|_| CryptoError::EncryptionFailed)?;
+            .map_err(|e| {
+                tracing::error!(
+                    target: "crypto::uniffi",
+                    contact_id = %contact_id,
+                    error = %e,
+                    plaintext_len = plaintext.len(),
+                    "encrypt_message failed"
+                );
+                CryptoError::EncryptionFailed
+            })?;
 
         tracing::debug!(
-            "Alice encrypt_message - dh_public_key: {}, message_number: {}, nonce_len: {}, ciphertext_len: {}",
-            hex::encode(&encrypted_message.dh_public_key),
-            encrypted_message.message_number,
-            encrypted_message.nonce.len(),
-            encrypted_message.ciphertext.len()
+            target: "crypto::uniffi",
+            contact_id = %contact_id,
+            dh_public_key_len = encrypted_message.dh_public_key.len(),
+            message_number = encrypted_message.message_number,
+            nonce_len = encrypted_message.nonce.len(),
+            ciphertext_len = encrypted_message.ciphertext.len(),
+            "Message encrypted"
         );
 
         // Create sealed box: nonce || ciphertext_with_tag
@@ -1102,7 +1122,7 @@ mod tests {
             ciphertext: ciphertext_parsed,
             nonce: nonce_parsed,
             previous_chain_length: 0,
-            suite_id: alice_bundle.suite_id,  // Use Alice's bundle suite_id
+            suite_id: alice_bundle.suite_id.as_u16(),  // Use Alice's bundle suite_id
         };
 
         eprintln!("[UNIFFI FLOW TEST] Reconstructed message:");

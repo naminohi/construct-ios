@@ -61,38 +61,45 @@ struct MessageBubble: View {
             }
 
             VStack(alignment: message.isSentByMe ? .trailing : .leading, spacing: 4) {
-                VStack(alignment: .leading, spacing: 0) {
-                    // Reply/Quote preview
-                    if let replyContent = message.replyToContent {
-                        HStack(spacing: 4) {
-                            Rectangle()
-                                .fill(message.isSentByMe ? Color.white.opacity(0.5) : Color.blue.opacity(0.5))
-                                .frame(width: 3)
+                // ✅ Check if this is a media message
+                if let mediaContent = parseMediaMessage(message.decryptedContent) {
+                    // Display media message without bubble - just rounded corners
+                    MediaMessageView(mediaContent: mediaContent, message: message, isSelected: isSelected)
+                } else {
+                    // Regular text message with bubble
+                    VStack(alignment: .leading, spacing: 0) {
+                        // Reply/Quote preview
+                        if let replyContent = message.replyToContent {
+                            HStack(spacing: 4) {
+                                Rectangle()
+                                    .fill(message.isSentByMe ? Color.white.opacity(0.5) : Color.blue.opacity(0.5))
+                                    .frame(width: 3)
 
-                            Text(replyContent)
-                                .font(.caption)
-                                .foregroundColor(message.isSentByMe ? .white.opacity(0.8) : .secondary)
-                                .lineLimit(2)
-                                .padding(.vertical, 4)
-                                .padding(.trailing, 8)
+                                Text(replyContent)
+                                    .font(.caption)
+                                    .foregroundColor(message.isSentByMe ? .white.opacity(0.8) : .secondary)
+                                    .lineLimit(2)
+                                    .padding(.vertical, 4)
+                                    .padding(.trailing, 8)
+                            }
+                            .padding(.leading, 8)
+                            .padding(.top, 8)
                         }
-                        .padding(.leading, 8)
-                        .padding(.top, 8)
-                    }
 
-                    // Main message content
-                    Text(message.decryptedContent ?? NSLocalizedString("encrypted", comment: "Fallback for encrypted content"))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, message.replyToContent != nil ? 4 : 8)
-                        .padding(.bottom, message.replyToContent != nil ? 8 : 0)
+                        // Main message content
+                        Text(message.decryptedContent ?? NSLocalizedString("encrypted", comment: "Fallback for encrypted content"))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, message.replyToContent != nil ? 4 : 8)
+                            .padding(.bottom, message.replyToContent != nil ? 8 : 0)
+                    }
+                    .background(message.isSentByMe ? Color.blue : Color.gray.opacity(0.2))
+                    .foregroundColor(message.isSentByMe ? .white : .primary)
+                    .cornerRadius(16)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 2)
+                    )
                 }
-                .background(message.isSentByMe ? Color.blue : Color.gray.opacity(0.2))
-                .foregroundColor(message.isSentByMe ? .white : .primary)
-                .cornerRadius(16)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 2)
-                )
 
                 if isLastInGroup {
                     HStack(spacing: 4) {
@@ -251,5 +258,106 @@ struct MessageBubble: View {
                 }
             }
         }
+    }
+    
+    // MARK: - Media Message Parsing
+    
+    private func parseMediaMessage(_ content: String?) -> MediaMessageContent? {
+        guard let content = content,
+              let data = content.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let type = json["type"] as? String,
+              type == "media",
+              let mediaArray = json["media"] as? [[String: Any]],
+              let firstMedia = mediaArray.first else {
+            return nil
+        }
+        
+        return MediaMessageContent(
+            caption: json["caption"] as? String ?? "",
+            media: firstMedia
+        )
+    }
+}
+
+// MARK: - Media Message Content
+struct MediaMessageContent {
+    let caption: String
+    let media: [String: Any]
+}
+
+// MARK: - Media Message View
+struct MediaMessageView: View {
+    let mediaContent: MediaMessageContent
+    let message: Message
+    let isSelected: Bool
+    
+    @State private var thumbnailImage: UIImage?
+    @State private var isLoading = false
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Thumbnail or placeholder - no bubble, just rounded corners
+            if let thumbnail = thumbnailImage {
+                Image(uiImage: thumbnail)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: 250, maxHeight: 250)
+                    .aspectRatio(contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 2)
+                    )
+            } else if isLoading {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.gray.opacity(0.2))
+                    .frame(width: 200, height: 200)
+                    .overlay {
+                        ProgressView()
+                    }
+            } else {
+                // Placeholder
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.gray.opacity(0.2))
+                    .frame(width: 200, height: 200)
+                    .overlay {
+                        Image(systemName: "photo")
+                            .font(.system(size: 40))
+                            .foregroundColor(.gray)
+                    }
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 2)
+                    )
+            }
+            
+            // Caption if present - displayed below image without bubble
+            if !mediaContent.caption.isEmpty {
+                Text(mediaContent.caption)
+                    .font(.body)
+                    .foregroundColor(.primary)
+                    .padding(.top, 4)
+            }
+        }
+        .onAppear {
+            loadThumbnail()
+        }
+    }
+    
+    private func loadThumbnail() {
+        // ✅ For sender: try to load from local storage
+        if message.isSentByMe {
+            if let thumbnailData = UserDefaults.standard.data(forKey: "message_thumbnail_\(message.id)"),
+               let image = UIImage(data: thumbnailData) {
+                thumbnailImage = image
+                return
+            }
+        }
+        
+        // ✅ For receiver: download and decrypt media, then generate thumbnail
+        // TODO: Implement media download and thumbnail generation for receiver
+        // For now, show placeholder
+        isLoading = false
     }
 }

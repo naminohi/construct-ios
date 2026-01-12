@@ -61,7 +61,7 @@ struct MediaUploadResponse {
 struct EncryptedMedia {
     let data: Data
     let key: Data  // 32 bytes ChaCha20-Poly1305 key
-    let hash: String  // SHA-256 of original data
+    let hash: String  // SHA-256 of encrypted data (server verifies uploaded file hash)
 }
 
 // MARK: - Media Upload Service
@@ -111,6 +111,9 @@ class MediaUploadService {
         )
         
         // 6. Build media message data
+        // ✅ FIX: Don't include thumbnail in JSON to avoid exceeding 64KB limit
+        // Thumbnails can be generated client-side from downloaded media
+        // If thumbnail is needed, it should be uploaded separately via Media Upload API
         return MediaMessageData(
             mediaId: response.mediaId,
             mediaUrl: response.mediaUrl,
@@ -120,7 +123,7 @@ class MediaUploadService {
             width: optimizedMedia.metadata.width,
             height: optimizedMedia.metadata.height,
             duration: optimizedMedia.metadata.duration,
-            thumbnail: optimizedMedia.thumbnail?.base64EncodedString(),
+            thumbnail: nil,  // ✅ Excluded to keep JSON under 64KB
             hash: encrypted.hash
         )
     }
@@ -193,8 +196,9 @@ class MediaUploadService {
         // Combined format: nonce (12) + ciphertext + tag (16)
         let encryptedData = sealedBox.combined
         
-        // Calculate hash of original data
-        let hash = SHA256.hash(data: data)
+        // ✅ FIX: Calculate hash of ENCRYPTED data (server verifies hash of uploaded file)
+        // Server receives encrypted data and verifies its hash, not the original data hash
+        let hash = SHA256.hash(data: encryptedData)
         let hashHex = hash.map { String(format: "%02x", $0) }.joined()
         
         return EncryptedMedia(
@@ -331,7 +335,7 @@ struct MediaMessageData: Codable {
     let height: Int?
     let duration: TimeInterval?
     let thumbnail: String?  // Base64 JPEG
-    let hash: String  // SHA-256 of original file
+    let hash: String  // SHA-256 of encrypted file (for server verification)
 }
 
 // MARK: - CryptoManager Extension

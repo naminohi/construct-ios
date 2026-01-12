@@ -138,6 +138,7 @@ struct SuiteKeyMaterial: Codable {
     let suiteId: UInt16
     let identityKey: String
     let signedPrekey: String
+    let signedPrekeySignature: String  // ✅ Signature for signedPrekey (with prologue)
     let oneTimePrekeys: [String]
 }
 

@@ -306,10 +306,25 @@ impl<P: CryptoProvider> SecureMessaging<P> for DoubleRatchetSession<P> {
         // Apply padding to hide message length (traffic analysis protection)
         use crate::traffic_protection::padding::pad_message_default;
         let padded_plaintext = pad_message_default(plaintext)
-            .map_err(|e| format!("Padding failed: {}", e))?;
+            .map_err(|e| {
+                tracing::error!(
+                    target: "crypto::double_ratchet",
+                    error = %e,
+                    plaintext_len = plaintext.len(),
+                    "Padding failed"
+                );
+                format!("Padding failed: {}", e)
+            })?;
 
         let (message_key, next_chain_key) =
-            P::kdf_ck(&self.sending_chain_key).map_err(|e| format!("KDF (CK) failed: {}", e))?;
+            P::kdf_ck(&self.sending_chain_key).map_err(|e| {
+                tracing::error!(
+                    target: "crypto::double_ratchet",
+                    error = %e,
+                    "KDF (CK) failed"
+                );
+                format!("KDF (CK) failed: {}", e)
+            })?;
         self.sending_chain_key = next_chain_key;
 
         let message_number = self.sending_chain_length;
@@ -331,7 +346,16 @@ impl<P: CryptoProvider> SecureMessaging<P> for DoubleRatchetSession<P> {
         associated_data.extend_from_slice(&message_number.to_be_bytes());
 
         let ciphertext = P::aead_encrypt(&message_key, &nonce, &padded_plaintext, Some(&associated_data))
-            .map_err(|e| format!("Encryption failed: {}", e))?;
+            .map_err(|e| {
+                tracing::error!(
+                    target: "crypto::double_ratchet",
+                    error = %e,
+                    padded_plaintext_len = padded_plaintext.len(),
+                    nonce_len = nonce.len(),
+                    "AEAD encryption failed"
+                );
+                format!("Encryption failed: {}", e)
+            })?;
 
         trace!(
             target: "crypto::double_ratchet",
@@ -715,7 +739,7 @@ mod tests {
             signed_prekey_public: bob_signed_prekey_pub.clone(),
             signature: bob_signature,
             verifying_key: bob_verifying_key,
-            suite_id: 1,
+            suite_id: SuiteID::CLASSIC,
         };
 
         // Alice performs X3DH as initiator
@@ -799,7 +823,7 @@ mod tests {
             signed_prekey_public: bob_signed_prekey_pub.clone(),
             signature: bob_signature,
             verifying_key: bob_verifying_key,
-            suite_id: 1,
+            suite_id: SuiteID::CLASSIC,
         };
 
         let (root_key, initiator_state) =

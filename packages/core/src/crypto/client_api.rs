@@ -409,7 +409,21 @@ where
         let session = self
             .sessions
             .get_mut(contact_id)
-            .ok_or_else(|| format!("No session with contact: {}", contact_id))?;
+            .ok_or_else(|| {
+                tracing::error!(
+                    target: "crypto::client",
+                    contact_id = %contact_id,
+                    "No session found for contact"
+                );
+                format!("No session with contact: {}", contact_id)
+            })?;
+
+        tracing::debug!(
+            target: "crypto::client",
+            contact_id = %contact_id,
+            plaintext_len = plaintext.len(),
+            "Encrypting message"
+        );
 
         session.encrypt(plaintext)
     }
@@ -542,6 +556,7 @@ pub type ClassicClient<P> = Client<P, X3DHProtocol<P>, DoubleRatchetSession<P>>;
 
 #[cfg(test)]
 mod tests {
+    use crate::crypto::SuiteID;
     use super::*;
     use crate::crypto::handshake::x3dh::X3DHPublicKeyBundle;
     use crate::crypto::suites::classic::ClassicSuiteProvider;
@@ -578,7 +593,7 @@ mod tests {
             signed_prekey_public: bob_prekey.key_pair.1.clone(),
             signature: bob_prekey.signature.clone(),
             verifying_key: bob.key_manager.verifying_key().unwrap().to_vec(),
-            suite_id: 1,
+            suite_id: SuiteID::CLASSIC,
         };
 
         // Alice initiates session with Bob
@@ -644,7 +659,7 @@ mod tests {
             signed_prekey_public: bob_prekey.key_pair.1.clone(),
             signature: bob_prekey.signature.clone(),
             verifying_key: bob.key_manager.verifying_key().unwrap().to_vec(),
-            suite_id: 1,
+            suite_id: SuiteID::CLASSIC,
         };
 
         alice

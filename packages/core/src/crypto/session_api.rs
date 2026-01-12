@@ -134,8 +134,8 @@ where
         remote_identity: &P::KemPublicKey,
         contact_id: String,
     ) -> Result<Self, String> {
-        use tracing::info;
-
+        use tracing::{info, error};
+        
         info!(
             target: "crypto::session",
             contact_id = %contact_id,
@@ -144,7 +144,15 @@ where
 
         // 1. Perform handshake (X3DH)
         let (root_key, initiator_state) =
-            H::perform_as_initiator(local_identity, remote_bundle)?;
+            H::perform_as_initiator(local_identity, remote_bundle)
+            .map_err(|e| {
+                error!(
+                    target: "crypto::session",
+                    error = %e,
+                    "X3DH handshake failed"
+                );
+                e
+            })?;
 
         info!(
             target: "crypto::session",
@@ -158,7 +166,15 @@ where
             initiator_state,
             remote_identity,
             contact_id.clone(),
-        )?;
+        )
+        .map_err(|e| {
+            error!(
+                target: "crypto::session",
+                error = %e,
+                "Double Ratchet initialization failed"
+            );
+            e
+        })?;
 
         info!(
             target: "crypto::session",
@@ -360,6 +376,7 @@ pub type ClassicSession<P> = Session<
 
 #[cfg(test)]
 mod tests {
+    use crate::crypto::SuiteID;
     use super::*;
     use crate::crypto::handshake::x3dh::{X3DHProtocol, X3DHPublicKeyBundle};
     use crate::crypto::messaging::double_ratchet::DoubleRatchetSession;
@@ -395,7 +412,7 @@ mod tests {
             signed_prekey_public: bob_signed_prekey_pub.clone(),
             signature: bob_signature,
             verifying_key: bob_verifying_key,
-            suite_id: 1,
+            suite_id: SuiteID::CLASSIC,
         };
 
         // Alice initializes session
@@ -438,7 +455,7 @@ mod tests {
             signed_prekey_public: bob_signed_prekey_pub.clone(),
             signature: bob_signature,
             verifying_key: bob_verifying_key,
-            suite_id: 1,
+            suite_id: SuiteID::CLASSIC,
         };
 
         // Alice initializes session as initiator
@@ -519,7 +536,7 @@ mod tests {
             signed_prekey_public: bob_signed_prekey_pub.clone(),
             signature: bob_signature,
             verifying_key: bob_verifying_key,
-            suite_id: 1,
+            suite_id: SuiteID::CLASSIC,
         };
 
         let mut session = TestSession::init_as_initiator(

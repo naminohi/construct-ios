@@ -601,6 +601,21 @@ class ChatViewModel: ObservableObject {
                 // means the user wants to start a conversation → we're the initiator
                 Log.info("🔑 Received public key bundle - we requested it, so we are INITIATOR", category: "ChatViewModel")
 
+                // ✅ Prevent self-session initialization
+                guard let currentUserId = SessionManager.shared.currentUserId else {
+                    Log.error("❌ Cannot initialize session: currentUserId is nil", category: "ChatViewModel")
+                    errorMessage = "Cannot initialize session: user not authenticated"
+                    return
+                }
+                
+                Log.debug("🔍 Session init check - currentUserId: \(currentUserId), recipientId: \(data.userId)", category: "ChatViewModel")
+                
+                if data.userId == currentUserId {
+                    Log.error("❌ Cannot initialize session with yourself: \(data.userId) == \(currentUserId)", category: "ChatViewModel")
+                    errorMessage = "Cannot create a dialog with yourself"
+                    return
+                }
+
                 do {
                     let bundleWithSuite = (
                         identityPublic: data.identityPublic,
@@ -711,10 +726,18 @@ class ChatViewModel: ObservableObject {
         Task {
             do {
                 var mediaDataList: [MediaMessageData] = []
+                var thumbnails: [Data] = []  // ✅ Store thumbnails locally for sender
 
                 // Upload each image
                 for (index, image) in images.enumerated() {
                     Log.info("📤 Uploading image \(index + 1)/\(images.count)", category: "ChatViewModel")
+
+                    // ✅ Generate thumbnail before upload (for local storage on sender side)
+                    let optimized = try MediaOptimizer.optimizeImage(image)
+                    if let thumbnail = optimized.thumbnail {
+                        thumbnails.append(thumbnail)
+                        Log.debug("📸 Generated thumbnail: \(thumbnail.count) bytes", category: "ChatViewModel")
+                    }
 
                     let mediaData = try await MediaUploadService.shared.uploadImage(image, for: recipientId)
                     mediaDataList.append(mediaData)
@@ -730,7 +753,9 @@ class ChatViewModel: ObservableObject {
 
                 // Send as regular encrypted message
                 await MainActor.run {
-                    sendTextMessage(text: messageContent, replyTo: replyTo)
+                    // ✅ Store thumbnails locally before sending
+                    // We'll save them with the message after it's created
+                    sendTextMessage(text: messageContent, replyTo: replyTo, localThumbnails: thumbnails)
                 }
 
             } catch {
@@ -746,31 +771,99 @@ class ChatViewModel: ObservableObject {
     private func buildMediaMessageContent(caption: String, mediaList: [MediaMessageData]) -> String {
         // Build JSON content for media message
         // Format: {"type":"media","caption":"...","media":[...]}
+        // ✅ FIX: Remove thumbnails from JSON to avoid exceeding 64KB limit
+        // Thumbnails can be generated client-side from downloaded media
         struct MediaContent: Codable {
             let type: String
             let caption: String
-            let media: [MediaMessageData]
+            let media: [MediaMessageDataWithoutThumbnail]
+        }
+        
+        // MediaMessageData without thumbnail to reduce JSON size
+        struct MediaMessageDataWithoutThumbnail: Codable {
+            let mediaId: String
+            let mediaUrl: String
+            let mediaKey: String
+            let mediaType: String
+            let size: Int
+            let width: Int?
+            let height: Int?
+            let duration: TimeInterval?
+            let hash: String
+            // thumbnail excluded to keep JSON under 64KB
+        }
+        
+        let mediaWithoutThumbnails = mediaList.map { media in
+            MediaMessageDataWithoutThumbnail(
+                mediaId: media.mediaId,
+                mediaUrl: media.mediaUrl,
+                mediaKey: media.mediaKey,
+                mediaType: media.mediaType,
+                size: media.size,
+                width: media.width,
+                height: media.height,
+                duration: media.duration,
+                hash: media.hash
+            )
         }
 
         let content = MediaContent(
             type: "media",
             caption: caption,
-            media: mediaList
+            media: mediaWithoutThumbnails
         )
 
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
 
-        if let jsonData = try? encoder.encode(content),
-           let jsonString = String(data: jsonData, encoding: .utf8) {
-            return jsonString
+        guard let jsonData = try? encoder.encode(content),
+              let jsonString = String(data: jsonData, encoding: .utf8) else {
+            Log.error("❌ Failed to encode media message content", category: "ChatViewModel")
+            return caption
         }
-
-        // Fallback: just send caption
-        return caption
+        
+        // ✅ Check JSON size before sending
+        let jsonSize = jsonString.utf8.count
+        let maxSize = 64 * 1024 // 64KB limit
+        if jsonSize > maxSize {
+            Log.error("❌ Media message JSON too large: \(jsonSize) bytes (max \(maxSize))", category: "ChatViewModel")
+            // Try without some optional fields
+            let minimalMedia = mediaWithoutThumbnails.map { media in
+                MediaMessageDataWithoutThumbnail(
+                    mediaId: media.mediaId,
+                    mediaUrl: media.mediaUrl,
+                    mediaKey: media.mediaKey,
+                    mediaType: media.mediaType,
+                    size: media.size,
+                    width: nil,  // Remove optional fields
+                    height: nil,
+                    duration: nil,
+                    hash: media.hash
+                )
+            }
+            
+            let minimalContent = MediaContent(
+                type: "media",
+                caption: caption,
+                media: minimalMedia
+            )
+            
+            if let minimalJsonData = try? encoder.encode(minimalContent),
+               let minimalJsonString = String(data: minimalJsonData, encoding: .utf8),
+               minimalJsonString.utf8.count <= maxSize {
+                Log.info("✅ Using minimal media message format", category: "ChatViewModel")
+                return minimalJsonString
+            } else {
+                Log.error("❌ Even minimal format exceeds size limit", category: "ChatViewModel")
+                return caption
+            }
+        }
+        
+        Log.debug("📤 Media message JSON size: \(jsonSize) bytes", category: "ChatViewModel")
+        return jsonString
     }
 
-    private func sendTextMessage(text: String, replyTo: Message?) {
+    private func sendTextMessage(text: String, replyTo: Message?, localThumbnails: [Data] = []) {
         // Reuse existing logic for sending text messages
         guard let recipientId = chat.otherUser?.id,
               let currentUserId = SessionManager.shared.currentUserId else {
@@ -792,13 +885,13 @@ class ChatViewModel: ObservableObject {
             )
 
             if !wsManager.isConnected {
-                saveMessage(message, decryptedContent: text, isSentByMe: true, status: .queued, replyTo: replyTo)
+                saveMessage(message, decryptedContent: text, isSentByMe: true, status: .queued, replyTo: replyTo, localThumbnails: localThumbnails)
                 errorMessage = "Not connected. Message saved and will be sent when connection is restored."
                 isSending = false
                 return
             }
 
-            saveMessage(message, decryptedContent: text, isSentByMe: true, status: .sending, replyTo: replyTo)
+            saveMessage(message, decryptedContent: text, isSentByMe: true, status: .sending, replyTo: replyTo, localThumbnails: localThumbnails)
             wsManager.send(.sendMessage(message))
             isSending = false
 
@@ -809,7 +902,7 @@ class ChatViewModel: ObservableObject {
         }
     }
 
-    private func saveMessage(_ message: ChatMessage, decryptedContent: String, isSentByMe: Bool, status: DeliveryStatus, replyTo: Message? = nil) {
+    private func saveMessage(_ message: ChatMessage, decryptedContent: String, isSentByMe: Bool, status: DeliveryStatus, replyTo: Message? = nil, localThumbnails: [Data] = []) {
         Log.debug("💾 Saving message \(message.id), isSentByMe: \(isSentByMe), status: \(status)", category: "ChatViewModel")
 
         let fetchRequest: NSFetchRequest<Message> = Message.fetchRequest()
@@ -841,6 +934,17 @@ class ChatViewModel: ObservableObject {
                 newMessage.replyToMessageId = replyMessage.id
                 newMessage.replyToContent = replyMessage.decryptedContent
             }
+            
+            // ✅ Store thumbnails locally for media messages (sender side)
+            if !localThumbnails.isEmpty {
+                // Store first thumbnail in UserDefaults (temporary solution)
+                // TODO: Add thumbnailData field to Message entity in Core Data
+                if let firstThumbnail = localThumbnails.first {
+                    UserDefaults.standard.set(firstThumbnail, forKey: "message_thumbnail_\(message.id)")
+                    Log.debug("💾 Stored thumbnail locally for message \(message.id)", category: "ChatViewModel")
+                }
+            }
+            
             isNewMessage = true
         }
 

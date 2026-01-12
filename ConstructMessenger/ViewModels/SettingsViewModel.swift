@@ -83,7 +83,8 @@ class SettingsViewModel: ObservableObject {
                 profileImage = ImageHelper.imageFromData(processedData)
                 print("✅ Avatar saved successfully")
                 
-                // ✅ FIX: No direct property for avatar on AuthViewModel, but good practice to notify if there were.
+                // Force UI refresh by posting notification
+                NotificationCenter.default.post(name: .NSManagedObjectContextDidSave, object: context)
             } else {
                 print("⚠️ User not found in Core Data")
             }

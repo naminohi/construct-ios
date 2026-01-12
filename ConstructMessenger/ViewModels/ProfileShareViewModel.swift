@@ -37,8 +37,9 @@ class ProfileShareViewModel: ObservableObject {
             return
         }
         
-        // Check if session is ready (required for media upload)
+        // Check if session is ready (required for encryption)
         guard CryptoManager.shared.hasSession(for: userId) else {
+            Log.info("⚠️ Cannot share profile: no session for user \(userId)", category: "ProfileShare")
             completion(false, "Secure session not established. Please send a message first.")
             return
         }
@@ -114,7 +115,10 @@ class ProfileShareViewModel: ObservableObject {
             
             // Encrypt and send via E2E message
             do {
+                Log.debug("🔐 Encrypting profile message for user \(userId), JSON size: \(jsonSize) bytes", category: "ProfileShare")
                 let encryptedComponents = try CryptoManager.shared.encryptMessage(jsonString, for: userId)
+                
+                Log.debug("✅ Profile message encrypted successfully, messageNumber: \(encryptedComponents.messageNumber)", category: "ProfileShare")
                 
                 let message = ChatMessage(
                     id: UUID().uuidString,
@@ -132,8 +136,24 @@ class ProfileShareViewModel: ObservableObject {
                 await MainActor.run {
                     completion(true, nil)
                 }
+            } catch let error as CryptoManagerError {
+                Log.error("❌ Failed to share profile (CryptoManagerError): \(error)", category: "ProfileShare")
+                let errorMessage: String
+                switch error {
+                case .sessionNotFound:
+                    errorMessage = "Secure session not found. Please send a message first."
+                case .encryptionFailed:
+                    errorMessage = "Encryption failed. The session may be corrupted. Please try sending a message first."
+                case .coreNotInitialized:
+                    errorMessage = "Crypto core not initialized. Please restart the app."
+                default:
+                    errorMessage = error.localizedDescription
+                }
+                await MainActor.run {
+                    completion(false, errorMessage)
+                }
             } catch {
-                Log.error("❌ Failed to share profile: \(error)", category: "ProfileShare")
+                Log.error("❌ Failed to share profile (unexpected error): \(error)", category: "ProfileShare")
                 await MainActor.run {
                     completion(false, error.localizedDescription)
                 }

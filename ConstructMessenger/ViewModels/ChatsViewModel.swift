@@ -137,10 +137,17 @@ class ChatsViewModel: ObservableObject {
             if let existingChat = try? context.fetch(chatFetch).first,
                let user = existingChat.otherUser {
                 let oldUsername = user.username
+                let oldDisplayName = user.displayName
                 user.username = data.username
                 user.displayName = data.username
-                try? context.save()
-                Log.info("🔄 Updated username from '\(oldUsername)' to '\(data.username)' for existing user \(data.userId)", category: "ChatsViewModel")
+                do {
+                    try context.save()
+                    Log.info("🔄 Updated username from '\(oldUsername)' to '\(data.username)' for existing user \(data.userId)", category: "ChatsViewModel")
+                    // Force UI refresh by posting notification
+                    NotificationCenter.default.post(name: .NSManagedObjectContextDidSave, object: context)
+                } catch {
+                    Log.error("❌ Failed to save username update: \(error)", category: "ChatsViewModel")
+                }
             } else {
                 // Try to find user directly
                 let userFetch: NSFetchRequest<User> = User.fetchRequest()
@@ -149,8 +156,14 @@ class ChatsViewModel: ObservableObject {
                     let oldUsername = existingUser.username
                     existingUser.username = data.username
                     existingUser.displayName = data.username
-                    try? context.save()
-                    Log.info("🔄 Updated username from '\(oldUsername)' to '\(data.username)' for user \(data.userId)", category: "ChatsViewModel")
+                    do {
+                        try context.save()
+                        Log.info("🔄 Updated username from '\(oldUsername)' to '\(data.username)' for user \(data.userId)", category: "ChatsViewModel")
+                        // Force UI refresh by posting notification
+                        NotificationCenter.default.post(name: .NSManagedObjectContextDidSave, object: context)
+                    } catch {
+                        Log.error("❌ Failed to save username update: \(error)", category: "ChatsViewModel")
+                    }
                 } else {
                     Log.debug("⚠️ User \(data.userId) not found in database for username update", category: "ChatsViewModel")
                 }
@@ -195,8 +208,14 @@ class ChatsViewModel: ObservableObject {
                     user.username = data.username
                     user.displayName = data.username
                     Log.info("🔄 Updating username from '\(oldUsername)' to '\(data.username)' for user \(data.userId)", category: "ChatsViewModel")
-                    try? context.save()  // ✅ FIX: Save updated username
-                    Log.info("✅ Updated username to: \(data.username), displayName: \(user.displayName)", category: "ChatsViewModel")
+                    do {
+                        try context.save()  // ✅ FIX: Save updated username
+                        Log.info("✅ Updated username to: \(data.username), displayName: \(user.displayName)", category: "ChatsViewModel")
+                        // Force UI refresh by posting notification
+                        NotificationCenter.default.post(name: .NSManagedObjectContextDidSave, object: context)
+                    } catch {
+                        Log.error("❌ Failed to save username update: \(error)", category: "ChatsViewModel")
+                    }
                 } else {
                     Log.error("❌ Chat found but otherUser is nil for userId: \(data.userId)", category: "ChatsViewModel")
                 }
@@ -350,21 +369,35 @@ class ChatsViewModel: ObservableObject {
             
             // ✅ FIX: Check if username is still UUID (not yet updated from publicKeyBundle)
             // If username equals userId (UUID format), request publicKeyBundle to get real username
-            if let user = chat.otherUser, (user.username == user.id || user.username == otherUserId) {
-                // Username is still UUID - request publicKeyBundle to update it
-                Log.info("🔄 Username for user \(otherUserId) is still UUID (\(user.username)), requesting publicKeyBundle to update", category: "ChatsViewModel")
-                wsManager.send(.getPublicKey(GetPublicKeyData(userId: otherUserId)))
+            if let user = chat.otherUser {
+                let usernameIsGuid = user.username == user.id || user.username == otherUserId
+                let displayNameIsGuid = user.displayName == user.id || user.displayName == otherUserId
+                
+                if usernameIsGuid || displayNameIsGuid {
+                    // Username/displayName is still UUID - request publicKeyBundle to update it
+                    Log.info("🔄 Username/displayName for user \(otherUserId) is still UUID (username=\(user.username), displayName=\(user.displayName ?? "nil")), requesting publicKeyBundle to update", category: "ChatsViewModel")
+                    wsManager.send(.getPublicKey(GetPublicKeyData(userId: otherUserId)))
+                }
             }
             
             // ✅ Handle profile sharing messages
-            if let profileData = parseProfileMessage(decryptedContent) {
-                Log.info("📥 Received profile message from \(otherUserId)", category: "ChatsViewModel")
-                handleProfileMessage(profileData, from: otherUserId)
-                // Don't save profile messages as regular chat messages
-                return
-            } else {
-                // Debug: Log when content doesn't match profile message format
-                Log.debug("📝 Content is not a profile message, treating as regular message", category: "ChatsViewModel")
+            // Check if content looks like a profile message (JSON with type="profile")
+            if decryptedContent.trimmingCharacters(in: .whitespaces).hasPrefix("{"),
+               let jsonData = decryptedContent.data(using: .utf8),
+               let jsonDict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+               let type = jsonDict["type"] as? String,
+               type == "profile" {
+                // It's a profile message - try to parse it
+                if let profileData = parseProfileMessage(decryptedContent) {
+                    Log.info("📥 Received profile message from \(otherUserId)", category: "ChatsViewModel")
+                    handleProfileMessage(profileData, from: otherUserId)
+                    // Don't save profile messages as regular chat messages
+                    return
+                } else {
+                    // Profile message but failed to parse - don't save as regular message
+                    Log.info("⚠️ Received profile message from \(otherUserId) but failed to parse, skipping", category: "ChatsViewModel")
+                    return
+                }
             }
         }
 
@@ -392,20 +425,27 @@ class ChatsViewModel: ObservableObject {
         
         // Debug: Log the content being parsed
         Log.debug("📥 Attempting to parse profile message, content length: \(content.count)", category: "ChatsViewModel")
-        Log.debug("   Content preview: \(content.prefix(100))", category: "ChatsViewModel")
+        Log.debug("   Content preview: \(content.prefix(200))", category: "ChatsViewModel")
         
-        guard let json = try? JSONDecoder().decode(ProfileShareData.self, from: data) else {
-            Log.debug("❌ parseProfileMessage: Failed to decode ProfileShareData", category: "ChatsViewModel")
-            return nil
+        // First, try to parse as generic JSON to check if it looks like a profile message
+        if let jsonDict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let type = jsonDict["type"] as? String,
+           type == "profile" {
+            // It's a profile message, try to decode it properly
+            do {
+                let json = try JSONDecoder().decode(ProfileShareData.self, from: data)
+                Log.info("✅ Successfully parsed profile message: displayName=\(json.displayName), avatarMediaId=\(json.avatarMediaId ?? "nil"), avatarData=\(json.avatarData != nil ? "present" : "nil")", category: "ChatsViewModel")
+                return json
+            } catch {
+                Log.error("❌ parseProfileMessage: Failed to decode ProfileShareData: \(error)", category: "ChatsViewModel")
+                // Even if decoding fails, we know it's a profile message, so return nil to prevent it from being saved as regular message
+                return nil
+            }
         }
         
-        guard json.type == "profile" else {
-            Log.debug("❌ parseProfileMessage: type is not 'profile', got: '\(json.type)'", category: "ChatsViewModel")
-            return nil
-        }
-        
-        Log.info("✅ Successfully parsed profile message: displayName=\(json.displayName), avatarMediaId=\(json.avatarMediaId ?? "nil"), avatarData=\(json.avatarData != nil ? "present" : "nil")", category: "ChatsViewModel")
-        return json
+        // Not a profile message
+        Log.debug("❌ parseProfileMessage: Content is not a profile message", category: "ChatsViewModel")
+        return nil
     }
     
     private func handleProfileMessage(_ profileData: ProfileShareData, from userId: String) {

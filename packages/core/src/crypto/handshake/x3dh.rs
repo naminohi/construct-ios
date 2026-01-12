@@ -199,10 +199,56 @@ impl<P: CryptoProvider> KeyAgreement<P> for X3DHProtocol<P> {
             "Ephemeral key generated"
         );
 
+        // Validate key sizes before parsing
+        const EXPECTED_KEM_KEY_SIZE: usize = 32; // X25519 public key size
+        const EXPECTED_SIGNATURE_KEY_SIZE: usize = 32; // Ed25519 public key size
+        const EXPECTED_SIGNATURE_SIZE: usize = 64; // Ed25519 signature size
+        
+        if remote_bundle.identity_public.len() != EXPECTED_KEM_KEY_SIZE {
+            return Err(format!(
+                "Invalid identity_public key size: expected {} bytes, got {} bytes",
+                EXPECTED_KEM_KEY_SIZE,
+                remote_bundle.identity_public.len()
+            ));
+        }
+        
+        if remote_bundle.signed_prekey_public.len() != EXPECTED_KEM_KEY_SIZE {
+            return Err(format!(
+                "Invalid signed_prekey_public key size: expected {} bytes, got {} bytes",
+                EXPECTED_KEM_KEY_SIZE,
+                remote_bundle.signed_prekey_public.len()
+            ));
+        }
+        
+        if remote_bundle.verifying_key.len() != EXPECTED_SIGNATURE_KEY_SIZE {
+            return Err(format!(
+                "Invalid verifying_key size: expected {} bytes, got {} bytes",
+                EXPECTED_SIGNATURE_KEY_SIZE,
+                remote_bundle.verifying_key.len()
+            ));
+        }
+        
+        if remote_bundle.signature.len() != EXPECTED_SIGNATURE_SIZE {
+            return Err(format!(
+                "Invalid signature size: expected {} bytes, got {} bytes",
+                EXPECTED_SIGNATURE_SIZE,
+                remote_bundle.signature.len()
+            ));
+        }
+
         // Parse remote keys from bundle
         let remote_identity_public = P::kem_public_key_from_bytes(remote_bundle.identity_public.clone());
         let remote_signed_prekey_public = P::kem_public_key_from_bytes(remote_bundle.signed_prekey_public.clone());
         let remote_verifying_key = P::signature_public_key_from_bytes(remote_bundle.verifying_key.clone());
+        
+        trace!(
+            target: "crypto::x3dh",
+            identity_public_len = remote_bundle.identity_public.len(),
+            signed_prekey_public_len = remote_bundle.signed_prekey_public.len(),
+            verifying_key_len = remote_bundle.verifying_key.len(),
+            signature_len = remote_bundle.signature.len(),
+            "Parsed remote keys from bundle"
+        );
 
         // 1. Verify signature on signed prekey with backward compatibility
         // Сначала пробуем новый формат (с prologue), если не получается - старый (без prologue)
@@ -236,27 +282,64 @@ impl<P: CryptoProvider> KeyAgreement<P> for X3DHProtocol<P> {
                     "Signature verified successfully (new format with prologue)"
                 );
             }
-            Err(_) => {
+            Err(e1) => {
                 // Попытка 2: Старый формат без prologue (для обратной совместимости)
                 debug!(
                     target: "crypto::x3dh",
                     suite_id = %remote_bundle.suite_id,
+                    error = %e1,
                     "New format failed, trying old format (backward compatibility)"
                 );
-                P::verify(
+                let old_format_result = P::verify(
                     &remote_verifying_key,
                     remote_signed_prekey_public.as_ref(),
                     &remote_bundle.signature,
-                )
-                .map_err(|e| {
-                    error!(
-                        target: "crypto::x3dh",
-                        error = %e,
-                        suite_id = %remote_bundle.suite_id,
-                        "Signature verification failed (both formats)"
-                    );
-                    format!("Signature verification failed: {}", e)
-                })?;
+                );
+                
+                match old_format_result {
+                    Ok(()) => {
+                        debug!(
+                            target: "crypto::x3dh",
+                            suite_id = %remote_bundle.suite_id,
+                            "Signature verified successfully (old format, backward compatibility)"
+                        );
+                    }
+                    Err(e2) => {
+                        // Попытка 3: Может быть подпись была создана для identity_public? (очень старый формат)
+                        debug!(
+                            target: "crypto::x3dh",
+                            suite_id = %remote_bundle.suite_id,
+                            error = %e2,
+                            "Old format also failed, trying identity_public as fallback (very old format)"
+                        );
+                        let identity_result = P::verify(
+                            &remote_verifying_key,
+                            remote_bundle.identity_public.as_ref(),
+                            &remote_bundle.signature,
+                        );
+                        
+                        match identity_result {
+                            Ok(()) => {
+                                debug!(
+                                    target: "crypto::x3dh",
+                                    suite_id = %remote_bundle.suite_id,
+                                    "Signature verified for identity_public (very old format)"
+                                );
+                            }
+                            Err(e3) => {
+                                error!(
+                                    target: "crypto::x3dh",
+                                    new_format_error = %e1,
+                                    old_format_error = %e2,
+                                    very_old_format_error = %e3,
+                                    suite_id = %remote_bundle.suite_id,
+                                    "Signature verification failed (all formats)"
+                                );
+                                return Err(format!("Signature verification failed: {}. The user may need to re-register with the current code version.", e2));
+                            }
+                        }
+                    }
+                }
                 debug!(
                     target: "crypto::x3dh",
                     suite_id = %remote_bundle.suite_id,
@@ -489,7 +572,7 @@ mod tests {
         assert_eq!(&prologue[0..4], b"X3DH", "First 4 bytes should be 'X3DH'");
         
         // Suite ID 1 = 0x0001 in little-endian = [0x01, 0x00]
-        let expected_suite_id_bytes = suite_id.to_le_bytes();
+        let expected_suite_id_bytes = suite_id.as_u16().to_le_bytes();
         assert_eq!(&prologue[4..6], &expected_suite_id_bytes, "Last 2 bytes should be suite_id in little-endian");
     }
 

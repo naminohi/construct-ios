@@ -132,6 +132,7 @@ class AuthViewModel: ObservableObject {
                 suiteId: suiteID,
                 identityKey: registrationBundle.identityPublic,
                 signedPrekey: registrationBundle.signedPrekeyPublic,
+                signedPrekeySignature: registrationBundle.signature,  // ✅ Include signature for signedPrekey
                 oneTimePrekeys: [] // One-time keys are optional for the initial bundle.
             )
 

@@ -270,10 +270,28 @@ class CryptoManager {
             // ✅ Auto-save session to Keychain
             saveSessionToKeychain(for: userId)
         } catch let error as CryptoError {
-            Log.error("❌ Failed to initialize session: \(error)", category: "CryptoManager")
+            // Log the full error details, including message if available
+            var errorDetails = "❌ Failed to initialize session: \(error)"
+            // Extract message from CryptoError if available
+            let errorString = String(describing: error)
+            if errorString.contains("message:") {
+                errorDetails += " - Full error: \(errorString)"
+            }
+            Log.error(errorDetails, category: "CryptoManager")
+            Log.error("   userId: \(userId)", category: "CryptoManager")
+            Log.error("   identityPublic length: \(identityPublicData.count) bytes", category: "CryptoManager")
+            Log.error("   identityPublic (base64): \(recipientBundle.identityPublic)", category: "CryptoManager")
+            Log.error("   signedPrekeyPublic length: \(signedPrekeyPublicData.count) bytes", category: "CryptoManager")
+            Log.error("   signedPrekeyPublic (base64): \(recipientBundle.signedPrekeyPublic)", category: "CryptoManager")
+            Log.error("   signature length: \(signatureData.count) bytes", category: "CryptoManager")
+            Log.error("   signature (base64): \(recipientBundle.signature)", category: "CryptoManager")
+            Log.error("   verifyingKey length: \(verifyingKeyData.count) bytes", category: "CryptoManager")
+            Log.error("   verifyingKey (base64): \(recipientBundle.verifyingKey)", category: "CryptoManager")
+            Log.error("   suiteId: \(recipientBundle.suiteId)", category: "CryptoManager")
             throw CryptoManagerError.sessionInitializationFailed
         } catch {
             Log.error("❌ Unexpected error initializing session: \(error)", category: "CryptoManager")
+            Log.error("   userId: \(userId)", category: "CryptoManager")
             throw CryptoManagerError.sessionInitializationFailed
         }
     }
@@ -422,18 +440,24 @@ class CryptoManager {
 
             return components
         } catch let error as CryptoError {
-            Log.error("❌ Encryption failed: \(error)", category: "CryptoManager")
-
-            // ✅ Auto-delete corrupted session to allow reinitialization
-            Log.debug("🔄 Deleting corrupted session for \(userId) to allow reinitialization", category: "CryptoManager")
+            Log.error("❌ Encryption failed (CryptoError): \(error)", category: "CryptoManager")
+            Log.error("   Session ID: \(sessionId)", category: "CryptoManager")
+            Log.error("   Message length: \(message.utf8.count) bytes", category: "CryptoManager")
+            
+            // Check if it's a session-related error that requires deletion
+            // For now, delete session on any encryption error to allow reinitialization
+            // TODO: Could be more selective based on error type
+            Log.debug("🔄 Deleting session for \(userId) to allow reinitialization", category: "CryptoManager")
             deleteSession(for: userId)
 
             throw CryptoManagerError.encryptionFailed
         } catch {
             Log.error("❌ Unexpected encryption error: \(error)", category: "CryptoManager")
-
-            // ✅ Auto-delete corrupted session to allow reinitialization
-            Log.debug("🔄 Deleting corrupted session for \(userId) to allow reinitialization", category: "CryptoManager")
+            Log.error("   Session ID: \(sessionId)", category: "CryptoManager")
+            Log.error("   Message length: \(message.utf8.count) bytes", category: "CryptoManager")
+            
+            // Delete session on unexpected errors too
+            Log.debug("🔄 Deleting session for \(userId) to allow reinitialization", category: "CryptoManager")
             deleteSession(for: userId)
 
             throw CryptoManagerError.encryptionFailed
