@@ -1,4 +1,0 @@
-module construct_coreFFI {
-    header "construct_coreFFI.h"
-    export *
-}

@@ -13,7 +13,7 @@ struct NetworkSettingsView: View {
     @State private var customServerURL = ""
     @State private var showingReconnectAlert = false
     @ObservedObject private var reachabilityManager = NetworkReachabilityManager.shared
-    @ObservedObject private var wsManager = WebSocketManager.shared
+    @ObservedObject private var connectionManager = ConnectionStatusManager.shared
     @State private var lastConnectionError: String?
 
     var body: some View {
@@ -26,9 +26,9 @@ struct NetworkSettingsView: View {
                     Spacer()
                     HStack(spacing: 4) {
                         Circle()
-                            .fill(wsManager.isConnected ? Color.green : Color.red)
+                            .fill(connectionManager.isConnected ? Color.green : Color.red)
                             .frame(width: 8, height: 8)
-                        Text(wsManager.isConnected ? "connected" : wsManager.connectionStatus.displayText)
+                        Text(connectionManager.isConnected ? "connected" : connectionManager.connectionStatus.displayText)
                             .fontWeight(.medium)
                     }
                 }
@@ -171,9 +171,8 @@ struct NetworkSettingsView: View {
             customServerURL = storedServerURL ?? ""
             loadLastConnectionError()
         }
-        .onReceive(wsManager.errorPublisher) { error in
-            lastConnectionError = error.localizedDescription
-            Log.error("Connection error received in NetworkSettingsView: \(error.localizedDescription)", category: "NetworkSettings")
+        .onChange(of: connectionManager.lastError) { newError in
+            lastConnectionError = newError
         }
         .alert("reconnect_required", isPresented: $showingReconnectAlert) {
             Button("ok") { }
@@ -208,10 +207,8 @@ struct NetworkSettingsView: View {
 
     private func reconnectToServer() {
         lastConnectionError = nil
-        WebSocketManager.shared.disconnect()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            WebSocketManager.shared.connect()
-        }
+        // For REST architecture, we mark as connecting and let the next API request verify connectivity
+        ConnectionStatusManager.shared.markConnecting()
     }
     
     private func loadLastConnectionError() {

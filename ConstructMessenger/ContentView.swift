@@ -39,10 +39,9 @@ struct ContentView: View {
                 print("📱 App became active, attempting to restore connection...")
                 authViewModel.restoreSession()
             } else if newPhase == .background {
-                print("⏹️ App went to background. Disconnecting WebSocket.")
-                // Disconnect when going to background to save resources
-                // The connection will be restored when app becomes active again
-                WebSocketManager.shared.disconnect()
+                print("⏹️ App went to background.")
+                // REST API architecture - no WebSocket to disconnect
+                // Long polling will resume when app becomes active
             }
         }
         .onChange(of: deepLinkHandler.deepLink) { newDeepLink in
@@ -93,12 +92,20 @@ struct ContentView: View {
 #Preview("Authenticated") {
     let container = PreviewHelpers.createPreviewContainer()
     let context = container.viewContext
+    
+    // ✅ Ensure context is ready before using it
+    guard context.persistentStoreCoordinator != nil else {
+        fatalError("Preview Core Data context not ready")
+    }
+    
     let authViewModel = AuthViewModel(context: context)
     authViewModel.isAuthenticated = true
     authViewModel.currentUserId = "me"
     authViewModel.currentUsername = "john_doe"
     authViewModel.currentDisplayName = "John Doe"
     let deepLinkHandler = DeepLinkHandler()
+    let chatsViewModel = ChatsViewModel()
+    chatsViewModel.setContext(context)
 
     // Create sample chats
     let user1 = PreviewHelpers.createSampleUser(context: context, id: "user1", username: "alice", displayName: "Alice")
@@ -111,4 +118,5 @@ struct ContentView: View {
         .environment(\.managedObjectContext, context)
         .environmentObject(authViewModel)
         .environmentObject(deepLinkHandler)
+        .environmentObject(chatsViewModel)
 }

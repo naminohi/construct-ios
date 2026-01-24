@@ -40,6 +40,7 @@
         <attribute name="replyToContent" optional="YES" attributeType="String"/>
         <attribute name="replyToMessageId" optional="YES" attributeType="String"/>
         <attribute name="retryCount" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="suiteId" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
         <attribute name="timestamp" attributeType="Date" usesScalarValueType="NO"/>
         <attribute name="toUserId" attributeType="String"/>
         <relationship name="chat" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Chat" inverseName="messages" inverseEntity="Chat"/>

@@ -11,6 +11,7 @@ struct SettingsView: View {
     @Environment(\.managedObjectContext) private var viewContext
     @EnvironmentObject var authViewModel: AuthViewModel
     @StateObject private var viewModel = SettingsViewModel()
+    @ObservedObject private var connectionStatus = ConnectionStatusManager.shared
     @State private var showingQRCode = false
     @State private var linkCopied = false
 
@@ -81,9 +82,9 @@ struct SettingsView: View {
                                 Text("network")
                                 HStack(spacing: 4) {
                                     Circle()
-                                        .fill(WebSocketManager.shared.isConnected ? Color.green : Color.red)
+                                        .fill(connectionStatus.isConnected ? Color.green : Color.red)
                                         .frame(width: 6, height: 6)
-                                    Text(WebSocketManager.shared.isConnected ? "connected" : "disconnected")
+                                    Text(connectionStatus.connectionStatus.localizedKey)
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }
@@ -203,12 +204,14 @@ struct SettingsView: View {
 
 #Preview {
     let container = PreviewHelpers.createPreviewContainer()
-    let authViewModel = AuthViewModel(context: container.viewContext)
+    let context = container.viewContext
+    let authViewModel = AuthViewModel(context: context)
     authViewModel.isAuthenticated = true
     authViewModel.currentUserId = "user123"
     authViewModel.currentUsername = "john_doe"
     authViewModel.currentDisplayName = "John Doe"
 
     return SettingsView()
+        .environment(\.managedObjectContext, context)
         .environmentObject(authViewModel)
 }

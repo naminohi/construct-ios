@@ -14,13 +14,29 @@ class KeychainManager {
 
     // MARK: - Session Token
     func saveSessionToken(_ token: String) {
-        guard let data = token.data(using: .utf8) else { return }
-        save(data, forKey: APIConstants.sessionTokenKey, accessible: kSecAttrAccessibleAfterFirstUnlock)
+        guard let data = token.data(using: .utf8) else {
+            Log.error("Failed to convert token to UTF-8 data", category: "Keychain")
+            return
+        }
+        let success = save(data, forKey: APIConstants.sessionTokenKey, accessible: kSecAttrAccessibleAfterFirstUnlock)
+        if !success {
+            Log.error("Failed to save session token to Keychain", category: "Keychain")
+        } else {
+            Log.info("✅ Session token saved to Keychain (length: \(token.count), prefix: \(token.prefix(30))...)", category: "Keychain")
+        }
     }
 
     func loadSessionToken() -> String? {
-        guard let data = load(forKey: APIConstants.sessionTokenKey) else { return nil }
-        return String(data: data, encoding: .utf8)
+        guard let data = load(forKey: APIConstants.sessionTokenKey) else {
+            Log.debug("No session token found in Keychain", category: "Keychain")
+            return nil
+        }
+        guard let token = String(data: data, encoding: .utf8) else {
+            Log.error("Failed to convert Keychain data to UTF-8 string", category: "Keychain")
+            return nil
+        }
+        Log.debug("✅ Session token loaded from Keychain (length: \(token.count), prefix: \(token.prefix(30))...)", category: "Keychain")
+        return token
     }
 
     func deleteSessionToken() {
@@ -29,7 +45,10 @@ class KeychainManager {
 
     // MARK: - Private Key
     func savePrivateKey(_ keyData: Data) {
-        save(keyData, forKey: APIConstants.privateKeyKey, accessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly)
+        let success = save(keyData, forKey: APIConstants.privateKeyKey, accessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly)
+        if !success {
+            Log.error("Failed to save private key to Keychain", category: "Keychain")
+        }
     }
 
     func loadPrivateKey() -> Data? {
@@ -84,7 +103,10 @@ class KeychainManager {
     // MARK: - User ID
     func saveUserId(_ userId: String) {
         guard let data = userId.data(using: .utf8) else { return }
-        save(data, forKey: APIConstants.userIdKey, accessible: kSecAttrAccessibleAfterFirstUnlock)
+        let success = save(data, forKey: APIConstants.userIdKey, accessible: kSecAttrAccessibleAfterFirstUnlock)
+        if !success {
+            Log.error("Failed to save user ID to Keychain", category: "Keychain")
+        }
     }
 
     func loadUserId() -> String? {
@@ -96,7 +118,10 @@ class KeychainManager {
     // Note: We don't save passwords in Keychain - iOS Password AutoFill handles that securely
     func saveLastUsername(_ username: String) {
         guard let data = username.data(using: .utf8) else { return }
-        save(data, forKey: APIConstants.lastUsernameKey, accessible: kSecAttrAccessibleAfterFirstUnlock)
+        let success = save(data, forKey: APIConstants.lastUsernameKey, accessible: kSecAttrAccessibleAfterFirstUnlock)
+        if !success {
+            Log.error("Failed to save last username to Keychain", category: "Keychain")
+        }
     }
     
     func loadLastUsername() -> String? {
@@ -113,7 +138,10 @@ class KeychainManager {
         guard let data = url.data(using: .utf8) else { return }
         // Use kSecAttrAccessibleAfterFirstUnlock to allow access after device unlock
         // This persists across app reinstalls when iCloud Keychain is enabled
-        save(data, forKey: APIConstants.customServerURLKey, accessible: kSecAttrAccessibleAfterFirstUnlock)
+        let success = save(data, forKey: APIConstants.customServerURLKey, accessible: kSecAttrAccessibleAfterFirstUnlock)
+        if !success {
+            Log.error("Failed to save custom server URL to Keychain", category: "Keychain")
+        }
     }
     
     func loadCustomServerURL() -> String? {

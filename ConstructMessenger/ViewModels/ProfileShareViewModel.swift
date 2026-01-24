@@ -13,8 +13,7 @@ import UIKit
 @MainActor
 class ProfileShareViewModel: ObservableObject {
     private var viewContext: NSManagedObjectContext?
-    private let wsManager = WebSocketManager.shared
-    
+
     func setContext(_ context: NSManagedObjectContext) {
         self.viewContext = context
     }
@@ -127,10 +126,31 @@ class ProfileShareViewModel: ObservableObject {
                     ephemeralPublicKey: encryptedComponents.ephemeralPublicKey,
                     messageNumber: encryptedComponents.messageNumber,
                     content: encryptedComponents.content,
+                    suiteId: encryptedComponents.suiteId,
                     timestamp: UInt64(Date().timeIntervalSince1970)
+                    
                 )
                 
-                wsManager.send(.sendMessage(message))
+                // ✅ FIXED: Send via REST API instead of WebSocket
+                Task {
+                    do {
+                        let response = try await RestAPIClient.shared.sendMessage(
+                            recipientId: userId,
+                            ephemeralPublicKey: encryptedComponents.ephemeralPublicKey,
+                            messageNumber: encryptedComponents.messageNumber,
+                            content: encryptedComponents.content,
+                            timestamp: message.timestamp,
+                            suiteId: message.suiteId
+                        )
+                        Log.info("✅ Profile shared with user \(userId) via REST API: \(response.messageId)", category: "ProfileShare")
+                    } catch {
+                        Log.error("❌ Failed to send profile message via REST: \(error.localizedDescription)", category: "ProfileShare")
+                        await MainActor.run {
+                            completion(false, error.localizedDescription)
+                        }
+                        return
+                    }
+                }
                 
                 Log.info("✅ Profile shared with user \(userId)", category: "ProfileShare")
                 await MainActor.run {

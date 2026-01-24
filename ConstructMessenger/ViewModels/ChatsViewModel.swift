@@ -11,18 +11,29 @@ import CoreData
 
 @MainActor
 class ChatsViewModel: ObservableObject {
-    private let wsManager = WebSocketManager.shared
     private var cancellables = Set<AnyCancellable>()
     private var viewContext: NSManagedObjectContext?
 
     // ✅ Store pending first messages from users we don't have sessions with yet
     private var pendingFirstMessages: [String: ChatMessage] = [:]  // [userId: firstMessage]
-    
+
     // ✅ Chat ID to open programmatically (e.g., from deep link)
     @Published var chatToOpen: String?
 
+    // ✅ Long polling state
+    private var isPolling = false
+    private var lastMessageId: String?
+    private var pollingTask: Task<Void, Never>?
+
+    // ✅ Connection status
+    private let connectionStatusManager = ConnectionStatusManager.shared
+
     init() {
         setupSubscribers()
+    }
+
+    isolated deinit {
+        stopLongPolling()
     }
 
     func setContext(_ context: NSManagedObjectContext) {
@@ -30,12 +41,101 @@ class ChatsViewModel: ObservableObject {
     }
 
     private func setupSubscribers() {
-        wsManager.messagePublisher
+        // Listen for connection status changes to start/stop polling
+        connectionStatusManager.$connectionStatus
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] message in
-                self?.handleServerMessage(message)
+            .sink { [weak self] status in
+                Log.info("📡 ChatsViewModel: Connection status changed to \(status.displayText)", category: "ChatsViewModel")
+                
+                if status == .connected {
+                    Log.info("📡 ChatsViewModel: Status is connected, calling startLongPolling()", category: "ChatsViewModel")
+                    self?.startLongPolling()
+                } else if status == .disconnected {
+                    Log.info("📡 ChatsViewModel: Status is disconnected, calling stopLongPolling()", category: "ChatsViewModel")
+                    self?.stopLongPolling()
+                }
             }
             .store(in: &cancellables)
+    }
+
+    // MARK: - Long Polling
+
+    func startLongPolling() {
+        guard !isPolling else { return }
+        guard SessionManager.shared.sessionToken != nil else {
+            Log.info("📡 Cannot start long polling - no session token", category: "ChatsViewModel")
+            return
+        }
+
+        isPolling = true
+        Log.info("📡 Starting long polling for messages", category: "ChatsViewModel")
+
+        pollingTask = Task { [weak self] in
+            await self?.pollMessagesLoop()
+        }
+    }
+
+    func stopLongPolling() {
+        isPolling = false
+        pollingTask?.cancel()
+        pollingTask = nil
+        Log.info("📡 Stopped long polling", category: "ChatsViewModel")
+    }
+
+    private func pollMessagesLoop() async {
+        while isPolling && !Task.isCancelled {
+            do {
+                // ✅ DEBUG: Log current lastMessageId before request
+                if let lastId = lastMessageId {
+                    Log.info("📡 Polling loop: lastMessageId=\(lastId)", category: "ChatsViewModel")
+                } else {
+                    Log.info("📡 Polling loop: lastMessageId is nil (first request)", category: "ChatsViewModel")
+                }
+                
+                let response = try await RestAPIClient.shared.pollMessages(
+                    sinceId: lastMessageId,
+                    timeout: 30
+                )
+
+                // ✅ DEBUG: Log response summary
+                Log.info("📥 Poll response: \(response.messages.count) messages, nextSince=\(response.nextSince ?? "nil"), hasMore=\(response.hasMore ?? false)", category: "ChatsViewModel")
+
+                // Process received messages
+                for messageResponse in response.messages {
+                    do {
+                        let chatMessage = try messageResponse.toChatMessage()
+                        await MainActor.run {
+                            self.handleIncomingMessage(chatMessage)
+                        }
+                    } catch {
+                        Log.error("❌ Failed to convert message: \(error)", category: "ChatsViewModel")
+                    }
+                }
+
+                // Update last message ID for next poll
+                let previousLastId = lastMessageId
+                if let nextSince = response.nextSince {
+                    lastMessageId = nextSince
+                    Log.info("✅ Updated lastMessageId from nextSince: \(previousLastId ?? "nil") -> \(nextSince)", category: "ChatsViewModel")
+                } else if let lastMessage = response.messages.last {
+                    lastMessageId = lastMessage.id
+                    Log.info("✅ Updated lastMessageId from last message: \(previousLastId ?? "nil") -> \(lastMessage.id)", category: "ChatsViewModel")
+                } else {
+                    Log.info("ℹ️ No nextSince and no messages, keeping lastMessageId: \(lastMessageId ?? "nil")", category: "ChatsViewModel")
+                }
+
+                // If there are more messages, poll again immediately
+                if response.hasMore == true {
+                    Log.info("🔄 hasMore=true, polling again immediately", category: "ChatsViewModel")
+                    continue
+                }
+
+            } catch {
+                Log.error("❌ Long polling error: \(error.localizedDescription)", category: "ChatsViewModel")
+                // Wait before retrying on error
+                try? await Task.sleep(nanoseconds: 5_000_000_000) // 5 seconds
+            }
+        }
     }
 
     // MARK: - Start Chat
@@ -103,20 +203,6 @@ class ChatsViewModel: ObservableObject {
         try? context.save()
     }
 
-    // MARK: - Handle Server Messages
-    private func handleServerMessage(_ message: ServerMessage) {
-        switch message {
-        case .publicKeyBundle(let data):
-            handlePublicKeyBundle(data)
-
-        case .message(let msg):
-            handleIncomingMessage(msg)
-
-        default:
-            break
-        }
-    }
-
     // MARK: - Handle Public Key Bundle (for receiving session initialization)
     private func handlePublicKeyBundle(_ data: PublicKeyBundleData) {
         Log.debug("📦 ChatsViewModel: Received publicKeyBundle for userId: \(data.userId), hasPendingMessage: \(pendingFirstMessages[data.userId] != nil)", category: "ChatsViewModel")
@@ -137,7 +223,6 @@ class ChatsViewModel: ObservableObject {
             if let existingChat = try? context.fetch(chatFetch).first,
                let user = existingChat.otherUser {
                 let oldUsername = user.username
-                let oldDisplayName = user.displayName
                 user.username = data.username
                 user.displayName = data.username
                 do {
@@ -174,7 +259,7 @@ class ChatsViewModel: ObservableObject {
         Log.info("🔑 Received public key bundle for \(data.userId) - initializing receiving session", category: "ChatsViewModel")
 
         guard let context = viewContext else { return }
-        guard let currentUserId = SessionManager.shared.currentUserId else { return }
+        guard SessionManager.shared.currentUserId != nil else { return }
 
         // Create bundle tuple
         let bundleWithSuite = (
@@ -344,8 +429,19 @@ class ChatsViewModel: ObservableObject {
                 }
             }
 
-            // Request sender's public key bundle from server
-            wsManager.send(.getPublicKey(GetPublicKeyData(userId: otherUserId)))
+            // ✅ FIXED: Request sender's public key bundle from server via REST API
+            Task {
+                do {
+                    let publicKeyBundle = try await RestAPIClient.shared.getPublicKey(userId: otherUserId)
+                    await MainActor.run {
+                        self.handlePublicKeyBundleForIncomingMessage(publicKeyBundle, message: message, otherUserId: otherUserId)
+                    }
+                } catch {
+                    await MainActor.run {
+                        Log.error("❌ Failed to fetch public key for incoming message: \(error.localizedDescription)", category: "ChatsViewModel")
+                    }
+                }
+            }
 
             // Exit early - we'll process this message after receiving the public key bundle
             return
@@ -355,13 +451,23 @@ class ChatsViewModel: ObservableObject {
                 Log.error("❌ ChatsViewModel: Failed to decrypt incoming message \(message.id)", category: "ChatsViewModel")
 
                 // ✅ Session was corrupted and auto-deleted by CryptoManager
-                // Request fresh public key bundle to reinitialize
+                // Request fresh public key bundle to reinitialize via REST API
                 Log.debug("🔄 Decryption failed, session was deleted. Requesting reinitialization...", category: "ChatsViewModel")
-                wsManager.send(.getPublicKey(GetPublicKeyData(userId: otherUserId)))
-
-                // Store the failed message to retry after reinitialization
-                pendingFirstMessages[otherUserId] = message
-                Log.info("📝 Message stored for retry after session reinitialization", category: "ChatsViewModel")
+                Task {
+                    do {
+                        let publicKeyBundle = try await RestAPIClient.shared.getPublicKey(userId: otherUserId)
+                        await MainActor.run {
+                            self.handlePublicKeyBundleForIncomingMessage(publicKeyBundle, message: message, otherUserId: otherUserId)
+                        }
+                    } catch {
+                        await MainActor.run {
+                            Log.error("❌ Failed to fetch public key for reinitialization: \(error.localizedDescription)", category: "ChatsViewModel")
+                            // Store the failed message to retry after reinitialization
+                            self.pendingFirstMessages[otherUserId] = message
+                            Log.info("📝 Message stored for retry after session reinitialization", category: "ChatsViewModel")
+                        }
+                    }
+                }
 
                 return
             }
@@ -374,9 +480,23 @@ class ChatsViewModel: ObservableObject {
                 let displayNameIsGuid = user.displayName == user.id || user.displayName == otherUserId
                 
                 if usernameIsGuid || displayNameIsGuid {
-                    // Username/displayName is still UUID - request publicKeyBundle to update it
-                    Log.info("🔄 Username/displayName for user \(otherUserId) is still UUID (username=\(user.username), displayName=\(user.displayName ?? "nil")), requesting publicKeyBundle to update", category: "ChatsViewModel")
-                    wsManager.send(.getPublicKey(GetPublicKeyData(userId: otherUserId)))
+                    // Username/displayName is still UUID - request publicKeyBundle to update it via REST API
+                    Log.info("🔄 Username/displayName for user \(otherUserId) is still UUID (username=\(user.username), displayName=\(user.displayName)), requesting publicKeyBundle to update", category: "ChatsViewModel")
+                    Task {
+                        do {
+                            let publicKeyBundle = try await RestAPIClient.shared.getPublicKey(userId: otherUserId)
+                            await MainActor.run {
+                                // Update username from public key bundle
+                                if let chatUser = chat.otherUser {
+                                    chatUser.username = publicKeyBundle.username
+                                    chatUser.displayName = publicKeyBundle.username
+                                    try? context.save()
+                                }
+                            }
+                        } catch {
+                            Log.error("❌ Failed to fetch public key for username update: \(error.localizedDescription)", category: "ChatsViewModel")
+                        }
+                    }
                 }
             }
             
@@ -406,14 +526,72 @@ class ChatsViewModel: ObservableObject {
         chat.lastMessageText = decryptedContent
         chat.lastMessageTime = Date(timeIntervalSince1970: TimeInterval(message.timestamp))
 
-        // ✅ NEW: Send ACK to server when message is received and decrypted
-        // This allows the server to notify the sender that their message was delivered
-        // Server should then forward ACK "delivered" to the original sender
-        let ackData = AcknowledgeMessageData(messageId: message.id, status: "delivered")
-        wsManager.send(.acknowledgeMessage(ackData))
-        Log.info("📬 Sent ACK 'delivered' to server for message: \(message.id)", category: "ChatsViewModel")
+        // ✅ REMOVED: ACK sending via WebSocket
+        // ACK functionality can be implemented via REST API if needed in the future
+        // For now, message delivery is confirmed by the server when message is successfully stored
+        Log.info("📬 Message received and saved: \(message.id)", category: "ChatsViewModel")
 
         // ✅ REMOVED DUPLICATE: saveMessage() already calls context.save() internally
+    }
+    
+    // MARK: - Public Key Bundle Handling
+    
+    /// Handle public key bundle received via REST API for incoming message
+    private func handlePublicKeyBundleForIncomingMessage(_ data: PublicKeyBundleData, message: ChatMessage, otherUserId: String) {
+        guard let context = viewContext else { return }
+        
+        Log.info("📦 Received publicKeyBundle for incoming message from userId: \(data.userId)", category: "ChatsViewModel")
+        
+        // Update username if we have the user in Core Data
+        let userFetchRequest: NSFetchRequest<User> = User.fetchRequest()
+        userFetchRequest.predicate = NSPredicate(format: "id == %@", data.userId)
+        
+        if let user = try? context.fetch(userFetchRequest).first {
+            user.username = data.username
+            user.displayName = data.username
+            try? context.save()
+            Log.info("Updated username for user: \(data.username)", category: "ChatsViewModel")
+        }
+        
+        // Initialize receiving session (we are the recipient)
+        do {
+            let bundleWithSuite = (
+                identityPublic: data.identityPublic,
+                signedPrekeyPublic: data.signedPrekeyPublic,
+                signature: data.signature,
+                verifyingKey: data.verifyingKey,
+                suiteId: "1"
+            )
+            
+            // ✅ FIX: For incoming messages, we are the RECIPIENT
+            // Use initReceivingSession which takes the first message and returns decrypted content
+            let decryptedContent = try CryptoManager.shared.initReceivingSession(
+                for: data.userId,
+                recipientBundle: bundleWithSuite,
+                firstMessage: message
+            )
+            
+            Log.info("✅ Receiving session initialized for \(data.userId), message decrypted", category: "ChatsViewModel")
+            
+            // Process the decrypted message
+            // Find or create chat
+            let chatFetchRequest: NSFetchRequest<Chat> = Chat.fetchRequest()
+            chatFetchRequest.predicate = NSPredicate(format: "otherUser.id == %@", data.userId)
+            
+            if let chat = try? context.fetch(chatFetchRequest).first {
+                saveMessage(for: chat, with: message, decryptedContent: decryptedContent)
+                chat.lastMessageText = decryptedContent
+                chat.lastMessageTime = Date(timeIntervalSince1970: TimeInterval(message.timestamp))
+                try? context.save()
+                Log.info("✅ Successfully saved decrypted pending message", category: "ChatsViewModel")
+            }
+            
+            // Remove from pending messages
+            pendingFirstMessages.removeValue(forKey: data.userId)
+            
+        } catch {
+            Log.error("❌ Failed to initialize receiving session: \(error.localizedDescription)", category: "ChatsViewModel")
+        }
     }
     
     // MARK: - Profile Sharing

@@ -41,9 +41,26 @@ class SessionManager {
     func saveSession(userId: String, token: String, expires: Int64) {
         KeychainManager.shared.saveUserId(userId)
         KeychainManager.shared.saveSessionToken(token)
+        
+        // ✅ FIX: Check if expires is in seconds or milliseconds
+        // Unix timestamp can be in seconds (10 digits) or milliseconds (13 digits)
+        let expiresTimeInterval: TimeInterval
+        if expires > 1_000_000_000_000 {
+            // Timestamp is in milliseconds (13+ digits)
+            expiresTimeInterval = TimeInterval(expires) / 1000.0
+            print("⚠️ Expires timestamp appears to be in milliseconds, converting to seconds")
+        } else {
+            // Timestamp is in seconds (10 digits)
+            expiresTimeInterval = TimeInterval(expires)
+        }
+        
         // Save expiration timestamp
-        UserDefaults.standard.set(TimeInterval(expires), forKey: UserDefaultsKey.sessionExpires.key)
-        print("✅ Session saved - expires at: \(Date(timeIntervalSince1970: TimeInterval(expires)))")
+        UserDefaults.standard.set(expiresTimeInterval, forKey: UserDefaultsKey.sessionExpires.key)
+        
+        let expiresDate = Date(timeIntervalSince1970: expiresTimeInterval)
+        print("✅ Session saved - expires at: \(expiresDate)")
+        print("   Raw expires value: \(expires)")
+        print("   Expires in: \(Int(expiresDate.timeIntervalSinceNow / 60)) minutes")
     }
 
     func clearSession() {

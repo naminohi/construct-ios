@@ -23,6 +23,7 @@ enum BuildConfiguration {
 
 // MARK: - Server Configuration
 struct ServerConfig {
+    // Primary server URL (from config)
     static var defaultWebsocketURL: String {
         do {
             var value: String = try ConfigurationManager.value(for: "APIBaseURL")
@@ -31,11 +32,35 @@ struct ServerConfig {
             value = value.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
             print("🔍 normalized APIBaseURL =", value)
             guard !value.isEmpty else { throw ConfigurationManager.Error.invalidValue }
+            
+            // Validate URL format
+            if let url = URL(string: value) {
+                print("✅ Valid URL: \(url.absoluteString)")
+                print("   Scheme: \(url.scheme ?? "none")")
+                print("   Host: \(url.host ?? "none")")
+                print("   Port: \(url.port?.description ?? "default")")
+            } else {
+                print("⚠️ Invalid URL format: \(value)")
+            }
+            
             return value
         } catch {
-            print("⚠️ Using fallback WebSocket URL due to config error:", error)
-            return "wss://api.konstruct.cc"
+            print("⚠️ Using fallback server URL due to config error:", error)
+            return "https://ams.konstruct.cc"
         }
+    }
+    
+    // Fallback server URL (Fly.io public domain)
+    static let fallbackServerURL = "https://construct-api-gateway.fly.dev"
+    
+    // List of server URLs to try (primary first, then fallback)
+    static var serverURLs: [String] {
+        let primary = defaultWebsocketURL
+        // Only add fallback if it's different from primary
+        if primary != fallbackServerURL {
+            return [primary, fallbackServerURL]
+        }
+        return [primary]
     }
 }
 
@@ -88,6 +113,8 @@ struct APIConstants {
     static let reconnectMaxDelay: TimeInterval = 30.0
     static let messageSendTimeout: TimeInterval = 20.0  // Timeout for stuck messages in sending state
     static let queueCheckInterval: TimeInterval = 5.0   // How often to check for stuck messages
+    static let longPollingTimeout: TimeInterval = 65.0  // > server timeout (60 max)
+    static let longPollingResourceTimeout: TimeInterval = 70.0  // Buffer for long polling resource timeout
 
     // Server Info (для отображения в UI)
     static var serverInfo: String {

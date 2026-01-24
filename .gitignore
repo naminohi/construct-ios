@@ -1,4 +1,4 @@
-# Rust
+# Rust (if used in future)
 target/
 **/*.rs.bk
 *.pdb

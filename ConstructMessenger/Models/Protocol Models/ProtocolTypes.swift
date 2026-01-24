@@ -17,6 +17,7 @@ struct ChatMessage: Codable, Identifiable {
     let ephemeralPublicKey: Data  // Binary 32 bytes (dh_public_key from EncryptedRatchetMessage)
     let messageNumber: UInt32  // message_number from EncryptedRatchetMessage
     let content: String  // Base64 encrypted content (ciphertext from EncryptedRatchetMessage)
+    let suiteId: UInt16
 
     let timestamp: UInt64
 }
@@ -41,6 +42,22 @@ struct RegistrationBundle: Codable {
 struct SignedPrekeyUpdate: Codable {
     let newPrekeyPublic: String
     let signature: String
+}
+
+struct PublicKeyBundleData: Codable {
+    let userId: String
+    let username: String
+    let identityPublic: String
+    let signedPrekeyPublic: String
+    let signature: String
+    let verifyingKey: String
+    let suiteId: UInt16
+}
+
+struct EncryptedMessageV3: Codable {
+  let recipientId: String
+  let suiteId: UInt16
+  let ciphertext: String
 }
 
 // MARK: - Profile Sharing

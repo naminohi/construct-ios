@@ -7,10 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BF1412502F1BEFE9005C56C7 /* DMMessagePack in Frameworks */ = {isa = PBXBuildFile; productRef = BF14124F2F1BEFE9005C56C7 /* DMMessagePack */; };
 		BF7098BF2F01D3C400CC6F04 /* libconstruct_core.a in Frameworks */ = {isa = PBXBuildFile; fileRef = BF7098BE2F01D3C400CC6F04 /* libconstruct_core.a */; };
 		BF7098C02F01D3C400CC6F04 /* libconstruct_core.a in Frameworks */ = {isa = PBXBuildFile; fileRef = BF7098BE2F01D3C400CC6F04 /* libconstruct_core.a */; };
 		BF80FA192EFF1716004D88E1 /* DMMessagePack in Frameworks */ = {isa = PBXBuildFile; productRef = BF80FA182EFF1716004D88E1 /* DMMessagePack */; };
-		BF80FA1B2EFF171D004D88E1 /* DMMessagePack in Frameworks */ = {isa = PBXBuildFile; productRef = BF80FA1A2EFF171D004D88E1 /* DMMessagePack */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -62,7 +62,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				BF80FA1B2EFF171D004D88E1 /* DMMessagePack in Frameworks */,
+				BF1412502F1BEFE9005C56C7 /* DMMessagePack in Frameworks */,
 				BF7098BF2F01D3C400CC6F04 /* libconstruct_core.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -126,7 +126,7 @@
 			);
 			name = ConstructMessenger;
 			packageProductDependencies = (
-				BF80FA1A2EFF171D004D88E1 /* DMMessagePack */,
+				BF14124F2F1BEFE9005C56C7 /* DMMessagePack */,
 			);
 			productName = "Construct Messenger";
 			productReference = BF103A6F2EED889800324CEA /* ConstructMessenger.app */;
@@ -377,27 +377,29 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = ConstructMessenger/ConstructMessenger.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 54;
+				CURRENT_PROJECT_VERSION = 59;
 				DEVELOPMENT_TEAM = PK2473XF3P;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = (
-					"$(PROJECT_DIR)/ConstructMessenger",
-					"$(PROJECT_DIR)/packages/core/bindings/ios",
-				);
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/ConstructMessenger";
 				INFOPLIST_FILE = ConstructMessenger/Info.plist;
 				INFOPLIST_KEY_BGTaskSchedulerPermittedIdentifiers = "com.construct.message-refresh com.construct.maintenance";
 				INFOPLIST_KEY_CFBundleDisplayName = Konstruct;
-				INFOPLIST_KEY_DEFAULT_SERVER_URL = "wss://api.konstruct.cc";
+				INFOPLIST_KEY_DEFAULT_SERVER_URL = "https://ams.kostruct.cc";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
-				INFOPLIST_KEY_NSCameraUsageDescription = "Camera access is needed to scan QR codes for adding verified contacts";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Construct Messenger needs access to your camera to send photos and videos.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Construct Messenger needs access to your local network to check network connectivity and ensure reliable message delivery.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Construct Messenger needs access to your microphone to record and send voice messages.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Construct Messenger needs permission to save photos and videos to your library.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Construct Messenger needs access to your photo library to send photos and videos.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UIBackgroundModes = "fetch remote-notification";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UIUserInterfaceStyle = Automatic;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -408,7 +410,7 @@
 					"$(PROJECT_DIR)/target/aarch64-apple-ios/release",
 					"$(PROJECT_DIR)/target/aarch64-apple-ios-sim/release",
 				);
-				MARKETING_VERSION = 0.5.11;
+				MARKETING_VERSION = 0.6.6;
 				PRODUCT_BUNDLE_IDENTIFIER = maximeliseyev.constructmessenger;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -433,27 +435,29 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = ConstructMessenger/ConstructMessenger.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 54;
+				CURRENT_PROJECT_VERSION = 59;
 				DEVELOPMENT_TEAM = PK2473XF3P;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = (
-					"$(PROJECT_DIR)/ConstructMessenger",
-					"$(PROJECT_DIR)/packages/core/bindings/ios",
-				);
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/ConstructMessenger";
 				INFOPLIST_FILE = ConstructMessenger/Info.plist;
 				INFOPLIST_KEY_BGTaskSchedulerPermittedIdentifiers = "com.construct.message-refresh com.construct.maintenance";
 				INFOPLIST_KEY_CFBundleDisplayName = Konstruct;
-				INFOPLIST_KEY_DEFAULT_SERVER_URL = "wss://api.konstruct.cc";
+				INFOPLIST_KEY_DEFAULT_SERVER_URL = "https://ams.kostruct.cc";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
-				INFOPLIST_KEY_NSCameraUsageDescription = "Camera access is needed to scan QR codes for adding verified contacts";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Construct Messenger needs access to your camera to send photos and videos.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Construct Messenger needs access to your local network to check network connectivity and ensure reliable message delivery.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Construct Messenger needs access to your microphone to record and send voice messages.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Construct Messenger needs permission to save photos and videos to your library.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Construct Messenger needs access to your photo library to send photos and videos.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UIBackgroundModes = "fetch remote-notification";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UIUserInterfaceStyle = Automatic;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -464,7 +468,7 @@
 					"$(PROJECT_DIR)/target/aarch64-apple-ios/release",
 					"$(PROJECT_DIR)/target/aarch64-apple-ios-sim/release",
 				);
-				MARKETING_VERSION = 0.5.11;
+				MARKETING_VERSION = 0.6.6;
 				PRODUCT_BUNDLE_IDENTIFIER = maximeliseyev.constructmessenger;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -580,12 +584,12 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		BF80FA182EFF1716004D88E1 /* DMMessagePack */ = {
+		BF14124F2F1BEFE9005C56C7 /* DMMessagePack */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = BF8A970A2EFF167E009C5EF7 /* XCRemoteSwiftPackageReference "msgpack-swift" */;
 			productName = DMMessagePack;
 		};
-		BF80FA1A2EFF171D004D88E1 /* DMMessagePack */ = {
+		BF80FA182EFF1716004D88E1 /* DMMessagePack */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = BF8A970A2EFF167E009C5EF7 /* XCRemoteSwiftPackageReference "msgpack-swift" */;
 			productName = DMMessagePack;

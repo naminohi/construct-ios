@@ -10,10 +10,12 @@ import CoreData
 
 struct MainTabView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
+    @EnvironmentObject var chatsViewModel: ChatsViewModel
 
     var body: some View {
         TabView {
             ChatsListView()
+                .environmentObject(chatsViewModel)
                 .tabItem {
                     Label("chats", systemImage: "message")
                 }
@@ -29,11 +31,20 @@ struct MainTabView: View {
 #Preview {
     let container = PreviewHelpers.createPreviewContainer()
     let context = container.viewContext
+    
+    // ✅ Ensure context is ready before using it
+    guard context.persistentStoreCoordinator != nil else {
+        fatalError("Preview Core Data context not ready")
+    }
+    
     let authViewModel = AuthViewModel(context: context)
     authViewModel.isAuthenticated = true
     authViewModel.currentUserId = "me"
     authViewModel.currentUsername = "john_doe"
     authViewModel.currentDisplayName = "John Doe"
+    
+    let chatsViewModel = ChatsViewModel()
+    chatsViewModel.setContext(context)
 
     // Create sample chats
     let user1 = PreviewHelpers.createSampleUser(context: context, id: "user1", username: "alice", displayName: "Alice")
@@ -45,4 +56,5 @@ struct MainTabView: View {
     return MainTabView()
         .environment(\.managedObjectContext, context)
         .environmentObject(authViewModel)
+        .environmentObject(chatsViewModel)
 }

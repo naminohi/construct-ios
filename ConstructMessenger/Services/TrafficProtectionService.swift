@@ -162,31 +162,9 @@ class TrafficProtectionService: ObservableObject {
         // Generate dummy message
         let dummyData = manager.generateDummy()
 
-        // Send to WebSocketManager
-        Task {
-            await sendDummyToServer(dummyData)
-        }
-    }
-
-    /// Send dummy message through WebSocketManager
-    private func sendDummyToServer(_ data: [UInt8]) async {
-        // Check if WebSocket is connected
-        guard WebSocketManager.shared.isConnected else {
-            Log.debug("⚠️ WebSocket not connected, skipping dummy", category: LogCategory.trafficProtection.name)
-            return
-        }
-
-        // Convert to Base64 string for proper MessagePack serialization
-        let dummyData = Data(data)
-        let payloadBase64 = dummyData.base64EncodedString()
-
-        // Encode as ClientMessage.dummy
-        let dummyMessage = ClientMessage.dummy(DummyMessageData(payload: payloadBase64))
-
-        // Send through WebSocket
-        // WebSocketManager is not @MainActor, so we can call directly
-        WebSocketManager.shared.send(dummyMessage)
-        Log.debug("📤 Dummy message sent (\(dummyData.count) bytes)", category: LogCategory.trafficProtection.name)
+        // ✅ Cover traffic disabled - REST API doesn't support dummy messages
+        // TODO: Implement REST API endpoint for cover traffic if needed
+        Log.debug("⚠️ Cover traffic disabled (no REST API support), skipping dummy (\(dummyData.count) bytes)", category: LogCategory.trafficProtection.name)
     }
 
     // MARK: - Real Message Recording

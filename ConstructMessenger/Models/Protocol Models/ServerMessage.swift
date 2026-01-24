@@ -146,14 +146,6 @@ struct ConnectSuccessData: Codable {
     let username: String
 }
 
-struct PublicKeyBundleData: Codable {
-    let userId: String
-    let username: String
-    let identityPublic: String
-    let signedPrekeyPublic: String
-    let signature: String
-    let verifyingKey: String
-}
 
 struct AckData: Codable {
     let messageId: String

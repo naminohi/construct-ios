@@ -1,0 +1,170 @@
+//
+//  ConnectionStatusManager.swift
+//  Construct Messenger
+//
+//  Manages connection status for REST API architecture
+//  Replaces WebSocket-based connection status tracking
+//
+
+import Foundation
+import Combine
+
+/// Manages and publishes connection status for the app
+/// In REST architecture, connection status is based on:
+/// 1. Network reachability (device has internet)
+/// 2. Last API request success/failure
+/// 3. Session validity
+class ConnectionStatusManager: ObservableObject {
+    static let shared = ConnectionStatusManager()
+
+    /// Current connection status
+    @Published var connectionStatus: ConnectionStatus = .unknown
+
+    /// Convenience property for checking if connected
+    var isConnected: Bool {
+        connectionStatus == .connected
+    }
+
+    /// Last successful API request timestamp
+    @Published private(set) var lastSuccessfulRequest: Date?
+
+    /// Last error message if any
+    @Published private(set) var lastError: String?
+
+    private var cancellables = Set<AnyCancellable>()
+    private let reachabilityManager = NetworkReachabilityManager.shared
+
+    enum ConnectionStatus: Equatable {
+        case connected
+        case disconnected
+        case connecting
+        case unknown
+
+        var displayText: String {
+            switch self {
+            case .connected: return "Connected"
+            case .disconnected: return "Disconnected"
+            case .connecting: return "Connecting..."
+            case .unknown: return "Unknown"
+            }
+        }
+
+        var localizedKey: String {
+            switch self {
+            case .connected: return "connected"
+            case .disconnected: return "disconnected"
+            case .connecting: return "connecting"
+            case .unknown: return "unknown"
+            }
+        }
+    }
+
+    private init() {
+        setupReachabilityObserving()
+
+        // Initial status based on network reachability
+        // If network is reachable, we're in "connecting" state until first successful request
+        // If network is not reachable, we're "disconnected"
+        if reachabilityManager.isReachable {
+            connectionStatus = .connecting
+            Log.info("🔄 ConnectionStatusManager initialized: Connecting (network reachable)", category: "ConnectionStatus")
+        } else {
+            connectionStatus = .disconnected
+            Log.info("🔴 ConnectionStatusManager initialized: Disconnected (no network)", category: "ConnectionStatus")
+        }
+    }
+
+    // MARK: - Setup
+
+    private func setupReachabilityObserving() {
+        // Observe network reachability changes
+        reachabilityManager.$isReachable
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] isReachable in
+                self?.handleReachabilityChange(isReachable: isReachable)
+            }
+            .store(in: &cancellables)
+    }
+
+    // MARK: - Status Updates
+
+    private func handleReachabilityChange(isReachable: Bool) {
+        let oldStatus = connectionStatus
+        
+        if !isReachable {
+            connectionStatus = .disconnected
+            lastError = "No network connection"
+        } else if connectionStatus == .disconnected {
+            // Network is back, but we need to verify server connectivity
+            connectionStatus = .connecting
+            lastError = nil
+        }
+        
+        if oldStatus != connectionStatus {
+            Log.info("🌐 Network reachability changed: \(oldStatus.displayText) -> \(connectionStatus.displayText)", category: "ConnectionStatus")
+        }
+    }
+
+    /// Call this when an API request succeeds
+    func markRequestSucceeded() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            let oldStatus = self.connectionStatus
+            self.lastSuccessfulRequest = Date()
+            self.lastError = nil
+            self.connectionStatus = .connected
+            
+            if oldStatus != .connected {
+                Log.info("🟢 Connection status changed: \(oldStatus.displayText) -> Connected", category: "ConnectionStatus")
+            }
+        }
+    }
+
+    /// Call this when an API request fails
+    func markRequestFailed(error: String? = nil) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+
+            let oldStatus = self.connectionStatus
+            self.lastError = error
+
+            // Only mark as disconnected if network is unreachable
+            // or if we've had multiple consecutive failures
+            if !self.reachabilityManager.isReachable {
+                self.connectionStatus = .disconnected
+            } else {
+                // Network is reachable but request failed
+                // This could be a temporary server issue
+                // Keep status as connecting to indicate we're trying
+                if self.connectionStatus == .connected {
+                    self.connectionStatus = .connecting
+                }
+            }
+            
+            if oldStatus != self.connectionStatus {
+                Log.info("🔴 Connection status changed: \(oldStatus.displayText) -> \(self.connectionStatus.displayText)", category: "ConnectionStatus")
+                if let error = error {
+                    Log.info("   Error: \(error)", category: "ConnectionStatus")
+                }
+            }
+        }
+    }
+
+    /// Call this when starting to connect/check server
+    func markConnecting() {
+        DispatchQueue.main.async { [weak self] in
+            if self?.connectionStatus != .connected {
+                self?.connectionStatus = .connecting
+            }
+        }
+    }
+
+    /// Check if we should consider the connection stale
+    /// (no successful request in the last N seconds)
+    func isConnectionStale(threshold: TimeInterval = 60) -> Bool {
+        guard let lastRequest = lastSuccessfulRequest else {
+            return true
+        }
+        return Date().timeIntervalSince(lastRequest) > threshold
+    }
+}

@@ -136,28 +136,13 @@ class MediaUploadService {
     
     // MARK: - Token Request
     
-    /// Request upload token from server via WebSocket
+    /// Request upload token from server via REST API
     func requestUploadToken() async throws -> MediaTokenData {
-        let requestId = UUID().uuidString
-        
-        // Send request
-        let request = ClientMessage.requestMediaToken(RequestMediaTokenData(requestId: requestId))
-        WebSocketManager.shared.send(request)
-        
-        // Wait for response with timeout
-        return try await withCheckedThrowingContinuation { continuation in
-            queue.async(flags: .barrier) {
-                self.pendingTokenRequests[requestId] = continuation
-            }
-            
-            // Timeout after 10 seconds
-            DispatchQueue.global().asyncAfter(deadline: .now() + 10) { [weak self] in
-                self?.queue.async(flags: .barrier) {
-                    if let pending = self?.pendingTokenRequests.removeValue(forKey: requestId) {
-                        pending.resume(throwing: MediaUploadError.tokenTimeout)
-                    }
-                }
-            }
+        // ✅ FIXED: Use REST API instead of WebSocket
+        do {
+            return try await RestAPIClient.shared.requestMediaToken()
+        } catch {
+            throw MediaUploadError.tokenRequestFailed(error.localizedDescription)
         }
     }
     

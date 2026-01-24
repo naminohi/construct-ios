@@ -22,11 +22,31 @@ struct Construct_MessengerApp: App {
             description.shouldMigrateStoreAutomatically = true
         }
 
+        // ✅ FIX: Wait for persistent stores to load before returning container
+        // This ensures persistentStoreCoordinator is ready when we use the context
+        var loadError: Error?
+        let semaphore = DispatchSemaphore(value: 0)
+
         container.loadPersistentStores { description, error in
             if let error = error {
-                fatalError("Unable to load persistent stores: \(error)")
+                loadError = error
+                print("❌ Failed to load persistent stores: \(error)")
+            } else {
+                print("✅ Persistent stores loaded successfully")
             }
+            semaphore.signal()
         }
+
+        // Wait for stores to load (with timeout)
+        let timeout = semaphore.wait(timeout: .now() + 10)
+        if timeout == .timedOut {
+            fatalError("Timeout waiting for persistent stores to load")
+        }
+
+        if let error = loadError {
+            fatalError("Unable to load persistent stores: \(error)")
+        }
+
         return container
     }()
 

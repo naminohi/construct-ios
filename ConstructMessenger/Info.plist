@@ -3,52 +3,32 @@
 <plist version="1.0">
 <dict>
 	<key>APIBaseURL</key>
-	<string>wss://api.konstruct.cc</string>
-
-	<!-- Privacy - Local Network Usage Description -->
+	<string>https://ams.konstruct.cc</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Construct Messenger needs access to your local network to check network connectivity and ensure reliable message delivery.</string>
-
-	<!-- Privacy - Camera Usage Description (if needed for future features) -->
 	<key>NSCameraUsageDescription</key>
 	<string>Construct Messenger needs access to your camera to send photos and videos.</string>
-
-	<!-- Privacy - Photo Library Usage Description -->
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Construct Messenger needs access to your photo library to send photos and videos.</string>
-
-	<!-- Privacy - Photo Library Add Usage Description -->
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Construct Messenger needs permission to save photos and videos to your library.</string>
-
-	<!-- Privacy - Microphone Usage Description (if needed for voice messages) -->
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Construct Messenger needs access to your microphone to record and send voice messages.</string>
-
-	<!-- Privacy - Notifications (User Notifications) -->
 	<key>NSUserNotificationsUsageDescription</key>
 	<string>Construct Messenger sends you notifications for new messages.</string>
-
-	<!-- Support dark mode -->
 	<key>UIUserInterfaceStyle</key>
 	<string>Automatic</string>
-
-	<!-- Background modes -->
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>
 		<string>processing</string>
 		<string>remote-notification</string>
 	</array>
-
-	<!-- Background Task Scheduler identifiers -->
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>com.construct.message-refresh</string>
 		<string>com.construct.maintenance</string>
 	</array>
-
-	<!-- Support all orientations on iPhone -->
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
@@ -56,8 +36,6 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
-
-	<!-- Support all orientations on iPad -->
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

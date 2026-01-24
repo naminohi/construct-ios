@@ -47,6 +47,7 @@ extension Message {
     @NSManaged public var toUserId: String
     @NSManaged public var encryptedContent: String
     @NSManaged public var decryptedContent: String?
+    @NSManaged public var suiteId: UInt16
     @NSManaged public var timestamp: Date
     @NSManaged public var isSentByMe: Bool
     @NSManaged public var deliveryStatusRaw: Int16

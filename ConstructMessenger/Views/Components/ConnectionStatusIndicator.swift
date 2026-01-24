@@ -9,12 +9,12 @@ import SwiftUI
 
 /// Compact connection status indicator (colored dot in navigation bar)
 struct ConnectionStatusIndicator: View {
-    @ObservedObject var webSocketManager = WebSocketManager.shared
+    @ObservedObject var connectionManager = ConnectionStatusManager.shared
 
     var body: some View {
         ZStack {
-            // Outer ring for reconnecting animation
-            if case .reconnecting = webSocketManager.connectionStatus {
+            // Outer ring for connecting animation
+            if connectionManager.connectionStatus == .connecting {
                 Circle()
                     .stroke(indicatorColor.opacity(0.3), lineWidth: 2)
                     .frame(width: 16, height: 16)
@@ -35,13 +35,15 @@ struct ConnectionStatusIndicator: View {
     }
 
     private var indicatorColor: Color {
-        switch webSocketManager.connectionStatus {
+        switch connectionManager.connectionStatus {
         case .connected:
             return .green
         case .disconnected:
             return .red
-        case .reconnecting:
+        case .connecting:
             return .orange
+        case .unknown:
+            return .gray
         }
     }
 

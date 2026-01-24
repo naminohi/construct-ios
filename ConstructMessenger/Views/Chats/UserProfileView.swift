@@ -165,7 +165,6 @@ struct UserProfileView: View {
     }
     
     private func handleShareToggle(_ share: Bool) {
-        guard let currentUserId = SessionManager.shared.currentUserId else { return }
         
         if share {
             // Share profile with user

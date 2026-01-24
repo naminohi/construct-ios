@@ -71,39 +71,24 @@ Construct Messenger is a modern **end-to-end encrypted** messenger built on:
 
 ### Building the iOS App
 
+**Note:** Ядро `construct-core` теперь находится в отдельном репозитории `~/Code/construct-core/`.
+
 ```bash
-# 1. Build the Rust library
-cd packages/core
-cargo build --release --target aarch64-apple-ios
+# 1. Generate Swift bindings (автоматически находит ~/Code/construct-core)
+./generate_swift_bindings.sh
 
-# 2. Generate Swift bindings
-uniffi-bindgen generate \
-  --library ../../target/aarch64-apple-ios/release/libconstruct_core.a \
-  --language swift \
-  --out-dir bindings/swift
-
-# 3. Copy to the Xcode project
-cp ../../target/aarch64-apple-ios/release/libconstruct_core.a ../../
-cp bindings/swift/construct_core.swift ../../ConstructMessenger/
-cp bindings/swift/construct_coreFFI.h ../../ConstructMessenger/
-
-# 4. Open Xcode and run
-open ../../ConstructMessenger.xcodeproj
+# 2. Open Xcode and run
+open ConstructMessenger.xcodeproj
 ```
+
+Скрипт `generate_swift_bindings.sh` автоматически:
+- Находит ядро в `~/Code/construct-core/`
+- Собирает библиотеку для нужных архитектур
+- Генерирует Swift биндинги в `ConstructMessenger/`
 
 ### Running the Server
 
-```bash
-# 1. Set up PostgreSQL
-createdb construct_messenger
-
-# 2. Run migrations
-cd packages/server
-sqlx migrate run
-
-# 3. Start the server
-cargo run --release
-```
+**Note:** Сервер находится в отдельном репозитории. См. документацию сервера для инструкций по запуску.
 
 ---
 
@@ -163,40 +148,24 @@ Prologue = "X3DH" (4 bytes) || suite_id (2 bytes, little-endian)
 
 ## 🛠️ Project Structure
 
+**Note:** Ядро `construct-core` находится в отдельном репозитории `~/Code/construct-core/`.
+
 ```
 construct-messenger/
-│
-├── packages/
-│   ├── core/               # 🦀 Rust cryptographic core
-│   │   ├── src/
-│   │   │   ├── crypto/    # Cryptographic modules
-│   │   │   │   ├── classic_suite.rs
-│   │   │   │   ├── crypto_provider.rs
-│   │   │   │   ├── double_ratchet.rs
-│   │   │   │   └── x3dh.rs
-│   │   │   ├── uniffi_bindings.rs  # UniFFI wrapper
-│   │   │   └── construct_core.udl  # UniFFI interface
-│   │   ├── Cargo.toml
-│   │   └── build.rs
-│   │
-│   └── server/             # 🦀 Rust WebSocket server
-│       ├── src/
-│       │   ├── handlers/  # Message handlers
-│       │   ├── db.rs      # PostgreSQL
-│       │   └── message.rs # Protocol types
-│       └── Cargo.toml
 │
 ├── ConstructMessenger/     # 📱 iOS Swift application
 │   ├── ViewModels/        # MVVM view models
 │   ├── Views/             # SwiftUI views
 │   ├── Security/
-│   │   └── CryptoManager.swift  # Thin wrapper
+│   │   └── CryptoManager.swift  # UniFFI wrapper around construct-core
 │   ├── Networking/
 │   │   └── WebSocketManager.swift
-│   └── Models/            # Core Data models
+│   ├── Models/            # Core Data models
+│   ├── construct_core.swift      # Generated Swift bindings
+│   └── construct_coreFFI.h       # Generated C header
 │
-├── libconstruct_core.a    # Compiled Rust library
-└── README.md              # 📖 This file
+├── generate_swift_bindings.sh    # Script to generate Swift bindings
+└── README.md                     # 📖 This file
 ```
 
 ---
@@ -205,8 +174,10 @@ construct-messenger/
 
 ### Rust Core
 
+Ядро тестируется в репозитории `~/Code/construct-core/`:
+
 ```bash
-cd packages/core
+cd ~/Code/construct-core
 cargo test --all-features
 ```
 
@@ -214,13 +185,6 @@ cargo test --all-features
 
 ```bash
 # In Xcode: ⌘U (Run Tests)
-```
-
-### Server
-
-```bash
-cd packages/server
-cargo test
 ```
 
 ---

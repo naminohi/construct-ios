@@ -12,6 +12,7 @@ struct ChatView: View {
     @Environment(\.managedObjectContext) private var viewContext
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: ChatViewModel  // ✅ FIX: StateObject persists across view updates
+    @ObservedObject private var connectionManager = ConnectionStatusManager.shared
     @State private var messageText = ""
     @State private var replyingTo: Message?
     @State private var showingUserProfile = false
@@ -237,7 +238,7 @@ struct ChatView: View {
             statusBannerRow(text: NSLocalizedString("sending", comment: ""), color: .secondary)
         } else if !viewModel.isSessionReady {
             statusBannerRow(text: NSLocalizedString("initializing_secure_connection", comment: ""), color: .orange, showProgress: true)
-        } else if !WebSocketManager.shared.isConnected {
+        } else if !connectionManager.isConnected {
             statusBannerRow(text: NSLocalizedString("not_connected_to_server", comment: ""), color: .red)
         }
     }

@@ -15,14 +15,13 @@ NC='\033[0m' # No Color
 
 # Configuration
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CORE_PATH="$PROJECT_ROOT/packages/core"
 OUTPUT_DIR="$PROJECT_ROOT/ConstructMessenger"
-UDL_FILE="$CORE_PATH/src/construct_core.udl"
 
 # Default values
 BUILD_TYPE="release"
 ARCHITECTURES=("aarch64-apple-ios-sim")  # Default to iOS simulator
 CLEAN_BUILD=false
+FORCE_REBUILD=false  # cargo clean + clear DerivedData
 VERBOSE=false
 
 # Helper functions
@@ -40,6 +39,36 @@ print_warning() {
 
 print_error() {
     echo -e "${RED}✗${NC} $1"
+}
+
+# Find construct-core path
+find_construct_core() {
+    # Try to find construct-core: first check ~/Code/construct-core, then sibling directory, then local path
+    local home_core="$HOME/Code/construct-core"
+    if [ -d "$home_core" ]; then
+        # Primary location: ~/Code/construct-core
+        echo "$home_core"
+    elif [ -d "$PROJECT_ROOT/../construct-core" ]; then
+        # Sibling directory (common during development)
+        echo "$PROJECT_ROOT/../construct-core"
+    elif [ -d "$PROJECT_ROOT/packages/core" ]; then
+        # Local path (fallback for old setup)
+        echo "$PROJECT_ROOT/packages/core"
+    else
+        # Try to clone from git if not found
+        print_warning "construct-core not found locally. Cloning from git..."
+        local temp_path="$PROJECT_ROOT/.construct-core-temp"
+        if [ ! -d "$temp_path" ]; then
+            git clone --depth 1 https://github.com/maximeliseyev/construct-core.git "$temp_path" || {
+                print_error "Failed to clone construct-core. Please ensure you have access to the repository."
+                print_error "Alternatively, you can:"
+                print_error "  1. Clone construct-core manually to ../construct-core"
+                print_error "  2. Or use git submodule: git submodule add https://github.com/maximeliseyev/construct-core.git packages/core"
+                exit 1
+            }
+        fi
+        echo "$temp_path"
+    fi
 }
 
 print_header() {
@@ -69,6 +98,8 @@ OPTIONS:
     -A, --all-ios           Build for all iOS targets (device + simulators)
     -M, --all-macos         Build for all macOS targets
     -c, --clean             Clean build (remove old bindings first)
+    -f, --force             Force full rebuild (cargo clean + DerivedData)
+                            Use this to fix "UniFFI API checksum mismatch" errors
     -v, --verbose           Verbose output
 
 EXAMPLES:
@@ -114,6 +145,11 @@ while [[ $# -gt 0 ]]; do
             ;;
         -c|--clean)
             CLEAN_BUILD=true
+            shift
+            ;;
+        -f|--force)
+            FORCE_REBUILD=true
+            CLEAN_BUILD=true  # --force implies --clean
             shift
             ;;
         -v|--verbose)
@@ -173,6 +209,34 @@ clean_bindings() {
         find "$OUTPUT_DIR" -name "*.a" -o -name "*.dylib" -delete
         print_success "Removed $lib_count old library file(s)"
     fi
+
+    # Also remove library from project root
+    if [ -f "$PROJECT_ROOT/libconstruct_core.a" ]; then
+        rm -f "$PROJECT_ROOT/libconstruct_core.a"
+        print_success "Removed library from project root"
+    fi
+}
+
+# Force full rebuild (cargo clean + DerivedData)
+force_rebuild() {
+    print_header "Force Rebuild (fixing checksum mismatch)"
+
+    # 1. cargo clean in construct-core
+    print_info "Running cargo clean in $CORE_PATH..."
+    cd "$CORE_PATH"
+    cargo clean
+    print_success "Rust build cache cleared"
+
+    # 2. Clear Xcode DerivedData for this project
+    local derived_data=$(find ~/Library/Developer/Xcode/DerivedData -maxdepth 1 -name "ConstructMessenger-*" 2>/dev/null || true)
+    if [ -n "$derived_data" ]; then
+        rm -rf "$derived_data"
+        print_success "Cleared Xcode DerivedData"
+    else
+        print_info "No DerivedData found (already clean)"
+    fi
+
+    cd "$PROJECT_ROOT"
 }
 
 # Build Rust library for target
@@ -188,10 +252,12 @@ build_for_target() {
 
     cd "$CORE_PATH"
 
+    # ✅ IMPORTANT: Build library first - this ensures UniFFI scaffolding is generated
+    # The scaffolding must exist before we can generate Swift bindings
     if [ "$VERBOSE" = true ]; then
-        cargo build --lib --target "$target" $build_flag
+        cargo build --lib --target "$target" --features ios $build_flag
     else
-        cargo build --lib --target "$target" $build_flag 2>&1 | grep -v "Compiling\|Finished" || true
+        cargo build --lib --target "$target" --features ios $build_flag 2>&1 | grep -v "Compiling\|Finished" || true
     fi
 
     # Patch UniFFI generated files for Rust 1.82+ compatibility
@@ -218,22 +284,81 @@ generate_bindings() {
     print_info "Using UDL file: $UDL_FILE"
     print_info "Output directory: $OUTPUT_DIR"
 
-    # Try to use uniffi-bindgen from PATH first
-    if command -v uniffi-bindgen &> /dev/null; then
-        print_info "Using uniffi-bindgen from PATH"
-        uniffi-bindgen generate "$UDL_FILE" \
-            --language swift \
-            --out-dir "$OUTPUT_DIR"
-    else
-        print_info "Using cargo run for uniffi-bindgen"
-        cargo run --manifest-path "$CORE_PATH/Cargo.toml" \
-            --features=uniffi/cli \
-            --bin uniffi-bindgen -- \
-            generate "$UDL_FILE" \
-            --language swift \
-            --out-dir "$OUTPUT_DIR" \
-            ${VERBOSE:+--verbose}
+    # Ensure output directory exists
+    mkdir -p "$OUTPUT_DIR"
+    if [ ! -d "$OUTPUT_DIR" ]; then
+        print_error "Failed to create output directory: $OUTPUT_DIR"
+        exit 1
     fi
+
+    # Try to use uniffi-bindgen-cli (Rust version) first, then fallback to uniffi-bindgen
+    local bindgen_cmd=""
+    if command -v uniffi-bindgen-cli &> /dev/null; then
+        bindgen_cmd="uniffi-bindgen-cli"
+        print_info "Using uniffi-bindgen-cli (Rust CLI) from PATH"
+        $bindgen_cmd --version 2>/dev/null || true
+    elif command -v uniffi-bindgen &> /dev/null; then
+        bindgen_cmd="uniffi-bindgen"
+        print_info "Using uniffi-bindgen from PATH"
+        $bindgen_cmd --version 2>/dev/null || true
+    else
+        print_error "uniffi-bindgen-cli or uniffi-bindgen not found in PATH"
+        print_error "Please install it with: cargo install uniffi-bindgen-cli"
+        exit 1
+    fi
+    
+    # ✅ IMPORTANT: Verify that library was built before generating bindings
+    # UniFFI needs the compiled library to extract metadata
+    local lib_built=false
+    for arch in "${ARCHITECTURES[@]}"; do
+        local build_dir="release"
+        if [ "$BUILD_TYPE" == "debug" ]; then
+            build_dir="debug"
+        fi
+        local lib_path="$CORE_PATH/target/$arch/$build_dir/libconstruct_core.a"
+        if [ -f "$lib_path" ]; then
+            lib_built=true
+            break
+        fi
+    done
+    
+    if [ "$lib_built" = false ]; then
+        print_error "Library not found! Please build the library first."
+        exit 1
+    fi
+    
+    # Need to run from CORE_PATH directory for cargo metadata to work
+    cd "$CORE_PATH"
+    
+    # Generate bindings using LIBRARY MODE (not UDL mode)
+    # ✅ CRITICAL: Library mode reads metadata from compiled library, ensuring checksums match
+    # This is required because we use proc-macro exports in addition to UDL
+    local lib_path=""
+    for arch in "${ARCHITECTURES[@]}"; do
+        local build_dir="release"
+        if [ "$BUILD_TYPE" == "debug" ]; then
+            build_dir="debug"
+        fi
+        lib_path="$CORE_PATH/target/$arch/$build_dir/libconstruct_core.a"
+        if [ -f "$lib_path" ]; then
+            break
+        fi
+    done
+
+    print_info "Generating bindings with $bindgen_cmd in LIBRARY MODE..."
+    print_info "Using library: $lib_path"
+    $bindgen_cmd generate --library "$lib_path" \
+        --language swift \
+        --out-dir "$OUTPUT_DIR" || {
+        print_error "Failed to generate bindings with $bindgen_cmd"
+        print_error "Make sure:"
+        print_error "  1. The library is built (cargo build completed successfully)"
+        print_error "  2. uniffi-bindgen version matches uniffi version in Cargo.toml (0.30)"
+        print_error "  3. Library path exists: $lib_path"
+        exit 1
+    }
+    
+    cd "$PROJECT_ROOT"
 
     print_success "Swift bindings generated"
 }
@@ -267,15 +392,36 @@ verify_output() {
     ls -lh "$OUTPUT_DIR"/construct_core* 2>/dev/null | awk '{print "  " $9 " (" $5 ")"}'
 }
 
+# Cleanup temporary directory
+cleanup_temp() {
+    if [ -d "$PROJECT_ROOT/.construct-core-temp" ] && [ "$CORE_PATH" == "$PROJECT_ROOT/.construct-core-temp" ]; then
+        print_info "Cleaning up temporary construct-core clone..."
+        rm -rf "$PROJECT_ROOT/.construct-core-temp"
+    fi
+}
+
 # Main execution
 main() {
     print_header "Swift Bindings Generator for Construct Messenger"
 
+    # Find construct-core path (after functions are defined)
+    CORE_PATH=$(find_construct_core)
+    UDL_FILE="$CORE_PATH/src/construct_core.udl"
+
     print_info "Build type: $BUILD_TYPE"
     print_info "Targets: ${ARCHITECTURES[*]}"
+    print_info "Construct-core path: $CORE_PATH"
+    if [ "$FORCE_REBUILD" = true ]; then
+        print_warning "Force rebuild enabled (will run cargo clean)"
+    fi
 
     # Check dependencies
     check_dependencies
+
+    # Force rebuild if requested (fixes checksum mismatch)
+    if [ "$FORCE_REBUILD" = true ]; then
+        force_rebuild
+    fi
 
     # Clean if requested
     if [ "$CLEAN_BUILD" = true ]; then
@@ -294,10 +440,53 @@ main() {
     # Verify output
     verify_output
 
+    # Copy library to project root if it exists
+    copy_library_to_project_root
+
+    # Cleanup temporary directory if we cloned it
+    if [ "$CORE_PATH" == "$PROJECT_ROOT/.construct-core-temp" ]; then
+        print_info "Cleaning up temporary construct-core clone..."
+        rm -rf "$PROJECT_ROOT/.construct-core-temp"
+    fi
+    if [ "$CORE_PATH" == "$PROJECT_ROOT/.construct-core-temp" ]; then
+        cleanup_temp
+    fi
+
     # Final message
     echo ""
     print_success "✨ All done! Swift bindings are ready to use."
     echo ""
+}
+
+# Copy library to project root
+copy_library_to_project_root() {
+    print_header "Copying Library to Project Root"
+    
+    # Find the most recently built library
+    local latest_lib=""
+    local latest_time=0
+    
+    for arch in "${ARCHITECTURES[@]}"; do
+        local build_dir="release"
+        if [ "$BUILD_TYPE" == "debug" ]; then
+            build_dir="debug"
+        fi
+        local lib_path="$CORE_PATH/target/$arch/$build_dir/libconstruct_core.a"
+        if [ -f "$lib_path" ]; then
+            local lib_time=$(stat -f "%m" "$lib_path" 2>/dev/null || echo "0")
+            if [ "$lib_time" -gt "$latest_time" ]; then
+                latest_time=$lib_time
+                latest_lib="$lib_path"
+            fi
+        fi
+    done
+    
+    if [ -n "$latest_lib" ] && [ -f "$latest_lib" ]; then
+        cp "$latest_lib" "$PROJECT_ROOT/libconstruct_core.a"
+        print_success "Copied library to project root: $PROJECT_ROOT/libconstruct_core.a"
+    else
+        print_warning "Library not found, skipping copy"
+    fi
 }
 
 # Run main function

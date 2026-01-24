@@ -18,7 +18,6 @@ class AuthViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
 
-    private let wsManager = WebSocketManager.shared
     private var cancellables = Set<AnyCancellable>()
     private var sessionRestoreTimer: Timer?
     private var authOperationTimer: Timer?
@@ -31,6 +30,17 @@ class AuthViewModel: ObservableObject {
         self.viewContext = context
         setupSubscribers()
         startTokenRefreshMonitoring()  // ✅ FIXED: Monitor token expiration
+        setupSessionExpiredListener()  // ✅ NEW: Listen for session expiration from REST API
+    }
+    
+    // ✅ NEW: Listen for session expiration notifications from REST API
+    private func setupSessionExpiredListener() {
+        NotificationCenter.default.publisher(for: NSNotification.Name("SessionExpired"))
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.handleSessionExpired()
+            }
+            .store(in: &cancellables)
     }
 
     deinit {
@@ -38,19 +48,8 @@ class AuthViewModel: ObservableObject {
     }
 
     private func setupSubscribers() {
-        wsManager.messagePublisher
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] message in
-                self?.handleServerMessage(message)
-            }
-            .store(in: &cancellables)
-
-        wsManager.errorPublisher
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] error in
-                self?.handleConnectionError(error)
-            }
-            .store(in: &cancellables)
+        // ✅ WebSocket removed - using REST API only
+        // Session expiration is handled via setupSessionExpiredListener()
     }
 
     // MARK: - Session Management
@@ -83,12 +82,35 @@ class AuthViewModel: ObservableObject {
 
         isLoading = true
 
-        print("🔌 Connecting to WebSocket...")
-        // WebSocketManager will automatically send Connect message when connection is established
-        wsManager.connect()
-
-        startSessionRestoreTimeout()
-        print("✅ Session restore initiated, waiting for ConnectSuccess")
+        // ✅ FIXED: Verify connection to server with a quick poll request
+        // This will trigger markRequestSucceeded() and set connection status to .connected
+        Task {
+            do {
+                Log.info("📡 Verifying server connection with quick poll...", category: "AuthViewModel")
+                _ = try await RestAPIClient.shared.pollMessages(sinceId: nil, timeout: 0)
+                
+                await MainActor.run {
+                    self.isAuthenticated = true
+                    self.isLoading = false
+                    Log.info("✅ Session restored and server verified", category: "AuthViewModel")
+                }
+            } catch {
+                Log.error("⚠️ Server verification failed during restore: \(error)", category: "AuthViewModel")
+                
+                await MainActor.run {
+                    // Still mark as authenticated (we have valid token and local data)
+                    // Connection status will be handled by ConnectionStatusManager
+                    self.isAuthenticated = true
+                    self.isLoading = false
+                    Log.info("ℹ️ Session restored with local data (server unreachable)", category: "AuthViewModel")
+                }
+            }
+        }
+        
+        // Load user data from Core Data
+        loadUserFromCoreData(userId: userId)
+        
+        print("✅ Session restored successfully via REST API")
     }
 
     // ✅ FIXED: Monitor token expiration
@@ -119,53 +141,72 @@ class AuthViewModel: ObservableObject {
             return
         }
 
-        do {
-            // Step 1: Create BundleData using globally defined structs
-            let isoFormatter = ISO8601DateFormatter()
-            isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            
-            guard let suiteID = UInt16(registrationBundle.suiteId) else {
-                throw NSError(domain: "AuthViewModel", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid suiteId format"])
+        Task {
+            do {
+                // Step 1: Create BundleData using globally defined structs
+                let isoFormatter = ISO8601DateFormatter()
+                isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                
+                guard let suiteID = UInt16(registrationBundle.suiteId) else {
+                    throw NSError(domain: "AuthViewModel", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid suiteId format"])
+                }
+
+                let suite = SuiteKeyMaterial(
+                    suiteId: suiteID,
+                    identityKey: registrationBundle.identityPublic,
+                    signedPrekey: registrationBundle.signedPrekeyPublic,
+                    signedPrekeySignature: registrationBundle.signature,  // ✅ Include signature for signedPrekey
+                    oneTimePrekeys: [] // One-time keys are optional for the initial bundle.
+                )
+
+                let bundleData = BundleData(
+                    userId: "", // User ID is empty during registration.
+                    timestamp: isoFormatter.string(from: Date()),
+                    supportedSuites: [suite]
+                )
+
+                // Step 2: JSON-encode BundleData. This JSON string is what gets Base64-encoded into UploadableKeyBundle.bundleData.
+                let jsonEncoder = JSONEncoder()
+                jsonEncoder.outputFormatting = .sortedKeys
+                let bundleDataJSON = try jsonEncoder.encode(bundleData)
+                
+                // Step 2.5: Sign the BundleData JSON with Ed25519 signing key
+                // The signature from registrationBundle is for signed_prekey, not for BundleData
+                // We need to create a new signature for the BundleData JSON string
+                let bundleDataSignature = try CryptoManager.shared.signBundleData(bundleDataJSON)
+
+                // Step 3: Create the final UploadableKeyBundle.
+                let uploadableBundle = UploadableKeyBundle(
+                    masterIdentityKey: registrationBundle.verifyingKey,
+                    bundleData: bundleDataJSON.base64EncodedString(), // This is still Base64 encoded JSON string
+                    signature: bundleDataSignature
+                )
+
+                // Step 4: Send to server via REST API (new approach)
+                let result = try await RestAPIClient.shared.register(
+                    username: username,
+                    password: password,
+                    publicKey: uploadableBundle
+                )
+                
+                    // Handle success on main thread
+                    await MainActor.run {
+                        handleAuthSuccess(
+                            userId: result.userId,
+                            username: result.username,
+                            token: result.sessionToken,
+                            expires: result.expires
+                        )
+                        
+                        // ✅ REMOVED: WebSocket connection - using REST API only
+                    }
+            } catch {
+                await MainActor.run {
+                    cancelTimeouts()
+                    isLoading = false
+                    errorMessage = "Registration failed: \(error.localizedDescription)"
+                }
             }
-
-            let suite = SuiteKeyMaterial(
-                suiteId: suiteID,
-                identityKey: registrationBundle.identityPublic,
-                signedPrekey: registrationBundle.signedPrekeyPublic,
-                signedPrekeySignature: registrationBundle.signature,  // ✅ Include signature for signedPrekey
-                oneTimePrekeys: [] // One-time keys are optional for the initial bundle.
-            )
-
-            let bundleData = BundleData(
-                userId: "", // User ID is empty during registration.
-                timestamp: isoFormatter.string(from: Date()),
-                supportedSuites: [suite]
-            )
-
-            // Step 2: JSON-encode BundleData. This JSON string is what gets Base64-encoded into UploadableKeyBundle.bundleData.
-            let jsonEncoder = JSONEncoder()
-            jsonEncoder.outputFormatting = .sortedKeys
-            let bundleDataJSON = try jsonEncoder.encode(bundleData)
-            
-            // Step 2.5: Sign the BundleData JSON with Ed25519 signing key
-            // The signature from registrationBundle is for signed_prekey, not for BundleData
-            // We need to create a new signature for the BundleData JSON string
-            let bundleDataSignature = try CryptoManager.shared.signBundleData(bundleDataJSON)
-
-            // Step 3: Create the final UploadableKeyBundle.
-            let uploadableBundle = UploadableKeyBundle(
-                masterIdentityKey: registrationBundle.verifyingKey,
-                bundleData: bundleDataJSON.base64EncodedString(), // This is still Base64 encoded JSON string
-                signature: bundleDataSignature
-            )
-
-            // Step 4: Send to server. The publicKey is now the native UploadableKeyBundle object, and displayName is removed.
-            wsManager.connect()
-            wsManager.send(.register(RegisterData(username: username, password: password, publicKey: uploadableBundle)))
-            startAuthTimeout()
-        } catch {
-            errorMessage = "Failed to prepare registration data: \(error.localizedDescription)"
-            isLoading = false
         }
     }
 
@@ -173,31 +214,61 @@ class AuthViewModel: ObservableObject {
         isLoading = true
         errorMessage = nil
 
-
-
-        wsManager.connect()
-        wsManager.send(.login(LoginData(username: username, password: password)))
-        startAuthTimeout()
+        Task {
+            do {
+                // Login via REST API (new approach)
+                let result = try await RestAPIClient.shared.login(
+                    username: username,
+                    password: password
+                )
+                
+                    // Handle success on main thread
+                    await MainActor.run {
+                        handleAuthSuccess(
+                            userId: result.userId,
+                            username: result.username,
+                            token: result.sessionToken,
+                            expires: result.expires
+                        )
+                        
+                        // ✅ REMOVED: WebSocket connection - using REST API only
+                    }
+            } catch {
+                await MainActor.run {
+                    cancelTimeouts()
+                    isLoading = false
+                    errorMessage = "Login failed: \(error.localizedDescription)"
+                }
+            }
+        }
     }
 
     func logout() {
-        if let token = SessionManager.shared.sessionToken {
-            wsManager.send(.logout(LogoutData(sessionToken: token)))
+        Task {
+            // Logout via REST API
+            if let token = SessionManager.shared.sessionToken {
+                do {
+                    try await RestAPIClient.shared.logout(sessionToken: token)
+                } catch {
+                    Log.error("Logout API call failed: \(error.localizedDescription)", category: "Auth")
+                    // Continue with local logout even if API call fails
+                }
+            }
+            
+            await MainActor.run {
+                cancelTimeouts()
+                SessionManager.shared.clearSession()
+                
+                // Note: We keep the username in Keychain for convenience on next login
+                // If you want to clear it, uncomment the line below:
+                // KeychainManager.shared.deleteLastUsername()
+                
+                isAuthenticated = false
+                currentUserId = nil
+                currentUsername = nil
+                currentDisplayName = nil
+            }
         }
-        
-        cancelTimeouts()
-        SessionManager.shared.clearSession()
-        
-        // Note: We keep the username in Keychain for convenience on next login
-        // If you want to clear it, uncomment the line below:
-        // KeychainManager.shared.deleteLastUsername()
-        
-        isAuthenticated = false
-        currentUserId = nil
-        currentUsername = nil
-        currentDisplayName = nil
-        
-        wsManager.disconnect()
     }
     
     func deleteAccount(password: String) {
@@ -210,11 +281,22 @@ class AuthViewModel: ObservableObject {
         errorMessage = nil
         
         Log.info("🗑️ Requesting account deletion", category: "AuthViewModel")
-        let deleteAccountData = DeleteAccountData(sessionToken: token, password: password)
-        wsManager.send(.deleteAccount(deleteAccountData))
         
-        // Set timeout for account deletion request
-        startAuthTimeout()
+        Task {
+            do {
+                try await RestAPIClient.shared.deleteAccount(sessionToken: token, password: password)
+                
+                await MainActor.run {
+                    handleDeleteAccountSuccess()
+                }
+            } catch {
+                await MainActor.run {
+                    cancelTimeouts()
+                    isLoading = false
+                    errorMessage = "Account deletion failed: \(error.localizedDescription)"
+                }
+            }
+        }
     }
 
     // MARK: - Timeout Helpers
@@ -236,7 +318,6 @@ class AuthViewModel: ObservableObject {
         if isLoading && !isAuthenticated {
             isLoading = false
             errorMessage = "Connection timeout. Please check your internet and try again."
-            wsManager.disconnect()
             print("⏱️ Session restore timeout - showing login screen")
         }
     }
@@ -248,56 +329,25 @@ class AuthViewModel: ObservableObject {
         sessionRestoreTimer = nil
     }
 
-    // MARK: - Message & Error Handling
-    private func handleServerMessage(_ message: ServerMessage) {
-        cancelTimeouts()
-        isLoading = false
-        
-        switch message {
-        case .registerSuccess(let data):
-            handleAuthSuccess(userId: data.userId, username: data.username, token: data.sessionToken, expires: data.expires)
-
-        case .loginSuccess(let data):
-            handleAuthSuccess(userId: data.userId, username: data.username, token: data.sessionToken, expires: data.expires)
-
-        case .connectSuccess(let data):
-            handleConnectSuccess(userId: data.userId, username: data.username)
-
-        case .sessionExpired:
-            handleSessionExpired()
-
-        case .error(let data):
-            errorMessage = "Error (\(data.code)): \(data.message)"
-            
-        case .logoutSuccess:
-            // Client-side logout already handled
-            break
-            
-        case .deleteAccountSuccess:
-            handleDeleteAccountSuccess()
-
-        default:
-            // Other messages are not handled by this view model
-            break
-        }
-    }
-    
-    private func handleConnectionError(_ error: Error) {
-        cancelTimeouts()
-        let wasLoading = isLoading
-        isLoading = false
-        
-        // Only show error message if we're actively trying to authenticate and not already authenticated
-        // Don't show errors during automatic reconnection attempts when already authenticated
-        if wasLoading && !isAuthenticated {
-            errorMessage = error.localizedDescription
-        }
-    }
-
     // MARK: - State Updaters
+    // ✅ WebSocket message handling removed - using REST API only
     private func handleAuthSuccess(userId: String, username: String, token: String, expires: Int64) {
+        // ✅ DEBUG: Log token before saving
+        Log.info("💾 Saving session token (length: \(token.count), prefix: \(token.prefix(30))...)", category: "Auth")
+        
         // ✅ FIXED: Pass expires timestamp to SessionManager
         SessionManager.shared.saveSession(userId: userId, token: token, expires: expires)
+        
+        // ✅ DEBUG: Verify token was saved correctly
+        if let savedToken = SessionManager.shared.sessionToken {
+            if savedToken == token {
+                Log.info("✅ Token saved and verified correctly", category: "Auth")
+            } else {
+                Log.error("❌ Token mismatch! Original length: \(token.count), Saved length: \(savedToken.count)", category: "Auth")
+            }
+        } else {
+            Log.error("❌ Token not found after saving!", category: "Auth")
+        }
         
         // ✅ Save username to Keychain for autofill convenience
         KeychainManager.shared.saveLastUsername(username)
@@ -345,6 +395,18 @@ class AuthViewModel: ObservableObject {
         // Clear CoreData - delete all user's data
         let context = PersistenceController.shared.container.viewContext
         
+        // ✅ FIX: Check if persistent store coordinator is ready before accessing entities
+        guard context.persistentStoreCoordinator != nil else {
+            Log.info("⚠️ Core Data persistent store coordinator not ready, skipping data deletion", category: "AuthViewModel")
+            // Continue with logout even if Core Data isn't ready
+            isAuthenticated = false
+            currentUserId = nil
+            currentUsername = nil
+            currentDisplayName = nil
+            NotificationCenter.default.post(name: NSNotification.Name("AccountDeleted"), object: nil)
+            return
+        }
+        
         // Delete all chats and messages
         let chatFetchRequest: NSFetchRequest<Chat> = Chat.fetchRequest()
         if let chats = try? context.fetch(chatFetchRequest) {
@@ -368,10 +430,7 @@ class AuthViewModel: ObservableObject {
         } catch {
             Log.error("❌ Failed to delete user data from CoreData: \(error)", category: "AuthViewModel")
         }
-        
-        // Disconnect WebSocket
-        wsManager.disconnect()
-        
+
         // Reset auth state
         isAuthenticated = false
         currentUserId = nil
@@ -388,6 +447,12 @@ class AuthViewModel: ObservableObject {
     
     /// Finds or creates the User entity and loads local data into the AuthViewModel
     private func loadUserFromCoreData(userId: String) {
+        // ✅ FIX: Check if persistent store coordinator is ready before accessing entities
+        guard viewContext.persistentStoreCoordinator != nil else {
+            print("⚠️ Core Data persistent store coordinator not ready yet, skipping user load")
+            return
+        }
+        
         let fetchRequest: NSFetchRequest<User> = User.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "id == %@", userId)
         

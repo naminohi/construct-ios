@@ -19,6 +19,8 @@ struct ChatsListView: View {
     @State private var navigationPath = NavigationPath()
 
     init() {
+        // ✅ FIX: Create fetch request safely - fetchRequest() just creates the request object
+        // It doesn't access the coordinator until the fetch is actually executed
         let fetchRequest: NSFetchRequest<Chat> = Chat.fetchRequest()
         fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \Chat.lastMessageTime, ascending: false)]
 
@@ -132,6 +134,11 @@ struct ChatsListView: View {
 #Preview {
     let container = PreviewHelpers.createPreviewContainer()
     let context = container.viewContext
+    
+    // ✅ Ensure context is ready before using it
+    guard context.persistentStoreCoordinator != nil else {
+        fatalError("Preview Core Data context not ready")
+    }
 
     // Create sample data
     let user1 = PreviewHelpers.createSampleUser(context: context, id: "user1", username: "alice", displayName: "Alice")
@@ -141,8 +148,12 @@ struct ChatsListView: View {
     _ = PreviewHelpers.createSampleChat(context: context, with: user2)
 
     try? context.save()
+    
+    let chatsViewModel = ChatsViewModel()
+    chatsViewModel.setContext(context)
 
     return ChatsListView()
         .environment(\.managedObjectContext, context)
+        .environmentObject(chatsViewModel)
 }
 

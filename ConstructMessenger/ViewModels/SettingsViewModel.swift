@@ -45,6 +45,12 @@ class SettingsViewModel: ObservableObject {
     /// Loads avatar from the current user's User entity in Core Data
     private func loadAvatarFromCoreData() {
         guard let context = viewContext, !userId.isEmpty else { return }
+        
+        // ✅ FIX: Check if persistent store coordinator is ready before accessing entities
+        guard context.persistentStoreCoordinator != nil else {
+            print("⚠️ Core Data persistent store coordinator not ready, skipping avatar load")
+            return
+        }
 
         let fetchRequest: NSFetchRequest<User> = User.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "id == %@", userId)
@@ -60,6 +66,12 @@ class SettingsViewModel: ObservableObject {
     func saveAvatar(_ image: UIImage, authViewModel: AuthViewModel) {
         guard let context = viewContext, !userId.isEmpty else {
             print("⚠️ Cannot save avatar: context or userId missing")
+            return
+        }
+        
+        // ✅ FIX: Check if persistent store coordinator is ready before accessing entities
+        guard context.persistentStoreCoordinator != nil else {
+            print("⚠️ Core Data persistent store coordinator not ready, cannot save avatar")
             return
         }
 
@@ -96,6 +108,12 @@ class SettingsViewModel: ObservableObject {
     /// Saves display name to Core Data
     func saveDisplayName(_ name: String, authViewModel: AuthViewModel) {
         guard let context = viewContext, !userId.isEmpty else { return }
+        
+        // ✅ FIX: Check if persistent store coordinator is ready before accessing entities
+        guard context.persistentStoreCoordinator != nil else {
+            print("⚠️ Core Data persistent store coordinator not ready, cannot save display name")
+            return
+        }
 
         let trimmed = name.trimmingCharacters(in: .whitespaces)
 

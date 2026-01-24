@@ -30,7 +30,7 @@ class ChatViewModel: ObservableObject {
     let chat: Chat
     private var recipientBundle: (identityPublic: String, signedPrekeyPublic: String, signature: String, verifyingKey: String)?
 
-    private let wsManager = WebSocketManager.shared
+    private let connectionStatusManager = ConnectionStatusManager.shared
     private let messageQueueManager = MessageQueueManager.shared
     private var cancellables = Set<AnyCancellable>()
     private var viewContext: NSManagedObjectContext
@@ -84,19 +84,14 @@ class ChatViewModel: ObservableObject {
     }
 
     private func setupSubscribers() {
-        wsManager.messagePublisher
+        // ✅ Listen for connection status changes (REST API based)
+        // Incoming messages are received via long polling in ChatsViewModel
+        // and saved to Core Data, then picked up via NSManagedObjectContextObjectsDidChange
+        connectionStatusManager.$connectionStatus
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] message in
-                self?.handleServerMessage(message)
-            }
-            .store(in: &cancellables)
-
-        // ✅ FIX: Listen for connection status changes
-        wsManager.$isConnected
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] isConnected in
-                if isConnected {
-                    Log.info("✅ WebSocket reconnected - processing queued messages", category: "ChatViewModel")
+            .sink { [weak self] status in
+                if status == .connected {
+                    Log.info("✅ Network connected - processing queued messages", category: "ChatViewModel")
                     self?.sendQueuedMessages()
                 }
             }
@@ -158,7 +153,84 @@ class ChatViewModel: ObservableObject {
             }
         }
 
-        wsManager.send(.getPublicKey(GetPublicKeyData(userId: userId)))
+        // ✅ FIXED: Use REST API instead of WebSocket
+        Task {
+            do {
+                let publicKeyBundle = try await RestAPIClient.shared.getPublicKey(userId: userId)
+                
+                await MainActor.run {
+                    self.handlePublicKeyBundle(publicKeyBundle)
+                }
+            } catch {
+                await MainActor.run {
+                    Log.error("❌ Failed to fetch public key via REST: \(error.localizedDescription)", category: "ChatViewModel")
+                    self.errorMessage = "Failed to fetch public key: \(error.localizedDescription)"
+                    self.isSessionReady = false
+                }
+            }
+        }
+    }
+    
+    private func handlePublicKeyBundle(_ data: PublicKeyBundleData) {
+        Log.debug("📦 Received publicKeyBundle for userId: \(data.userId), chat.otherUser?.id: \(chat.otherUser?.id ?? "nil"), match: \(data.userId == chat.otherUser?.id)", category: "ChatViewModel")
+        if data.userId == chat.otherUser?.id {
+            // ✅ Update username if we have the user in Core Data
+            if let user = chat.otherUser {
+                user.username = data.username
+                user.displayName = data.username
+                try? viewContext.save()
+                Log.info("Updated username for user: \(data.username)", category: "ChatViewModel")
+            }
+
+            self.recipientBundle = (data.identityPublic, data.signedPrekeyPublic, data.signature, data.verifyingKey)
+            guard SessionManager.shared.currentUserId != nil else { return }
+            
+            // ✅ FIX: Proactively delete any stale session before starting a new one.
+            CryptoManager.shared.deleteSession(for: data.userId)
+            Log.info("🗑️ Proactively deleted any existing session for \(data.userId) before initialization.", category: "ChatViewModel")
+
+            // ✅ FIX: If we requested the keys, WE are the initiator
+            Log.info("🔑 Received public key bundle - we requested it, so we are INITIATOR", category: "ChatViewModel")
+
+            // ✅ Prevent self-session initialization
+            guard let currentUserId = SessionManager.shared.currentUserId else {
+                Log.error("❌ Cannot initialize session: currentUserId is nil", category: "ChatViewModel")
+                errorMessage = "Cannot initialize session: user not authenticated"
+                return
+            }
+            
+            Log.debug("🔍 Session init check - currentUserId: \(currentUserId), recipientId: \(data.userId)", category: "ChatViewModel")
+            
+            if data.userId == currentUserId {
+                Log.error("❌ Cannot initialize session with yourself: \(data.userId) == \(currentUserId)", category: "ChatViewModel")
+                errorMessage = "Cannot create a dialog with yourself"
+                return
+            }
+
+            do {
+                let bundleWithSuite = (
+                    identityPublic: data.identityPublic,
+                    signedPrekeyPublic: data.signedPrekeyPublic,
+                    signature: data.signature,
+                    verifyingKey: data.verifyingKey,
+                    suiteId: String(data.suiteId)
+                )
+                try CryptoManager.shared.initializeSession(for: data.userId, recipientBundle: bundleWithSuite)
+
+                isSessionReady = true
+                errorMessage = nil
+                Log.info("✅ Session initialized as INITIATOR for \(data.userId)", category: "ChatViewModel")
+
+                // Process any pending messages
+                processPendingMessages()
+
+            } catch {
+                let errorMsg = "Failed to initialize secure session: \(error.localizedDescription)"
+                errorMessage = errorMsg
+                isSessionReady = false
+                Log.error("❌ Failed to initialize session: \(error.localizedDescription)", category: "ChatViewModel")
+            }
+        }
     }
 
     // ✅ NEW: Load initial messages (last N messages)
@@ -401,7 +473,7 @@ class ChatViewModel: ObservableObject {
             return
         }
 
-        Log.info("✅ Session is ready, checking WebSocket connection...", category: "ChatViewModel")
+        Log.info("✅ Session is ready, sending via REST API...", category: "ChatViewModel")
 
         isSending = true
         errorMessage = nil
@@ -419,32 +491,14 @@ class ChatViewModel: ObservableObject {
                 ephemeralPublicKey: components.ephemeralPublicKey,  // Binary 32 bytes
                 messageNumber: components.messageNumber,
                 content: components.content,  // Base64(nonce || ciphertext_with_tag)
+                suiteId: components.suiteId,
                 timestamp: UInt64(Date().timeIntervalSince1970)
+                
             )
 
             Log.debug("📤 Sending message with ID: \(messageId)", category: "ChatViewModel")
             Log.debug("   Message number: \(components.messageNumber)", category: "ChatViewModel")
             Log.debug("   Content length: \(message.content.count) bytes", category: "ChatViewModel")
-
-            // ✅ FIX: Check WebSocket connection BEFORE saving as "sending"
-            let wsConnected = wsManager.isConnected
-            Log.info("🔌 WebSocket connected: \(wsConnected)", category: "ChatViewModel")
-
-            if !wsConnected {
-                Log.error("❌ WebSocket not connected - message will be queued", category: "ChatViewModel")
-                saveMessage(
-                    message,
-                    decryptedContent: text,
-                    isSentByMe: true,
-                    status: .queued,  // Save as QUEUED, not SENDING
-                    replyTo: replyTo
-                )
-                errorMessage = "Not connected. Message saved and will be sent when connection is restored."
-                isSending = false
-                return
-            }
-
-            Log.info("✅ WebSocket connected, saving message with .sending status", category: "ChatViewModel")
 
             // Save with .sending status
             saveMessage(
@@ -452,13 +506,41 @@ class ChatViewModel: ObservableObject {
                 decryptedContent: text,
                 isSentByMe: true,
                 status: .sending,
-                replyTo: replyTo
+                replyTo: replyTo,
+                suiteId: components.suiteId
             )
 
-            // Send through WebSocket with message ID tracking
-            Log.info("📮 Calling wsManager.send() for message: \(messageId)", category: "ChatViewModel")
-            wsManager.send(.sendMessage(message), messageId: messageId)
-            Log.info("✅ wsManager.send() completed", category: "ChatViewModel")
+            // ✅ Send through REST API (no WebSocket dependency)
+            Log.info("📮 Sending message via REST API: \(messageId)", category: "ChatViewModel")
+            Task {
+                do {
+                    let response = try await RestAPIClient.shared.sendMessage(
+                        recipientId: recipientId,
+                        ephemeralPublicKey: components.ephemeralPublicKey,
+                        messageNumber: components.messageNumber,
+                        content: components.content,
+                        timestamp: message.timestamp,
+                        suiteId: components.suiteId
+                    )
+                    
+                    await MainActor.run {
+                        // Update message status to sent
+                        updateMessageStatus(messageId: messageId, status: .sent)
+                        Log.info("✅ Message sent via REST API: \(response.messageId), status: \(response.status)", category: "ChatViewModel")
+                    }
+                } catch {
+                    await MainActor.run {
+                        if let networkError = error as? NetworkError,
+                           case .serverError(let message, let responseBody) = networkError {
+                            Log.error("❌ Failed to send message via REST: \(message)\nResponse: \(responseBody ?? "empty")", category: "ChatViewModel")
+                        } else {
+                            Log.error("❌ Failed to send message via REST: \(error.localizedDescription)", category: "ChatViewModel")
+                        }
+                        updateMessageStatus(messageId: messageId, status: .failed)
+                        errorMessage = "Failed to send message: \(error.localizedDescription)"
+                    }
+                }
+            }
 
         } catch {
             // ✅ Session was corrupted and auto-deleted by CryptoManager
@@ -478,8 +560,20 @@ class ChatViewModel: ObservableObject {
                 errorMessage = "Session expired, reinitializing..."
                 Log.info("📝 Message queued for retry after session reinitialization", category: "ChatViewModel")
 
-                // Request fresh public key bundle
-                wsManager.send(.getPublicKey(GetPublicKeyData(userId: toUserId)))
+                // ✅ FIXED: Request fresh public key bundle via REST API
+                Task {
+                    do {
+                        let publicKeyBundle = try await RestAPIClient.shared.getPublicKey(userId: toUserId)
+                        await MainActor.run {
+                            self.handlePublicKeyBundle(publicKeyBundle)
+                        }
+                    } catch {
+                        await MainActor.run {
+                            Log.error("❌ Failed to fetch public key for reinitialization: \(error.localizedDescription)", category: "ChatViewModel")
+                            errorMessage = "Failed to reinitialize session: \(error.localizedDescription)"
+                        }
+                    }
+                }
             } else {
                 errorMessage = "Failed to encrypt message: \(error.localizedDescription)"
                 Log.error("Failed to encrypt message: \(error.localizedDescription)", category: "ChatViewModel")
@@ -531,14 +625,45 @@ class ChatViewModel: ObservableObject {
                     ephemeralPublicKey: components.ephemeralPublicKey,
                     messageNumber: components.messageNumber,
                     content: components.content,
+                    suiteId: components.suiteId,
                     timestamp: UInt64(message.timestamp.timeIntervalSince1970)
+                    
                 )
 
                 message.deliveryStatus = .sending
                 message.retryCount += 1
                 try? viewContext.save()
 
-                wsManager.send(.sendMessage(chatMessage), messageId: message.id)
+                // ✅ FIXED: Send via REST API instead of WebSocket
+                Task {
+                    do {
+                        let response = try await RestAPIClient.shared.sendMessage(
+                            recipientId: recipientId,
+                            ephemeralPublicKey: components.ephemeralPublicKey,
+                            messageNumber: components.messageNumber,
+                            content: components.content,
+                            timestamp: UInt64(message.timestamp.timeIntervalSince1970),
+                            suiteId: components.suiteId
+                        )
+                        
+                        await MainActor.run {
+                            message.deliveryStatus = .sent
+                            try? self.viewContext.save()
+                            Log.debug("📮 Re-sent queued message via REST: \(message.id) (attempt \(message.retryCount))", category: "ChatViewModel")
+                        }
+                    } catch {
+                        await MainActor.run {
+                            if let networkError = error as? NetworkError,
+                               case .serverError(let message, let responseBody) = networkError {
+                                Log.error("❌ Failed to re-send queued message via REST: \(message)\nResponse: \(responseBody ?? "empty")", category: "ChatViewModel")
+                            } else {
+                                Log.error("Failed to re-send queued message via REST: \(error)", category: "ChatViewModel")
+                            }
+                            message.deliveryStatus = .failed
+                            try? self.viewContext.save()
+                        }
+                    }
+                }
                 messageQueueManager.markMessageAsSending(message.id)
                 Log.debug("📮 Re-sent queued message: \(message.id) (attempt \(message.retryCount))", category: "ChatViewModel")
 
@@ -573,136 +698,10 @@ class ChatViewModel: ObservableObject {
         Log.info("Retrying message (attempt \(message.retryCount))", category: "ChatViewModel")
     }
 
-    // MARK: - Handle Server Messages
-    private func handleServerMessage(_ message: ServerMessage) {
-        switch message {
-        case .publicKeyBundle(let data):
-            Log.debug("📦 Received publicKeyBundle for userId: \(data.userId), chat.otherUser?.id: \(chat.otherUser?.id ?? "nil"), match: \(data.userId == chat.otherUser?.id)", category: "ChatViewModel")
-            if data.userId == chat.otherUser?.id {
-                // ✅ Update username if we have the user in Core Data
-                if let user = chat.otherUser {
-                    user.username = data.username
-                    user.displayName = data.username
-                    try? viewContext.save()
-                    Log.info("Updated username for user: \(data.username)", category: "ChatViewModel")
-                }
-
-                self.recipientBundle = (data.identityPublic, data.signedPrekeyPublic, data.signature, data.verifyingKey)
-                guard SessionManager.shared.currentUserId != nil else { return }
-                
-                // ✅ FIX: Proactively delete any stale session before starting a new one.
-                // This handles cases where a session exists in the Rust core but not in the Swift
-                // session mapping, or any other conflict, preventing initialization failures.
-                CryptoManager.shared.deleteSession(for: data.userId)
-                Log.info("🗑️ Proactively deleted any existing session for \(data.userId) before initialization.", category: "ChatViewModel")
-
-                // ✅ FIX: If we requested the keys, WE are the initiator
-                // The fact that we're in ChatViewModel and requested getPublicKey
-                // means the user wants to start a conversation → we're the initiator
-                Log.info("🔑 Received public key bundle - we requested it, so we are INITIATOR", category: "ChatViewModel")
-
-                // ✅ Prevent self-session initialization
-                guard let currentUserId = SessionManager.shared.currentUserId else {
-                    Log.error("❌ Cannot initialize session: currentUserId is nil", category: "ChatViewModel")
-                    errorMessage = "Cannot initialize session: user not authenticated"
-                    return
-                }
-                
-                Log.debug("🔍 Session init check - currentUserId: \(currentUserId), recipientId: \(data.userId)", category: "ChatViewModel")
-                
-                if data.userId == currentUserId {
-                    Log.error("❌ Cannot initialize session with yourself: \(data.userId) == \(currentUserId)", category: "ChatViewModel")
-                    errorMessage = "Cannot create a dialog with yourself"
-                    return
-                }
-
-                do {
-                    let bundleWithSuite = (
-                        identityPublic: data.identityPublic,
-                        signedPrekeyPublic: data.signedPrekeyPublic,
-                        signature: data.signature,
-                        verifyingKey: data.verifyingKey,
-                        suiteId: "1"
-                    )
-                    try CryptoManager.shared.initializeSession(for: data.userId, recipientBundle: bundleWithSuite)
-
-                    isSessionReady = true
-                    errorMessage = nil
-                    Log.info("✅ Session initialized as INITIATOR for \(data.userId)", category: "ChatViewModel")
-
-                    // Process any pending messages
-                    processPendingMessages()
-
-                } catch {
-                    let errorMsg = "Failed to initialize secure session: \(error.localizedDescription)"
-                    errorMessage = errorMsg
-                    isSessionReady = false
-                    Log.error("❌ Failed to initialize session: \(error.localizedDescription)", category: "ChatViewModel")
-                    
-                    // Log detailed error for debugging
-                    Log.error("   userId: \(data.userId)", category: "ChatViewModel")
-                    Log.error("   identityPublic: \(data.identityPublic.prefix(20))...", category: "ChatViewModel")
-                    Log.error("   signedPrekeyPublic: \(data.signedPrekeyPublic.prefix(20))...", category: "ChatViewModel")
-                    Log.error("   verifyingKey: \(data.verifyingKey.prefix(20))...", category: "ChatViewModel")
-                    Log.error("   signature: \(data.signature.prefix(20))...", category: "ChatViewModel")
-                }
-            }
-        // ✅ REMOVED: .message handling - ChatsViewModel handles ALL incoming messages
-        // ChatViewModel only handles ACKs for sent messages
-        case .ack(let data):
-            handleAck(messageId: data.messageId, status: data.status)
-        case .error(let data):
-            self.errorMessage = data.message
-        default:
-            break
-        }
-    }
-    
-    private func handleAck(messageId: String, status: String) {
-        Log.info("📨 Received ACK for message: \(messageId), status: \(status)", category: "ChatViewModel")
-
-        // Map server status to delivery status
-        // "sent" - message is on server (recipient may be offline)
-        // "delivered" - message was delivered to recipient (they received it)
-        let deliveryStatus: DeliveryStatus = status == "delivered" ? .delivered : .sent
-        
-        // Mark as sent in MessageQueueManager
-        messageQueueManager.markMessageAsSent(messageId)
-        
-        // First, try to find the message by ID
-        let fetchRequest: NSFetchRequest<Message> = Message.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "id == %@", messageId)
-
-        if let message = try? viewContext.fetch(fetchRequest).first {
-            Log.info("✅ Found message by ID: \(messageId), updating status to: \(deliveryStatus)", category: "ChatViewModel")
-            updateMessageStatus(messageId: messageId, status: deliveryStatus)
-        } else {
-            Log.info("❌ Message not found by ID: \(messageId), trying to match by recent message", category: "ChatViewModel")
-
-            // Fallback: try to match by most recent message in sending/sent status
-            // This handles cases where message ID might not match exactly
-            let allMessagesRequest: NSFetchRequest<Message> = Message.fetchRequest()
-            allMessagesRequest.predicate = NSPredicate(format: "chat == %@ AND isSentByMe == YES", chat)
-            allMessagesRequest.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: false)]
-
-            if let allMessages = try? viewContext.fetch(allMessagesRequest) {
-                // Try to find message in sending or sent status (not yet delivered)
-                if let pendingMessage = allMessages.first(where: { 
-                    $0.deliveryStatus == .sending || $0.deliveryStatus == .sent 
-                }) {
-                    Log.info("🔄 Matching ACK to most recent pending message: \(pendingMessage.id)", category: "ChatViewModel")
-                    pendingMessage.deliveryStatus = deliveryStatus
-                    try? viewContext.save()
-                    // Messages will be reloaded via NotificationCenter observer
-                } else {
-                    Log.info("⚠️ No pending message found to match ACK", category: "ChatViewModel")
-                }
-            }
-        }
-    }
-
-    // ✅ REMOVED: handleIncomingMessage - ChatsViewModel handles ALL incoming messages
-    // ChatViewModel only displays messages already saved to Core Data
+    // ✅ NOTE: WebSocket removed - using REST API only
+    // Incoming messages are received via long polling in ChatsViewModel
+    // and saved to Core Data, then picked up via NSManagedObjectContextObjectsDidChange
+    // ACKs are received directly from REST API response when sending messages
 
     // MARK: - Core Data Operations
     // MARK: - Media Messages
@@ -881,19 +880,43 @@ class ChatViewModel: ObservableObject {
                 ephemeralPublicKey: components.ephemeralPublicKey,
                 messageNumber: components.messageNumber,
                 content: components.content,
+                suiteId: components.suiteId,
                 timestamp: UInt64(Date().timeIntervalSince1970)
+                
             )
 
-            if !wsManager.isConnected {
-                saveMessage(message, decryptedContent: text, isSentByMe: true, status: .queued, replyTo: replyTo, localThumbnails: localThumbnails)
-                errorMessage = "Not connected. Message saved and will be sent when connection is restored."
-                isSending = false
-                return
-            }
+            saveMessage(message, decryptedContent: text, isSentByMe: true, status: .sending, replyTo: replyTo, localThumbnails: localThumbnails, suiteId: components.suiteId)
 
-            saveMessage(message, decryptedContent: text, isSentByMe: true, status: .sending, replyTo: replyTo, localThumbnails: localThumbnails)
-            wsManager.send(.sendMessage(message))
-            isSending = false
+            // ✅ Send via REST API (no WebSocket dependency)
+            Task {
+                do {
+                    let response = try await RestAPIClient.shared.sendMessage(
+                        recipientId: recipientId,
+                        ephemeralPublicKey: components.ephemeralPublicKey,
+                        messageNumber: components.messageNumber,
+                        content: components.content,
+                        timestamp: message.timestamp,
+                        suiteId: components.suiteId
+                    )
+                    
+                    await MainActor.run {
+                        updateMessageStatus(messageId: message.id, status: .sent)
+                        isSending = false
+                    }
+                } catch {
+                    await MainActor.run {
+                        if let networkError = error as? NetworkError,
+                           case .serverError(let message, let responseBody) = networkError {
+                            Log.error("❌ Failed to send message via REST: \(message)\nResponse: \(responseBody ?? "empty")", category: "ChatViewModel")
+                        } else {
+                            Log.error("❌ Failed to send message via REST: \(error.localizedDescription)", category: "ChatViewModel")
+                        }
+                        updateMessageStatus(messageId: message.id, status: .failed)
+                        errorMessage = "Failed to send message: \(error.localizedDescription)"
+                        isSending = false
+                    }
+                }
+            }
 
         } catch {
             Log.error("❌ Failed to encrypt message: \(error)", category: "ChatViewModel")
@@ -902,7 +925,7 @@ class ChatViewModel: ObservableObject {
         }
     }
 
-    private func saveMessage(_ message: ChatMessage, decryptedContent: String, isSentByMe: Bool, status: DeliveryStatus, replyTo: Message? = nil, localThumbnails: [Data] = []) {
+    private func saveMessage(_ message: ChatMessage, decryptedContent: String, isSentByMe: Bool, status: DeliveryStatus, replyTo: Message? = nil, localThumbnails: [Data] = [], suiteId: UInt16) {
         Log.debug("💾 Saving message \(message.id), isSentByMe: \(isSentByMe), status: \(status)", category: "ChatViewModel")
 
         let fetchRequest: NSFetchRequest<Message> = Message.fetchRequest()
@@ -911,6 +934,7 @@ class ChatViewModel: ObservableObject {
         let messageTimestamp = Date(timeIntervalSince1970: TimeInterval(message.timestamp))
         let isNewMessage: Bool
         
+
         if let existing = try? viewContext.fetch(fetchRequest).first {
             Log.debug("📝 Updating existing message \(message.id)", category: "ChatViewModel")
             existing.deliveryStatus = status
@@ -928,7 +952,8 @@ class ChatViewModel: ObservableObject {
             newMessage.deliveryStatus = status
             newMessage.retryCount = 0  // ✅ FIX: Initialize required field
             newMessage.chat = chat
-
+            newMessage.suiteId = suiteId
+            
             // Set reply information
             if let replyMessage = replyTo {
                 newMessage.replyToMessageId = replyMessage.id

@@ -14,7 +14,6 @@ import os.log
 class MessageQueueManager: ObservableObject {
     static let shared = MessageQueueManager()
     
-    private let wsManager = WebSocketManager.shared
     private let networkManager = NetworkReachabilityManager.shared
     private var cancellables = Set<AnyCancellable>()
     private var checkTimer: Timer?
@@ -39,23 +38,12 @@ class MessageQueueManager: ObservableObject {
     // MARK: - Setup
     
     private func setupSubscribers() {
-        // Monitor network reachability
+        // Monitor network reachability (REST API doesn't require WebSocket)
         networkManager.reachabilityPublisher
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isReachable in
                 if isReachable {
                     Log.info("📡 Network available - checking for queued messages", category: "MessageQueue")
-                    self?.processQueuedMessages()
-                }
-            }
-            .store(in: &cancellables)
-        
-        // Monitor WebSocket connection
-        wsManager.$isConnected
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] isConnected in
-                if isConnected {
-                    Log.info("🔌 WebSocket connected - processing queued messages", category: "MessageQueue")
                     self?.processQueuedMessages()
                 }
             }
@@ -187,8 +175,8 @@ class MessageQueueManager: ObservableObject {
             
             try? context.save()
             
-            // Try to resend if network is available
-            if self.networkManager.isReachable && self.wsManager.isConnected {
+            // Try to resend if network is available (REST API doesn't require WebSocket)
+            if self.networkManager.isReachable {
                 self.processQueuedMessages()
             }
         }
@@ -196,10 +184,10 @@ class MessageQueueManager: ObservableObject {
     
     // MARK: - Process Queued Messages
     
-    /// Process all queued messages (called when network/connection is restored)
+    /// Process all queued messages (called when network is restored)
     func processQueuedMessages() {
-        guard networkManager.isReachable && wsManager.isConnected else {
-            Log.debug("⏸️ Cannot process queued messages - network: \(networkManager.isReachable), ws: \(wsManager.isConnected)", category: "MessageQueue")
+        guard networkManager.isReachable else {
+            Log.debug("⏸️ Cannot process queued messages - network not reachable", category: "MessageQueue")
             return
         }
         
