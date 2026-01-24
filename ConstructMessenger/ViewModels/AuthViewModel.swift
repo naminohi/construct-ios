@@ -55,6 +55,9 @@ class AuthViewModel: ObservableObject {
     // MARK: - Session Management
     func restoreSession() {
         print("🔄 restoreSession() called")
+        
+        // ✅ REACTIVE: Load token from keychain into published property
+        SessionManager.shared.loadSessionToken()
 
         guard SessionManager.shared.sessionToken != nil else {
             print("❌ No session token found - user needs to login")
@@ -335,7 +338,9 @@ class AuthViewModel: ObservableObject {
         // ✅ DEBUG: Log token before saving
         Log.info("💾 Saving session token (length: \(token.count), prefix: \(token.prefix(30))...)", category: "Auth")
         
-        // ✅ FIXED: Pass expires timestamp to SessionManager
+        // ✅ REACTIVE: Pass expires timestamp to SessionManager
+        // This will automatically trigger @Published sessionToken update,
+        // which will notify all subscribers (like ChatsViewModel)
         SessionManager.shared.saveSession(userId: userId, token: token, expires: expires)
         
         // ✅ DEBUG: Verify token was saved correctly
@@ -358,6 +363,20 @@ class AuthViewModel: ObservableObject {
         
         // ✅ FIX: Load local user data (like display name) after successful auth
         loadUserFromCoreData(userId: userId)
+        
+        // ✅ NEW: Request push notification permission after successful registration/login
+        // This is done async to not block the auth flow
+        Task {
+            let granted = await PushNotificationManager.shared.requestPermission()
+            if granted {
+                Log.info("📱 Push notifications enabled for user", category: "Auth")
+            } else {
+                Log.info("📱 Push notifications declined by user", category: "Auth")
+            }
+        }
+        
+        // ✅ REMOVED: NotificationCenter - now using Combine reactive approach
+        // Long polling will start automatically when sessionToken is published
     }
 
     private func handleConnectSuccess(userId: String, username: String) {
@@ -475,7 +494,14 @@ class AuthViewModel: ObservableObject {
             }
             
             // Update the published properties
+            self.currentUserId = user.id
+            self.currentUsername = user.username
             self.currentDisplayName = user.displayName
+            
+            print("✅ Restored user data from Core Data:")
+            print("   userId: \(user.id ?? "nil")")
+            print("   username: \(user.username ?? "nil")")
+            print("   displayName: \(user.displayName ?? "nil")")
             
         } catch {
             print("❌ Failed to fetch or create user from Core Data: \(error)")

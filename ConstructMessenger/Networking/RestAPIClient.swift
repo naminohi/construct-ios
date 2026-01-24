@@ -60,13 +60,13 @@ class RestAPIClient {
     func register(username: String, password: String, publicKey: UploadableKeyBundle) async throws -> RegisterSuccessData {
         let endpoint = "/api/v1/auth/register"
         
-        // Convert to server format (snake_case)
+        // Server expects camelCase format
         let requestBody: [String: Any] = [
             "username": username,
             "password": password,
-            "key_bundle": [
-                "master_identity_key": publicKey.masterIdentityKey,
-                "bundle_data": publicKey.bundleData,
+            "keyBundle": [
+                "masterIdentityKey": publicKey.masterIdentityKey,
+                "bundleData": publicKey.bundleData,
                 "signature": publicKey.signature
             ]
         ]
@@ -344,6 +344,46 @@ class RestAPIClient {
         )
     }
     
+    // MARK: - Push Notifications Endpoints
+    
+    /// Register device token for push notifications
+    /// POST /api/v1/notifications/register-device
+    func registerDeviceToken(token: String) async throws -> DeviceTokenResponse {
+        let endpoint = "/api/v1/notifications/register-device"
+        
+        let body: [String: Any] = [
+            "deviceToken": token,
+            "platform": "ios"
+        ]
+        
+        let response: DeviceTokenResponse = try await performRequest(
+            endpoint: endpoint,
+            method: "POST",
+            body: body,
+            requiresAuth: true
+        )
+        
+        return response
+    }
+    
+    /// Unregister device token
+    /// POST /api/v1/notifications/unregister-device
+    func unregisterDeviceToken(token: String) async throws {
+        let endpoint = "/api/v1/notifications/unregister-device"
+        
+        let body: [String: Any] = [
+            "deviceToken": token
+        ]
+        
+        // Response is empty on success, so use EmptyResponse
+        let _: EmptyResponse = try await performRequest(
+            endpoint: endpoint,
+            method: "POST",
+            body: body,
+            requiresAuth: true
+        )
+    }
+    
     // MARK: - Generic Request Handler
 
     private func performRequest<T: Codable>(
@@ -545,6 +585,21 @@ class RestAPIClient {
                 Log.error("❌ URL Error for \(serverURL): \(urlError.localizedDescription)", category: "Network")
                 Log.error("   Code: \(urlError.code.rawValue)", category: "Network")
                 
+                // ✅ SPECIAL CASE: Long-polling timeout is NORMAL, not an error
+                // Long-polling requests are expected to timeout if no new messages arrive
+                // Don't treat this as a failure that requires trying other servers
+                if isLongPolling && urlError.code == .timedOut {
+                    Log.debug("⏱️ Long-polling timeout (normal behavior) - no new messages", category: "Network")
+                    // Mark as successful connection (timeout = server is responding, just no messages)
+                    connectionStatusManager.markRequestSucceeded()
+                    // Return empty response
+                    if T.self == PollMessagesResponse.self {
+                        return PollMessagesResponse(messages: [], nextSince: nil, hasMore: false) as! T
+                    }
+                    // For other types, still throw but don't mark as failed connection
+                    throw urlError
+                }
+                
                 // Check if this is a connectivity error that might be fixed by trying another server
                 switch urlError.code {
                 case .cannotFindHost, .cannotConnectToHost, .timedOut:
@@ -577,7 +632,8 @@ class RestAPIClient {
         }
         
         // All servers failed - update connection status
-        connectionStatusManager.markRequestFailed(error: "Failed to connect to server")
+        // Mark as critical failure since ALL servers failed to respond
+        connectionStatusManager.markRequestFailed(error: "Failed to connect to server", isCritical: true)
 
         if let lastError = lastError {
             throw lastError
@@ -643,24 +699,15 @@ struct PollMessagesResponse: Codable {
 /// Chat message in REST API response format
 struct ChatMessageResponse: Codable {
     let id: String
-    let from: String  // ✅ SPEC: Use "from" as per specification
-    let to: String  // ✅ SPEC: Use "to" as per specification
-    let ephemeralPublicKey: String?  // ✅ Optional - may be null for non-Direct messages
-    let messageNumber: UInt32?  // ✅ Optional - may not be present
+    let from: String  // ✅ SPEC: "from" in JSON
+    let to: String  // ✅ SPEC: "to" in JSON
+    let ephemeralPublicKey: String?  // ✅ Server sends "ephemeralPublicKey" (camelCase)
+    let messageNumber: UInt32?  // ✅ Server sends "messageNumber" (camelCase)
     let content: String  // Base64 encrypted content
-    let suiteId: UInt16
+    let suiteId: UInt16  // ✅ Server sends "suiteId" (camelCase)
     let timestamp: UInt64
     
-    enum CodingKeys: String, CodingKey {
-        case id
-        case from
-        case to
-        case ephemeralPublicKey = "ephemeral_public_key"
-        case messageNumber = "message_number"
-        case content
-        case suiteId = "suite_id"
-        case timestamp
-    }
+    // ✅ No CodingKeys needed - Swift automatically converts camelCase ↔ camelCase
     
     /// Convert to ChatMessage format (with binary ephemeralPublicKey)
     func toChatMessage() throws -> ChatMessage {
@@ -751,3 +798,12 @@ struct MediaTokenResponse: Codable {
         case expiresAt = "expires_at"
     }
 }
+
+// MARK: - Push Notifications Response Types
+
+/// Response from device token registration
+struct DeviceTokenResponse: Codable {
+    let success: Bool
+    let message: String?
+}
+

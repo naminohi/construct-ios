@@ -121,7 +121,9 @@ class ConnectionStatusManager: ObservableObject {
     }
 
     /// Call this when an API request fails
-    func markRequestFailed(error: String? = nil) {
+    /// - Parameter error: Optional error description
+    /// - Parameter isCritical: If true, immediately change status. If false, only change after grace period.
+    func markRequestFailed(error: String? = nil, isCritical: Bool = false) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
 
@@ -129,15 +131,27 @@ class ConnectionStatusManager: ObservableObject {
             self.lastError = error
 
             // Only mark as disconnected if network is unreachable
-            // or if we've had multiple consecutive failures
             if !self.reachabilityManager.isReachable {
                 self.connectionStatus = .disconnected
-            } else {
-                // Network is reachable but request failed
-                // This could be a temporary server issue
-                // Keep status as connecting to indicate we're trying
+            } else if isCritical {
+                // Critical errors (auth failures, etc.) should immediately change status
                 if self.connectionStatus == .connected {
                     self.connectionStatus = .connecting
+                }
+            } else {
+                // Non-critical errors (timeouts, temporary failures):
+                // Stay "Connected" if we had a successful request in the last 2 minutes
+                // This prevents flickering status on temporary network hiccups or long-polling timeouts
+                if self.connectionStatus == .connected {
+                    let gracePeriod: TimeInterval = 120  // 2 minutes
+                    if !self.isConnectionStale(threshold: gracePeriod) {
+                        // Had successful request recently - stay connected
+                        Log.debug("⚠️ Non-critical error, but staying Connected (last success was recent)", category: "ConnectionStatus")
+                        return
+                    } else {
+                        // No successful request in 2 minutes - mark as connecting
+                        self.connectionStatus = .connecting
+                    }
                 }
             }
             

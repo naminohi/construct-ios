@@ -8,6 +8,7 @@
 import Foundation
 import Combine
 import CoreData
+import UIKit  // ✅ Required for UIApplication notifications
 
 @MainActor
 class ChatsViewModel: ObservableObject {
@@ -22,14 +23,39 @@ class ChatsViewModel: ObservableObject {
 
     // ✅ Long polling state
     private var isPolling = false
-    private var lastMessageId: String?
     private var pollingTask: Task<Void, Never>?
+    
+    // ✅ Exponential backoff for error retry
+    private var retryCount = 0
+    private let maxRetryDelay: UInt64 = 60_000_000_000  // 60 seconds max
+    
+    // ✅ App lifecycle state
+    private var isPaused = false
+    
+    // ✅ Persistent lastMessageId (survives app restart)
+    private var lastMessageId: String? {
+        didSet {
+            if let id = lastMessageId {
+                UserDefaults.standard.set(id, forKey: "construct.lastMessageId")
+                Log.debug("💾 Saved lastMessageId: \(id)", category: "ChatsViewModel")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "construct.lastMessageId")
+            }
+        }
+    }
 
     // ✅ Connection status
     private let connectionStatusManager = ConnectionStatusManager.shared
 
     init() {
+        // ✅ Restore lastMessageId from persistent storage
+        self.lastMessageId = UserDefaults.standard.string(forKey: "construct.lastMessageId")
+        if let restored = lastMessageId {
+            Log.info("📥 Restored lastMessageId from UserDefaults: \(restored)", category: "ChatsViewModel")
+        }
+        
         setupSubscribers()
+        setupAppLifecycleObservers()
     }
 
     isolated deinit {
@@ -41,19 +67,76 @@ class ChatsViewModel: ObservableObject {
     }
 
     private func setupSubscribers() {
-        // Listen for connection status changes to start/stop polling
-        connectionStatusManager.$connectionStatus
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] status in
-                Log.info("📡 ChatsViewModel: Connection status changed to \(status.displayText)", category: "ChatsViewModel")
-                
-                if status == .connected {
-                    Log.info("📡 ChatsViewModel: Status is connected, calling startLongPolling()", category: "ChatsViewModel")
+        // ✅ HYBRID POLLING STRATEGY: Combine auth, connection, and push notification state
+        // Automatically adjust polling behavior based on:
+        // 1. Session token is available (user is authenticated)
+        // 2. Connection status is .connected (network is available)
+        // 3. Push notifications enabled (reduces polling frequency)
+        //
+        // Polling Strategy:
+        // - Push ENABLED: Minimal polling (background only, ~5 min intervals)
+        // - Push DISABLED: Full polling (continuous with 30s timeout)
+        //
+        // TODO: Phase 3 - State Machine Migration
+        // This reactive approach works well but consider migrating to explicit
+        // State Machine for better control over edge cases like:
+        // - Offline mode (queue messages locally)
+        // - Reconnection with exponential backoff
+        // - Partial connectivity (WiFi without internet)
+        // - Token refresh during active polling
+        //
+        Publishers.CombineLatest3(
+            SessionManager.shared.$sessionToken,
+            connectionStatusManager.$connectionStatus,
+            PushNotificationManager.shared.$isPushEnabled
+        )
+        .receive(on: DispatchQueue.main)
+        .sink { [weak self] token, status, pushEnabled in
+            Log.info("📡 State change: token=\(token != nil ? "present" : "nil"), status=\(status.displayText), push=\(pushEnabled)", category: "ChatsViewModel")
+            
+            if token != nil && status == .connected {
+                if pushEnabled {
+                    Log.info("📱 Push enabled - using minimal background polling", category: "ChatsViewModel")
+                    // TODO: Implement minimal polling (only when app is active)
+                    // For now, still do full polling but could optimize later
                     self?.startLongPolling()
-                } else if status == .disconnected {
-                    Log.info("📡 ChatsViewModel: Status is disconnected, calling stopLongPolling()", category: "ChatsViewModel")
-                    self?.stopLongPolling()
+                } else {
+                    Log.info("📡 Push disabled - using full long-polling", category: "ChatsViewModel")
+                    self?.startLongPolling()
                 }
+            } else {
+                if token == nil {
+                    Log.info("📡 No session token - stopping polling", category: "ChatsViewModel")
+                } else if status != .connected {
+                    Log.info("📡 Not connected (\(status.displayText)) - stopping polling", category: "ChatsViewModel")
+                }
+                self?.stopLongPolling()
+            }
+        }
+        .store(in: &cancellables)
+    }
+    
+    // MARK: - App Lifecycle
+    
+    private func setupAppLifecycleObservers() {
+        // ✅ Pause polling when app goes to background
+        NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Log.info("📱 App going to background - pausing polling", category: "ChatsViewModel")
+                self?.isPaused = true
+                self?.stopLongPolling()
+            }
+            .store(in: &cancellables)
+        
+        // ✅ Resume polling when app becomes active
+        NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Log.info("📱 App became active - resuming polling if conditions met", category: "ChatsViewModel")
+                self?.isPaused = false
+                // Don't manually restart - let Combine publisher handle it
+                // based on token + connection status
             }
             .store(in: &cancellables)
     }
@@ -61,14 +144,15 @@ class ChatsViewModel: ObservableObject {
     // MARK: - Long Polling
 
     func startLongPolling() {
-        guard !isPolling else { return }
-        guard SessionManager.shared.sessionToken != nil else {
-            Log.info("📡 Cannot start long polling - no session token", category: "ChatsViewModel")
+        guard !isPolling else {
+            Log.info("📡 Long polling already running, skipping duplicate start", category: "ChatsViewModel")
             return
         }
+        // ✅ Token check removed - now handled by Combine publisher
+        // The subscriber only calls this when token is present
 
         isPolling = true
-        Log.info("📡 Starting long polling for messages", category: "ChatsViewModel")
+        Log.info("📡 ✅ Starting long polling for messages", category: "ChatsViewModel")
 
         pollingTask = Task { [weak self] in
             await self?.pollMessagesLoop()
@@ -79,6 +163,7 @@ class ChatsViewModel: ObservableObject {
         isPolling = false
         pollingTask?.cancel()
         pollingTask = nil
+        retryCount = 0  // ✅ Reset backoff counter when stopping
         Log.info("📡 Stopped long polling", category: "ChatsViewModel")
     }
 
@@ -123,6 +208,9 @@ class ChatsViewModel: ObservableObject {
                 } else {
                     Log.info("ℹ️ No nextSince and no messages, keeping lastMessageId: \(lastMessageId ?? "nil")", category: "ChatsViewModel")
                 }
+                
+                // ✅ Reset retry count on successful poll
+                retryCount = 0
 
                 // If there are more messages, poll again immediately
                 if response.hasMore == true {
@@ -132,8 +220,23 @@ class ChatsViewModel: ObservableObject {
 
             } catch {
                 Log.error("❌ Long polling error: \(error.localizedDescription)", category: "ChatsViewModel")
-                // Wait before retrying on error
-                try? await Task.sleep(nanoseconds: 5_000_000_000) // 5 seconds
+                
+                // ✅ EXPONENTIAL BACKOFF: Increase delay with each consecutive failure
+                // Pattern: 5s → 10s → 20s → 40s → 60s (max)
+                // Prevents hammering server when it's down, saves battery
+                retryCount += 1
+                let baseDelay: UInt64 = 5_000_000_000  // 5 seconds
+                let exponentialDelay = baseDelay * UInt64(pow(2.0, Double(min(retryCount - 1, 4))))
+                
+                // ✅ Add random jitter (0-2.5s) to prevent thundering herd
+                // If many clients reconnect simultaneously, jitter spreads the load
+                let jitter = UInt64.random(in: 0...(baseDelay / 2))
+                let delay = min(exponentialDelay + jitter, maxRetryDelay)
+                
+                let delaySeconds = Double(delay) / 1_000_000_000.0
+                Log.info("⏳ Retry attempt #\(retryCount) in \(String(format: "%.1f", delaySeconds))s (exponential backoff)", category: "ChatsViewModel")
+                
+                try? await Task.sleep(nanoseconds: delay)
             }
         }
     }

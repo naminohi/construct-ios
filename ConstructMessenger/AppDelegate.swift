@@ -35,12 +35,40 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         // Initialize local notification manager
         // This ensures it's ready when needed
         _ = LocalNotificationManager.shared
+        
+        // ✅ NEW: Initialize push notification manager
+        // This sets up the UNUserNotificationCenter delegate
+        _ = PushNotificationManager.shared
 
         // NOTE: NetworkReachabilityManager and MessageQueueManager will be initialized
         // lazily when first accessed. This avoids potential circular dependencies
         // and initialization issues at app startup.
 
         return true
+    }
+    
+    // MARK: - Push Notifications
+    
+    /// Called when APNs successfully registers device token
+    func application(
+        _ application: UIApplication,
+        didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+    ) {
+        Log.info("📱 Received device token from APNs", category: "Push")
+        
+        // Register token with backend server
+        Task {
+            await PushNotificationManager.shared.registerDeviceToken(deviceToken)
+        }
+    }
+    
+    /// Called when APNs fails to register device token
+    func application(
+        _ application: UIApplication,
+        didFailToRegisterForRemoteNotificationsWithError error: Error
+    ) {
+        Log.error("📱 Failed to register for remote notifications: \(error)", category: "Push")
+        PushNotificationManager.shared.handleRegistrationError(error)
     }
 
     // MARK: - Universal Links

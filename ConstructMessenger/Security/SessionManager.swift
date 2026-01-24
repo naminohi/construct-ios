@@ -6,17 +6,40 @@
 //
 
 import Foundation
+import Combine
 
-class SessionManager {
+// TODO: Phase 3 Architecture Refactoring - State Machine
+// ============================================================================
+// Current approach uses reactive publishers for auth state synchronization.
+// For better scalability and maintainability, consider migrating to explicit
+// State Machine pattern:
+//
+// enum AuthState {
+//     case unauthenticated
+//     case authenticating
+//     case authenticated(token: String, userId: String, expires: Date)
+// }
+//
+// Benefits:
+// - Impossible states become impossible (can't have token without userId)
+// - Explicit state transitions with validation
+// - Easier to add offline mode, reconnection logic
+// - Better testability and debugging
+// - Clear separation of concerns
+//
+// See: docs/architecture/state-machine-migration.md (to be created)
+// ============================================================================
+
+class SessionManager: ObservableObject {
     static let shared = SessionManager()
     private init() {}
 
+    // ✅ REACTIVE: Published property for session token
+    // This allows downstream components to react to token changes automatically
+    @Published private(set) var sessionToken: String?
+    
     var currentUserId: String? {
         KeychainManager.shared.loadUserId()
-    }
-
-    var sessionToken: String? {
-        KeychainManager.shared.loadSessionToken()
     }
 
     // ✅ FIXED: Get session expiration timestamp
@@ -35,6 +58,11 @@ class SessionManager {
         guard let expires = sessionExpires else { return false }
         let bufferTime: TimeInterval = 5 * 60  // 5 minutes
         return Date().addingTimeInterval(bufferTime) < expires
+    }
+
+    // ✅ Load token from keychain on init or when needed
+    func loadSessionToken() {
+        sessionToken = KeychainManager.shared.loadSessionToken()
     }
 
     // ✅ FIXED: Save session with expiration timestamp
@@ -61,11 +89,17 @@ class SessionManager {
         print("✅ Session saved - expires at: \(expiresDate)")
         print("   Raw expires value: \(expires)")
         print("   Expires in: \(Int(expiresDate.timeIntervalSinceNow / 60)) minutes")
+        
+        // ✅ REACTIVE: Update published property to trigger subscribers
+        self.sessionToken = token
     }
 
     func clearSession() {
         KeychainManager.shared.deleteSessionToken()
         // Clear expiration timestamp
         UserDefaults.standard.removeObject(forKey: UserDefaultsKey.sessionExpires.key)
+        
+        // ✅ REACTIVE: Clear published property to trigger subscribers
+        self.sessionToken = nil
     }
 }
