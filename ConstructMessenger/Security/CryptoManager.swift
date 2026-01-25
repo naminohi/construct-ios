@@ -255,6 +255,13 @@ class CryptoManager {
         guard let core = core else {
             throw CryptoManagerError.coreNotInitialized
         }
+        
+        // ✅ CRITICAL FIX: Force delete any existing session before initializing
+        // This prevents session desynchronization when one party reinstalls app
+        if userSessions[userId] != nil {
+            Log.info("⚠️ Existing session found for \(userId) - deleting before reinitialization to prevent desync", category: "CryptoManager")
+            deleteSession(for: userId)
+        }
 
         // 1. Decode base64 strings to Data
         guard let identityPublicData = Data(base64Encoded: recipientBundle.identityPublic),
@@ -323,7 +330,12 @@ class CryptoManager {
 
     /// Check if a session exists for a user
     func hasSession(for userId: String) -> Bool {
-        return userSessions[userId] != nil
+        let exists = userSessions[userId] != nil
+        Log.debug("🔑 Session check for \(userId): \(exists ? "EXISTS" : "MISSING")", category: "CryptoManager")
+        if exists, let sessionId = userSessions[userId] {
+            Log.debug("   Session ID: \(sessionId.prefix(16))...", category: "CryptoManager")
+        }
+        return exists
     }
 
     /// Delete a session for a user (called when deleting a chat)
@@ -353,6 +365,13 @@ class CryptoManager {
     func initReceivingSession(for userId: String, recipientBundle: (identityPublic: String, signedPrekeyPublic: String, signature: String, verifyingKey: String, suiteId: String), firstMessage: ChatMessage) throws -> String {
         guard let core = core else {
             throw CryptoManagerError.coreNotInitialized
+        }
+        
+        // ✅ CRITICAL FIX: Force delete any existing session before initializing
+        // This ensures we start fresh and prevents Double Ratchet desynchronization
+        if userSessions[userId] != nil {
+            Log.info("⚠️ Existing session found for \(userId) - deleting before receiving session init to prevent desync", category: "CryptoManager")
+            deleteSession(for: userId)
         }
 
         // 1. Decode base64 strings to Data
@@ -516,7 +535,10 @@ class CryptoManager {
         }
 
         do {
-            Log.debug("📦 Decrypting: ephemKey=\(message.ephemeralPublicKey.count) bytes, msgNum=\(message.messageNumber), content=\(message.content.prefix(20))...", category: "CryptoManager")
+            Log.debug("🔓 Decrypting message \(message.id.prefix(8))... from \(message.from.prefix(8))...", category: "CryptoManager")
+            Log.debug("   messageNumber: \(message.messageNumber)", category: "CryptoManager")
+            Log.debug("   ephemeralPublicKey: \(message.ephemeralPublicKey.count) bytes", category: "CryptoManager")
+            Log.debug("   content length: \(message.content.count) chars", category: "CryptoManager")
 
             // ✅ NEW CLEAN API: Pass wire format components directly to Rust
             let plaintext = try core.decryptMessage(
@@ -526,14 +548,15 @@ class CryptoManager {
                 content: message.content
             )
 
-            Log.debug("✅ Message decrypted successfully, plaintext length: \(plaintext.count)", category: "CryptoManager")
+            Log.info("✅ Message decrypted successfully (messageNumber: \(message.messageNumber), plaintext: \(plaintext.count) chars)", category: "CryptoManager")
 
             // ✅ Auto-save session after ratchet step
             saveSessionToKeychain(for: message.from)
 
             return plaintext
         } catch let error as CryptoError {
-            Log.error("❌ Decryption failed: \(error)", category: "CryptoManager")
+            Log.error("❌ Decryption failed for messageNumber \(message.messageNumber): \(error)", category: "CryptoManager")
+            Log.error("   This usually means session desynchronization (sender and receiver out of sync)", category: "CryptoManager")
 
             // ✅ Auto-delete corrupted session to allow reinitialization
             Log.debug("🔄 Deleting corrupted session for \(message.from) to allow reinitialization", category: "CryptoManager")

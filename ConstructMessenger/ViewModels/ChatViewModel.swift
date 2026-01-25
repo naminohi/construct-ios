@@ -411,13 +411,21 @@ class ChatViewModel: ObservableObject {
             let reversedAllMessages = Array(allMessages.reversed())
             let newMessageIds = Set(reversedAllMessages.map { $0.id })
             
-            // Check if we have any new messages
-            if !newMessageIds.isSubset(of: allLoadedMessageIds) {
-                // Reload initial messages to include new ones
+            // ✅ Always reload to catch status changes, not just new messages
+            // This ensures UI updates when message.deliveryStatus changes
+            let hasNewMessages = !newMessageIds.isSubset(of: allLoadedMessageIds)
+            let messagesChanged = messages.count != reversedAllMessages.count
+            
+            if hasNewMessages || messagesChanged {
                 messages = reversedAllMessages
                 oldestLoadedTimestamp = messages.first?.timestamp
                 allLoadedMessageIds = newMessageIds
                 checkIfHasMoreMessages()
+            } else {
+                // ✅ Force refresh by creating new array with same messages
+                // This triggers SwiftUI @Published update even if content is same
+                messages = Array(reversedAllMessages)
+                objectWillChange.send()
             }
         }
     }
@@ -525,6 +533,7 @@ class ChatViewModel: ObservableObject {
                     
                     await MainActor.run {
                         // Update message status to sent
+                        Log.info("🔄 Updating message status from sending → sent for \(messageId)", category: "ChatViewModel")
                         updateMessageStatus(messageId: messageId, status: .sent)
                         Log.info("✅ Message sent via REST API: \(response.messageId), status: \(response.status)", category: "ChatViewModel")
                     }
@@ -1010,8 +1019,15 @@ class ChatViewModel: ObservableObject {
 
         if let message = try? viewContext.fetch(fetchRequest).first {
             message.deliveryStatus = status
-            try? viewContext.save()
-            // Messages will be reloaded via NotificationCenter observer
+            
+            do {
+                try viewContext.save()
+                // ✅ Force UI update immediately
+                objectWillChange.send()
+                Log.debug("✅ Updated message status to \(status) for \(messageId)", category: "ChatViewModel")
+            } catch {
+                Log.error("❌ Failed to save message status: \(error)", category: "ChatViewModel")
+            }
         }
     }
 }
