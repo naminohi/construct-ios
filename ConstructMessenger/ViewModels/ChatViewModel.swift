@@ -1069,7 +1069,9 @@ class ChatViewModel: NSObject, ObservableObject {
 extension ChatViewModel: NSFetchedResultsControllerDelegate {
     /// Called when FRC finishes processing changes to Core Data
     nonisolated func controllerDidChangeContent(_ controller: NSFetchedResultsController<NSFetchRequestResult>) {
-        Task { @MainActor in
+        // ✅ FIX: Synchronous update to prevent UI rendering deleted objects
+        // MainActor.assumeIsolated is safe here because FRC calls this on main thread
+        MainActor.assumeIsolated {
             // ✅ REFACTOR: Automatic sync from Core Data - no manual array management!
             self.messages = controller.fetchedObjects as? [Message] ?? []
             Log.debug("🔄 FRC updated messages: \(self.messages.count) total", category: "ChatViewModel")
