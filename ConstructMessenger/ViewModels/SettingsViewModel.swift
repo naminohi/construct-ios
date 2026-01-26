@@ -135,9 +135,11 @@ class SettingsViewModel: ObservableObject {
                 user.displayName = trimmed
                 try context.save()
                 
-                // Update local and global state
+                // ✅ REFACTOR Phase 1.2: Update local state and trigger AuthViewModel update
                 displayName = trimmed
-                authViewModel.currentDisplayName = trimmed
+                // currentUser is @Published, so updating Core Data User will auto-notify
+                // AuthViewModel.currentUser is the same object, computed properties will return new value
+                authViewModel.objectWillChange.send()  // Force UI refresh
                 
                 print("✅ Display name saved: \(trimmed)")
             }

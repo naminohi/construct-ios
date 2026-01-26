@@ -13,8 +13,19 @@ import CoreData
 class AuthViewModel: ObservableObject {
     @Published var isAuthenticated = false
     @Published var currentUserId: String?
-    @Published var currentUsername: String?
-    @Published var currentDisplayName: String?
+    
+    // ✅ REFACTOR Phase 1.2: Single source of truth - Core Data User entity
+    @Published var currentUser: User?
+    
+    // ✅ Computed properties for convenience (backwards compatibility)
+    var currentUsername: String {
+        currentUser?.username ?? ""
+    }
+    
+    var currentDisplayName: String {
+        currentUser?.displayName ?? currentUser?.username ?? ""
+    }
+    
     @Published var isLoading = false
     @Published var errorMessage: String?
 
@@ -268,8 +279,7 @@ class AuthViewModel: ObservableObject {
                 
                 isAuthenticated = false
                 currentUserId = nil
-                currentUsername = nil
-                currentDisplayName = nil
+                currentUser = nil  // ✅ REFACTOR Phase 1.2
             }
         }
     }
@@ -358,10 +368,9 @@ class AuthViewModel: ObservableObject {
         KeychainManager.shared.saveLastUsername(username)
         
         currentUserId = userId
-        currentUsername = username
         isAuthenticated = true
         
-        // ✅ FIX: Load local user data (like display name) after successful auth
+        // ✅ REFACTOR Phase 1.2: Load User entity and set currentUser
         // Pass username parameter so it gets saved to Core Data
         loadUserFromCoreData(userId: userId, username: username)
         
@@ -389,10 +398,9 @@ class AuthViewModel: ObservableObject {
         KeychainManager.shared.saveLastUsername(username)
 
         currentUserId = userId
-        currentUsername = username
         isAuthenticated = true
 
-        // ✅ FIX: Load local user data (like display name) after successful auth
+        // ✅ REFACTOR Phase 1.2: Load User entity and set currentUser
         loadUserFromCoreData(userId: userId)
         print("✅ User authenticated successfully")
     }
@@ -421,8 +429,7 @@ class AuthViewModel: ObservableObject {
             // Continue with logout even if Core Data isn't ready
             isAuthenticated = false
             currentUserId = nil
-            currentUsername = nil
-            currentDisplayName = nil
+            currentUser = nil  // ✅ REFACTOR Phase 1.2
             NotificationCenter.default.post(name: NSNotification.Name("AccountDeleted"), object: nil)
             return
         }
@@ -454,8 +461,7 @@ class AuthViewModel: ObservableObject {
         // Reset auth state
         isAuthenticated = false
         currentUserId = nil
-        currentUsername = nil
-        currentDisplayName = nil
+        currentUser = nil  // ✅ REFACTOR Phase 1.2
         
         // Notify UI that account was deleted
         NotificationCenter.default.post(name: NSNotification.Name("AccountDeleted"), object: nil)
@@ -559,21 +565,9 @@ class AuthViewModel: ObservableObject {
                 print("💾 Saved user changes to Core Data")
             }
             
-            // Update the published properties
+            // ✅ REFACTOR Phase 1.2: Set currentUser - single source of truth!
             self.currentUserId = user.id
-            
-            // ✅ FIX: Only update currentUsername from Core Data if username parameter was NOT provided
-            // This prevents overwriting the username from login response with empty Core Data value
-            if username == nil {
-                // Restoring session - update from Core Data
-                self.currentUsername = user.username
-                self.currentDisplayName = user.displayName
-                print("📥 Updated currentUsername from Core Data: '\(user.username)'")
-            } else {
-                // Login/register - username already set in handleAuthSuccess(), just update displayName
-                self.currentDisplayName = user.displayName.isEmpty ? username : user.displayName
-                print("✅ Kept currentUsername from login response: '\(self.currentUsername ?? "")'")
-            }
+            self.currentUser = user
             
             print("✅ Restored user data from Core Data:")
             print("   userId: \(user.id ?? "nil")")
@@ -632,3 +626,26 @@ class AuthViewModel: ObservableObject {
         }
     }
 }
+
+// MARK: - Preview Helpers
+
+#if DEBUG
+extension AuthViewModel {
+    /// Creates a mock User for SwiftUI previews
+    static func createMockUser(context: NSManagedObjectContext, username: String = "john_doe", displayName: String = "John Doe") -> User {
+        let user = User(context: context)
+        user.id = UUID().uuidString
+        user.username = username
+        user.displayName = displayName
+        user.setOwnerToCurrentUser()
+        return user
+    }
+    
+    /// Configures AuthViewModel for previews with mock data
+    func configureMockAuth(username: String = "john_doe", displayName: String = "John Doe") {
+        self.isAuthenticated = true
+        self.currentUserId = UUID().uuidString
+        self.currentUser = AuthViewModel.createMockUser(context: viewContext, username: username, displayName: displayName)
+    }
+}
+#endif

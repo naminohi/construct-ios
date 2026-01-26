@@ -390,10 +390,7 @@ struct ImagePicker: UIViewControllerRepresentable {
     try? context.save()
 
     let authViewModel = AuthViewModel(context: context)
-    authViewModel.isAuthenticated = true
-    authViewModel.currentUserId = "user123"
-    authViewModel.currentUsername = "john_doe"
-    authViewModel.currentDisplayName = "John Doe"
+    authViewModel.configureMockAuth()  // ✅ REFACTOR Phase 1.2
 
     return NavigationStack {
         AccountSettingsView()

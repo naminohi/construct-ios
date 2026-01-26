@@ -206,10 +206,7 @@ struct SettingsView: View {
     let container = PreviewHelpers.createPreviewContainer()
     let context = container.viewContext
     let authViewModel = AuthViewModel(context: context)
-    authViewModel.isAuthenticated = true
-    authViewModel.currentUserId = "user123"
-    authViewModel.currentUsername = "john_doe"
-    authViewModel.currentDisplayName = "John Doe"
+    authViewModel.configureMockAuth()  // ✅ REFACTOR Phase 1.2
 
     return SettingsView()
         .environment(\.managedObjectContext, context)
