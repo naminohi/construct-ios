@@ -177,7 +177,7 @@ class ChatsViewModel: ObservableObject {
                     Log.info("📡 Polling loop: lastMessageId is nil (first request)", category: "ChatsViewModel")
                 }
                 
-                let response = try await RestAPIClient.shared.pollMessages(
+                let response = try await MessagingAPI.shared.pollMessages(
                     sinceId: lastMessageId,
                     timeout: 30
                 )
@@ -566,7 +566,7 @@ class ChatsViewModel: ObservableObject {
             // ✅ FIXED: Request sender's public key bundle from server via REST API
             Task {
                 do {
-                    let publicKeyBundle = try await RestAPIClient.shared.getPublicKey(userId: otherUserId)
+                    let publicKeyBundle = try await CryptoAPI.shared.getPublicKey(userId: otherUserId)
                     await MainActor.run {
                         self.handlePublicKeyBundleForIncomingMessage(publicKeyBundle, message: message, otherUserId: otherUserId)
                     }
@@ -589,7 +589,7 @@ class ChatsViewModel: ObservableObject {
                 Log.debug("🔄 Decryption failed, session was deleted. Requesting reinitialization...", category: "ChatsViewModel")
                 Task {
                     do {
-                        let publicKeyBundle = try await RestAPIClient.shared.getPublicKey(userId: otherUserId)
+                        let publicKeyBundle = try await CryptoAPI.shared.getPublicKey(userId: otherUserId)
                         await MainActor.run {
                             self.handlePublicKeyBundleForIncomingMessage(publicKeyBundle, message: message, otherUserId: otherUserId)
                         }
@@ -618,7 +618,7 @@ class ChatsViewModel: ObservableObject {
                     Log.info("🔄 Username/displayName for user \(otherUserId) is still UUID (username=\(user.username), displayName=\(user.displayName)), requesting publicKeyBundle to update", category: "ChatsViewModel")
                     Task {
                         do {
-                            let publicKeyBundle = try await RestAPIClient.shared.getPublicKey(userId: otherUserId)
+                            let publicKeyBundle = try await CryptoAPI.shared.getPublicKey(userId: otherUserId)
                             await MainActor.run {
                                 // Update username from public key bundle
                                 if let chatUser = chat.otherUser {

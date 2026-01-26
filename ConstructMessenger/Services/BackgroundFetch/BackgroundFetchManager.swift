@@ -232,7 +232,7 @@ class BackgroundFetchManager: NSObject, ObservableObject {
         // ✅ Fetch offline messages via REST API (long polling with timeout=0 for immediate response)
         Task {
             do {
-                let response = try await RestAPIClient.shared.pollMessages(sinceId: nil, timeout: 0)
+                let response = try await MessagingAPI.shared.pollMessages(sinceId: nil, timeout: 0)
                 let messages = try response.toChatMessages()
                 
                 await MainActor.run {

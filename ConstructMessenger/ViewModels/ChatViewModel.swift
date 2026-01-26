@@ -167,7 +167,7 @@ class ChatViewModel: NSObject, ObservableObject {
         // ✅ FIXED: Use REST API instead of WebSocket
         Task {
             do {
-                let publicKeyBundle = try await RestAPIClient.shared.getPublicKey(userId: userId)
+                let publicKeyBundle = try await CryptoAPI.shared.getPublicKey(userId: userId)
                 
                 await MainActor.run {
                     self.handlePublicKeyBundle(publicKeyBundle)
@@ -545,7 +545,7 @@ class ChatViewModel: NSObject, ObservableObject {
             Log.info("📮 Sending message via REST API: \(messageId)", category: "ChatViewModel")
             Task {
                 do {
-                    let response = try await RestAPIClient.shared.sendMessage(
+                    let response = try await MessagingAPI.shared.sendMessage(
                         recipientId: recipientId,
                         ephemeralPublicKey: components.ephemeralPublicKey,
                         messageNumber: components.messageNumber,
@@ -595,7 +595,7 @@ class ChatViewModel: NSObject, ObservableObject {
                 // ✅ FIXED: Request fresh public key bundle via REST API
                 Task {
                     do {
-                        let publicKeyBundle = try await RestAPIClient.shared.getPublicKey(userId: toUserId)
+                        let publicKeyBundle = try await CryptoAPI.shared.getPublicKey(userId: toUserId)
                         await MainActor.run {
                             self.handlePublicKeyBundle(publicKeyBundle)
                         }
@@ -672,7 +672,7 @@ class ChatViewModel: NSObject, ObservableObject {
                 // ✅ FIXED: Send via REST API instead of WebSocket
                 Task {
                     do {
-                        let response = try await RestAPIClient.shared.sendMessage(
+                        let response = try await MessagingAPI.shared.sendMessage(
                             recipientId: recipientId,
                             ephemeralPublicKey: components.ephemeralPublicKey,
                             messageNumber: components.messageNumber,
@@ -925,7 +925,7 @@ class ChatViewModel: NSObject, ObservableObject {
             // ✅ Send via REST API (no WebSocket dependency)
             Task {
                 do {
-                    let response = try await RestAPIClient.shared.sendMessage(
+                    let response = try await MessagingAPI.shared.sendMessage(
                         recipientId: recipientId,
                         ephemeralPublicKey: components.ephemeralPublicKey,
                         messageNumber: components.messageNumber,

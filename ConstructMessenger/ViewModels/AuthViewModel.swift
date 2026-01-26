@@ -101,7 +101,7 @@ class AuthViewModel: ObservableObject {
         Task {
             do {
                 Log.info("📡 Verifying server connection with quick poll...", category: "AuthViewModel")
-                _ = try await RestAPIClient.shared.pollMessages(sinceId: nil, timeout: 0)
+                _ = try await MessagingAPI.shared.pollMessages(sinceId: nil, timeout: 0)
                 
                 await MainActor.run {
                     self.isAuthenticated = true
@@ -197,7 +197,7 @@ class AuthViewModel: ObservableObject {
                 )
 
                 // Step 4: Send to server via REST API (new approach)
-                let result = try await RestAPIClient.shared.register(
+                let result = try await AuthAPI.shared.register(
                     username: username,
                     password: password,
                     publicKey: uploadableBundle
@@ -231,7 +231,7 @@ class AuthViewModel: ObservableObject {
         Task {
             do {
                 // Login via REST API (new approach)
-                let result = try await RestAPIClient.shared.login(
+                let result = try await AuthAPI.shared.login(
                     username: username,
                     password: password
                 )
@@ -262,7 +262,7 @@ class AuthViewModel: ObservableObject {
             // Logout via REST API
             if let token = SessionManager.shared.sessionToken {
                 do {
-                    try await RestAPIClient.shared.logout(sessionToken: token)
+                    try await AuthAPI.shared.logout(sessionToken: token)
                 } catch {
                     Log.error("Logout API call failed: \(error.localizedDescription)", category: "Auth")
                     // Continue with local logout even if API call fails
@@ -297,7 +297,7 @@ class AuthViewModel: ObservableObject {
         
         Task {
             do {
-                try await RestAPIClient.shared.deleteAccount(sessionToken: token, password: password)
+                try await AuthAPI.shared.deleteAccount(sessionToken: token, password: password)
                 
                 await MainActor.run {
                     handleDeleteAccountSuccess()
