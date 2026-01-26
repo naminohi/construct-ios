@@ -362,7 +362,8 @@ class AuthViewModel: ObservableObject {
         isAuthenticated = true
         
         // ✅ FIX: Load local user data (like display name) after successful auth
-        loadUserFromCoreData(userId: userId)
+        // Pass username parameter so it gets saved to Core Data
+        loadUserFromCoreData(userId: userId, username: username)
         
         // ✅ NEW: Request push notification permission after successful registration/login
         // This is done async to not block the auth flow
@@ -465,46 +466,169 @@ class AuthViewModel: ObservableObject {
     // MARK: - Core Data Integration
     
     /// Finds or creates the User entity and loads local data into the AuthViewModel
-    private func loadUserFromCoreData(userId: String) {
+    /// - Parameters:
+    ///   - userId: The user ID to load data for
+    ///   - username: Optional username to update/set (from login response)
+    private func loadUserFromCoreData(userId: String, username: String? = nil) {
         // ✅ FIX: Check if persistent store coordinator is ready before accessing entities
         guard viewContext.persistentStoreCoordinator != nil else {
             print("⚠️ Core Data persistent store coordinator not ready yet, skipping user load")
             return
         }
         
-        let fetchRequest: NSFetchRequest<User> = User.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "id == %@", userId)
+        // ✅ MIGRATION: First try to find user with multi-account filter
+        let fetchRequest = User.fetchRequestForCurrentUser()
+        let ownerPredicate = fetchRequest.predicate!
+        let idPredicate = NSPredicate(format: "id == %@", userId)
+        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, idPredicate])
+        
+        print("🔍 loadUserFromCoreData: Searching for userId: \(userId)")
+        print("   Current ownerId from SessionManager: \(SessionManager.shared.currentUserId ?? "nil")")
+        if let username = username {
+            print("   Username from parameter: \(username)")
+        }
         
         do {
             let user: User
+            var needsSave = false
+            
             if let existingUser = try viewContext.fetch(fetchRequest).first {
                 user = existingUser
                 print("👤 Found existing user in Core Data: \(user.displayName)")
+                print("   ownerId: \(user.value(forKey: "ownerId") as? String ?? "nil")")
+                
+                // ✅ UPDATE: Update username if provided and different
+                if let newUsername = username, !newUsername.isEmpty {
+                    if user.username.isEmpty || user.username != newUsername {
+                        print("🔄 Updating username: '\(user.username)' -> '\(newUsername)'")
+                        user.username = newUsername
+                        // Also update displayName if it's empty or was same as old username
+                        if user.displayName.isEmpty || user.displayName == user.username {
+                            user.displayName = newUsername
+                        }
+                        needsSave = true
+                    }
+                }
             } else {
-                // First login on this device, create a new User entity
-                user = User(context: viewContext)
-                user.id = userId
-                user.username = self.currentUsername ?? ""
-                user.displayName = self.currentUsername ?? "" // Default display name to username
-                user.isSharingWithMe = false
-                user.isBlocked = false
-                user.amISharingWith = false
+                print("⚠️ User not found with multi-account filter, trying legacy fetch...")
+                // Try to find user without owner filter (migration case)
+                let legacyFetchRequest: NSFetchRequest<User> = User.fetchRequest()
+                legacyFetchRequest.predicate = NSPredicate(format: "id == %@", userId)
+                
+                if let legacyUser = try viewContext.fetch(legacyFetchRequest).first {
+                    // Found legacy user without ownerId - update it
+                    print("🔄 Found legacy user with ownerId: \(legacyUser.value(forKey: "ownerId") as? String ?? "nil")")
+                    legacyUser.setOwnerToCurrentUser()
+                    
+                    // ✅ UPDATE: Also update username if provided
+                    if let newUsername = username, !newUsername.isEmpty {
+                        if legacyUser.username.isEmpty || legacyUser.username != newUsername {
+                            print("🔄 Updating legacy user username: '\(legacyUser.username)' -> '\(newUsername)'")
+                            legacyUser.username = newUsername
+                            if legacyUser.displayName.isEmpty {
+                                legacyUser.displayName = newUsername
+                            }
+                        }
+                    }
+                    
+                    user = legacyUser
+                    needsSave = true
+                    print("🔄 Migrated legacy user to current owner: \(legacyUser.displayName)")
+                    print("   New ownerId: \(legacyUser.value(forKey: "ownerId") as? String ?? "nil")")
+                } else {
+                    print("✨ No user found, creating new user...")
+                    // First login on this device, create a new User entity
+                    user = User(context: viewContext)
+                    user.id = userId
+                    user.setOwnerToCurrentUser()  // ✅ MULTI-ACCOUNT: Set owner
+                    user.username = username ?? ""  // ✅ FIX: Use parameter instead of self.currentUsername
+                    user.displayName = username ?? "" // Default display name to username
+                    user.isSharingWithMe = false
+                    user.isBlocked = false
+                    user.amISharingWith = false
+                    needsSave = true
+                    print("✨ Created new user in Core Data for ID: \(userId)")
+                    print("   username: \(user.username)")
+                    print("   ownerId: \(user.value(forKey: "ownerId") as? String ?? "nil")")
+                }
+            }
+            
+            // Save if needed
+            if needsSave {
                 try viewContext.save()
-                print("✨ Created new user in Core Data for ID: \(userId)")
+                print("💾 Saved user changes to Core Data")
             }
             
             // Update the published properties
             self.currentUserId = user.id
-            self.currentUsername = user.username
-            self.currentDisplayName = user.displayName
+            
+            // ✅ FIX: Only update currentUsername from Core Data if username parameter was NOT provided
+            // This prevents overwriting the username from login response with empty Core Data value
+            if username == nil {
+                // Restoring session - update from Core Data
+                self.currentUsername = user.username
+                self.currentDisplayName = user.displayName
+                print("📥 Updated currentUsername from Core Data: '\(user.username)'")
+            } else {
+                // Login/register - username already set in handleAuthSuccess(), just update displayName
+                self.currentDisplayName = user.displayName.isEmpty ? username : user.displayName
+                print("✅ Kept currentUsername from login response: '\(self.currentUsername ?? "")'")
+            }
             
             print("✅ Restored user data from Core Data:")
             print("   userId: \(user.id ?? "nil")")
             print("   username: \(user.username ?? "nil")")
             print("   displayName: \(user.displayName ?? "nil")")
             
+            // ✅ MIGRATION: Update legacy Chats and Messages with nil ownerId
+            migrateLegacyData(for: userId)
+            
         } catch {
             print("❌ Failed to fetch or create user from Core Data: \(error)")
+        }
+    }
+    
+    /// Migrate legacy data (Chats, Messages, Users) without ownerId to current user
+    private func migrateLegacyData(for userId: String) {
+        let context = viewContext
+        
+        // Migrate Chats
+        let chatFetch: NSFetchRequest<Chat> = Chat.fetchRequest()
+        chatFetch.predicate = NSPredicate(format: "ownerId == nil")
+        if let legacyChats = try? context.fetch(chatFetch) {
+            for chat in legacyChats {
+                chat.setOwnerToCurrentUser()
+            }
+            if !legacyChats.isEmpty {
+                try? context.save()
+                print("🔄 Migrated \(legacyChats.count) legacy chats to current owner")
+            }
+        }
+        
+        // Migrate Messages
+        let messageFetch: NSFetchRequest<Message> = Message.fetchRequest()
+        messageFetch.predicate = NSPredicate(format: "ownerId == nil")
+        if let legacyMessages = try? context.fetch(messageFetch) {
+            for message in legacyMessages {
+                message.setOwnerToCurrentUser()
+            }
+            if !legacyMessages.isEmpty {
+                try? context.save()
+                print("🔄 Migrated \(legacyMessages.count) legacy messages to current owner")
+            }
+        }
+        
+        // Migrate Users (other users in chats)
+        let userFetch: NSFetchRequest<User> = User.fetchRequest()
+        userFetch.predicate = NSPredicate(format: "ownerId == nil AND id != %@", userId)
+        if let legacyUsers = try? context.fetch(userFetch) {
+            for user in legacyUsers {
+                user.setOwnerToCurrentUser()
+            }
+            if !legacyUsers.isEmpty {
+                try? context.save()
+                print("🔄 Migrated \(legacyUsers.count) legacy users to current owner")
+            }
         }
     }
 }

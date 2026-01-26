@@ -52,8 +52,11 @@ class SettingsViewModel: ObservableObject {
             return
         }
 
-        let fetchRequest: NSFetchRequest<User> = User.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "id == %@", userId)
+        let fetchRequest = User.fetchRequestForCurrentUser()
+        // Combine with additional predicate
+        let ownerPredicate = fetchRequest.predicate!
+        let idPredicate = NSPredicate(format: "id == %@", userId)
+        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, idPredicate])
         fetchRequest.fetchLimit = 1
 
         if let user = try? context.fetch(fetchRequest).first,
@@ -82,8 +85,11 @@ class SettingsViewModel: ObservableObject {
         }
 
         // Find current user in Core Data
-        let fetchRequest: NSFetchRequest<User> = User.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "id == %@", userId)
+        let fetchRequest = User.fetchRequestForCurrentUser()
+        // Combine with additional predicate
+        let ownerPredicate = fetchRequest.predicate!
+        let idPredicate = NSPredicate(format: "id == %@", userId)
+        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, idPredicate])
         fetchRequest.fetchLimit = 1
 
         do {
@@ -117,8 +123,11 @@ class SettingsViewModel: ObservableObject {
 
         let trimmed = name.trimmingCharacters(in: .whitespaces)
 
-        let fetchRequest: NSFetchRequest<User> = User.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "id == %@", userId)
+        let fetchRequest = User.fetchRequestForCurrentUser()
+        // Combine with additional predicate
+        let ownerPredicate = fetchRequest.predicate!
+        let idPredicate = NSPredicate(format: "id == %@", userId)
+        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, idPredicate])
         fetchRequest.fetchLimit = 1
 
         do {
