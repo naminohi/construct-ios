@@ -42,6 +42,14 @@ class CryptoManager {
     
     /// UserDefaults key for prekey tracking
     private let preKeyTrackingKey = "tracked_prekey_ids"
+    
+    // MARK: - Garbage Collection
+    
+    /// Timer for periodic archive cleanup (24 hours)
+    private var gcTimer: Timer?
+    
+    /// GC interval (24 hours)
+    private let gcIntervalSeconds: TimeInterval = 24 * 60 * 60
 
     private init() {
         do {
@@ -90,7 +98,35 @@ class CryptoManager {
             self?.cleanupArchivedSessions()
             // 🆕 Load tracked prekey IDs from UserDefaults
             self?.loadTrackedPreKeyIds()
+            // 🆕 Start periodic GC timer (24 hours)
+            self?.startGarbageCollectionTimer()
         }
+    }
+    
+    // MARK: - Garbage Collection
+    
+    /// Start periodic garbage collection timer (runs every 24 hours)
+    private func startGarbageCollectionTimer() {
+        gcTimer?.invalidate()  // Cancel existing timer if any
+        
+        gcTimer = Timer.scheduledTimer(withTimeInterval: gcIntervalSeconds, repeats: true) { [weak self] _ in
+            Log.debug("🗑️ Running periodic archive garbage collection", category: "CryptoManager")
+            self?.cleanupArchivedSessions()
+        }
+        
+        // Add to RunLoop to ensure it fires even when app is in background
+        if let timer = gcTimer {
+            RunLoop.main.add(timer, forMode: .common)
+        }
+        
+        Log.debug("⏰ Started archive GC timer (interval: 24h)", category: "CryptoManager")
+    }
+    
+    deinit {
+        // Stop GC timer on dealloc
+        gcTimer?.invalidate()
+        // UniFFI manages memory automatically via Arc<T>
+        // No manual cleanup needed!
     }
     
     // MARK: - Prekey ID Tracking
@@ -339,11 +375,6 @@ class CryptoManager {
     /// Get session ID for a user (for Core Data storage)
     func getSessionId(for userId: String) -> String? {
         return userSessions[userId]
-    }
-
-    deinit {
-        // UniFFI manages memory automatically via Arc<T>
-        // No manual cleanup needed!
     }
 
     // MARK: - Key Management
