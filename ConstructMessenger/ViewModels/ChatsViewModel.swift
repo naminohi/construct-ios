@@ -219,6 +219,13 @@ class ChatsViewModel: ObservableObject {
                 }
 
             } catch {
+                // ✅ Check if polling was explicitly stopped (e.g., app went to background)
+                // In that case, don't log error or retry - this is expected behavior
+                guard isPolling else {
+                    Log.debug("📡 Polling stopped, exiting loop (error was: \(error.localizedDescription))", category: "ChatsViewModel")
+                    break
+                }
+                
                 Log.error("❌ Long polling error: \(error.localizedDescription)", category: "ChatsViewModel")
                 
                 // ✅ EXPONENTIAL BACKOFF: Increase delay with each consecutive failure
