@@ -43,8 +43,11 @@ struct MessageBubble: View {
     }
 
     var body: some View {
-        // ✅ Check if this is a system message
-        if let content = message.decryptedContent, content.hasPrefix("[SYSTEM]") {
+        // ✅ Check if this is a system message by fromUserId
+        if message.fromUserId == "SYSTEM" {
+            systemMessageView(message.decryptedContent ?? "System message")
+        } else if let content = message.decryptedContent, content.hasPrefix("[SYSTEM]") {
+            // ✅ Legacy support for [SYSTEM] prefix
             systemMessageView(content.replacingOccurrences(of: "[SYSTEM]", with: "").trimmingCharacters(in: .whitespaces))
         } else {
             regularMessageView
