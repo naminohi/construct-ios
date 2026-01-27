@@ -371,6 +371,69 @@ class ChatsViewModel: ObservableObject {
         context.delete(chat)
         try? context.save()
     }
+    
+    // MARK: - Handle END_SESSION
+    
+    /// Handle incoming END_SESSION control message
+    private func handleEndSession(from userId: String) {
+        Log.info("🛑 Handling END_SESSION from \(userId)", category: "ChatsViewModel")
+        
+        // 1. Archive the current session
+        CryptoManager.shared.archiveSession(for: userId, reason: .endSessionReceived)
+        Log.debug("✅ Session archived for \(userId)", category: "ChatsViewModel")
+        
+        // 2. Add system message to chat
+        addSystemMessage(
+            "Encrypted session was reset. Send a message to re-establish encryption.",
+            toUserId: userId
+        )
+        
+        // 3. Remove any pending messages for this user
+        pendingFirstMessages.removeValue(forKey: userId)
+        
+        Log.info("✅ END_SESSION handled for \(userId)", category: "ChatsViewModel")
+    }
+    
+    /// Add a system message to chat
+    private func addSystemMessage(_ text: String, toUserId userId: String) {
+        guard let context = viewContext,
+              let currentUserId = SessionManager.shared.currentUserId else { return }
+        
+        // Find or create chat
+        let fetchRequest = Chat.fetchRequestForCurrentUser()
+        let ownerPredicate = fetchRequest.predicate!
+        let otherUserPredicate = NSPredicate(format: "otherUser.id == %@", userId)
+        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, otherUserPredicate])
+        
+        guard let chat = try? context.fetch(fetchRequest).first else {
+            Log.error("❌ Cannot add system message: chat not found for \(userId)", category: "ChatsViewModel")
+            return
+        }
+        
+        let message = Message(context: context)
+        message.id = UUID().uuidString
+        message.setOwnerToCurrentUser()
+        message.chat = chat
+        message.fromUserId = "SYSTEM"  // ← Special sender for system messages
+        message.toUserId = currentUserId
+        message.encryptedContent = ""  // System messages are not encrypted
+        message.decryptedContent = text
+        message.suiteId = 0
+        message.timestamp = Date()
+        message.isSentByMe = false
+        message.deliveryStatus = .delivered  // ← System messages are always "delivered"
+        message.retryCount = 0
+        
+        chat.lastMessageText = text
+        chat.lastMessageTime = Date()
+        
+        do {
+            try context.save()
+            Log.debug("✅ System message added to chat with \(userId)", category: "ChatsViewModel")
+        } catch {
+            Log.error("❌ Failed to save system message: \(error)", category: "ChatsViewModel")
+        }
+    }
 
     // MARK: - Handle Public Key Bundle (for receiving session initialization)
     private func handlePublicKeyBundle(_ data: PublicKeyBundleData) {
@@ -546,6 +609,13 @@ class ChatsViewModel: ObservableObject {
               let currentUserId = SessionManager.shared.currentUserId else { return }
 
         let otherUserId = message.from == currentUserId ? message.to : message.from
+        
+        // 1. Check if this is an END_SESSION control message
+        if message.isEndSession {
+            Log.info("🛑 Received END_SESSION from \(otherUserId)", category: "ChatsViewModel")
+            handleEndSession(from: otherUserId)
+            return
+        }
 
         let fetchRequest = Chat.fetchRequestForCurrentUser()
         // Combine with additional predicate
