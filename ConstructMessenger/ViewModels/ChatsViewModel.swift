@@ -726,11 +726,19 @@ class ChatsViewModel: ObservableObject {
                 Log.info("✅ Successfully saved decrypted pending message", category: "ChatsViewModel")
             }
             
-            // Remove from pending messages
+            // Remove from pending messages - success!
             pendingFirstMessages.removeValue(forKey: data.userId)
+            
+        } catch CryptoError.SessionInitializationFailed(let message) {
+            // Log detailed error from Rust core
+            Log.error("❌ Session initialization failed: \(message)", category: "ChatsViewModel")
+            Log.info("🔄 Keeping message in pending for retry", category: "ChatsViewModel")
+            // KEEP in pending for retry - don't remove!
             
         } catch {
             Log.error("❌ Failed to initialize receiving session: \(error.localizedDescription)", category: "ChatsViewModel")
+            Log.info("🔄 Keeping message in pending for retry", category: "ChatsViewModel")
+            // Other errors: keep in pending for retry
         }
     }
     
