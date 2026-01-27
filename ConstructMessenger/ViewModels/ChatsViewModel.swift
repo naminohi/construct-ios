@@ -307,6 +307,57 @@ class ChatsViewModel: ObservableObject {
         return chat
     }
 
+    // MARK: - END_SESSION Protocol
+    
+    /// Send END_SESSION to a specific user
+    /// This notifies the peer that we're resetting the encrypted session
+    func sendEndSession(to userId: String, reason: String = "manual_reset") async throws {
+        Log.info("🔄 Sending END_SESSION to \(userId): \(reason)", category: "ChatsViewModel")
+        
+        // 1. Send END_SESSION message via API
+        do {
+            let response = try await MessagingAPI.shared.sendEndSession(to: userId, reason: reason)
+            Log.info("✅ END_SESSION sent successfully: \(response.messageId)", category: "ChatsViewModel")
+        } catch {
+            Log.error("❌ Failed to send END_SESSION: \(error)", category: "ChatsViewModel")
+            throw error
+        }
+        
+        // 2. Archive local session
+        CryptoManager.shared.archiveSession(for: userId, reason: .manualReset)
+        
+        // 3. Clear archived sessions (fresh start)
+        CryptoManager.shared.clearArchivedSessions(for: userId)
+        
+        Log.info("✅ END_SESSION complete: session archived and cleared", category: "ChatsViewModel")
+    }
+    
+    /// Send END_SESSION to all contacts (e.g., on logout)
+    /// Best-effort delivery - continues even if some fail
+    func sendEndSessionToAllContacts(reason: String = "logout") async {
+        Log.info("🔄 Sending END_SESSION to all contacts: \(reason)", category: "ChatsViewModel")
+        
+        // Get all users with active sessions
+        let sessionUserIds = CryptoManager.shared.getAllSessionUserIds()
+        Log.info("📋 Found \(sessionUserIds.count) active sessions", category: "ChatsViewModel")
+        
+        var successCount = 0
+        var failCount = 0
+        
+        for userId in sessionUserIds {
+            do {
+                try await sendEndSession(to: userId, reason: reason)
+                successCount += 1
+            } catch {
+                Log.error("❌ Failed to send END_SESSION to \(userId): \(error)", category: "ChatsViewModel")
+                failCount += 1
+                // Continue anyway - best effort
+            }
+        }
+        
+        Log.info("✅ END_SESSION broadcast complete: \(successCount) sent, \(failCount) failed", category: "ChatsViewModel")
+    }
+
     // MARK: - Delete Chat
     func deleteChat(chat: Chat) {
         guard let context = viewContext else { return }

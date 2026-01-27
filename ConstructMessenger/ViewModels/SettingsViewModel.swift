@@ -16,6 +16,7 @@ class SettingsViewModel: ObservableObject {
     @Published var username: String = ""
     @Published var userId: String = ""
     @Published var profileImage: UIImage?
+    @Published var showResetAllSessionsConfirm = false  // ← NEW
 
     private var viewContext: NSManagedObjectContext?
 

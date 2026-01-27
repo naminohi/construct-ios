@@ -38,7 +38,26 @@ struct SettingsView: View {
                     }
                 }
 
-                // TODO: Add Security Section here
+                // MARK: - Security Section
+                Section {
+                    Button(role: .destructive) {
+                        viewModel.showResetAllSessionsConfirm = true
+                    } label: {
+                        Label {
+                            Text("Reset All Sessions")
+                                .foregroundColor(.red)
+                        } icon: {
+                            Image(systemName: "arrow.triangle.2.circlepath.circle")
+                                .foregroundColor(.red)
+                        }
+                    }
+                } header: {
+                    Text("Security")
+                } footer: {
+                    Text("This will reset all encrypted sessions with your contacts. Use if you suspect your encryption keys are compromised.")
+                }
+
+                // TODO: Add more Security options:
                 // - PIN code protection (6-10 digits)
                 // - Biometric authentication (Face ID / Touch ID)
                 // - Auto-lock timeout settings
@@ -160,6 +179,23 @@ struct SettingsView: View {
                     userId: viewModel.userId,
                     username: viewModel.username
                 )
+            }
+            .confirmationDialog(
+                "Reset All Sessions?",
+                isPresented: $viewModel.showResetAllSessionsConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Reset All", role: .destructive) {
+                    Task {
+                        await ChatsViewModel().sendEndSessionToAllContacts(
+                            reason: "user_requested_reset_all"
+                        )
+                        Log.info("✅ All sessions reset by user", category: "SettingsView")
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This will reset encrypted sessions with all your contacts. They will need to send you a message to re-establish encryption.")
             }
         }
     }

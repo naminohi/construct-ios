@@ -259,7 +259,12 @@ class AuthViewModel: ObservableObject {
 
     func logout() {
         Task {
-            // Logout via REST API
+            // 0. Send END_SESSION to all contacts (NEW!)
+            let chatsVM = ChatsViewModel()
+            await chatsVM.sendEndSessionToAllContacts(reason: "logout")
+            Log.info("✅ END_SESSION sent to all contacts on logout", category: "Auth")
+            
+            // 1. Logout via REST API
             if let token = SessionManager.shared.sessionToken {
                 do {
                     try await AuthAPI.shared.logout(sessionToken: token)

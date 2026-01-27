@@ -16,6 +16,7 @@ struct ChatView: View {
     @State private var messageText = ""
     @State private var replyingTo: Message?
     @State private var showingUserProfile = false
+    @State private var showResetSessionConfirm = false  // ← NEW
     @State private var searchText = ""
     @State private var isSearchActive = false
     @State private var hasScrolledToBottom = false
@@ -229,6 +230,34 @@ struct ChatView: View {
                 UserProfileView(user: user)
             }
         }
+        .confirmationDialog(
+            "Reset Session?",
+            isPresented: $showResetSessionConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Reset Session", role: .destructive) {
+                Task {
+                    guard let otherUserId = viewModel.chat.otherUser?.id else {
+                        Log.error("❌ Cannot reset session: no other user", category: "ChatView")
+                        return
+                    }
+                    
+                    do {
+                        let chatsVM = ChatsViewModel()
+                        try await chatsVM.sendEndSession(
+                            to: otherUserId,
+                            reason: "user_requested"
+                        )
+                        Log.info("✅ Session reset requested by user", category: "ChatView")
+                    } catch {
+                        Log.error("❌ Failed to reset session: \(error)", category: "ChatView")
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will re-establish a new encrypted session. Messages in transit may be lost.")
+        }
     }
     
     // MARK: - View Components
@@ -328,6 +357,24 @@ struct ChatView: View {
     private var toolbarTrailingButtons: some View {
         HStack(spacing: 12) {
             if !isEditMode {
+                // Menu with additional actions
+                Menu {
+                    Button {
+                        isSearchActive.toggle()
+                    } label: {
+                        Label("Search", systemImage: "magnifyingglass")
+                    }
+                    
+                    Button(role: .destructive) {
+                        showResetSessionConfirm = true
+                    } label: {
+                        Label("Reset Session", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .foregroundColor(.blue)
+                }
+            } else {
                 Button {
                     withAnimation {
                         isSearchActive.toggle()

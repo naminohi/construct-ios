@@ -435,6 +435,12 @@ class CryptoManager {
         }
         return exists
     }
+    
+    /// Get all user IDs with active sessions
+    /// Used for sending END_SESSION to all contacts on logout
+    func getAllSessionUserIds() -> [String] {
+        return Array(userSessions.keys)
+    }
 
     /// Delete a session for a user (called when deleting a chat)
     /// Archive a session instead of deleting it
