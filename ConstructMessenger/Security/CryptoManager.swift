@@ -23,6 +23,17 @@ class CryptoManager {
     private var userSessions: [String: String] = [:]
     // Maps a user ID to its associated suite ID
     private var userSuiteIds: [String: UInt16] = [:]
+    
+    // MARK: - Session Archive
+    
+    /// Archived sessions for out-of-order message support
+    private var archivedSessions: [String: [SessionArchive]] = [:]
+    
+    /// Maximum archived sessions per user
+    private let maxArchivedSessions = 3
+    
+    /// How long to keep archived sessions (7 days)
+    private let archiveRetentionDays = 7
 
     private init() {
         do {
@@ -67,6 +78,8 @@ class CryptoManager {
         // This will be called later when Core Data is ready
         DispatchQueue.main.async { [weak self] in
             self?.restoreRecentSessions(limit: 10)
+            // 🆕 Run garbage collection after restoring sessions
+            self?.cleanupArchivedSessions()
         }
     }
 
@@ -87,6 +100,91 @@ class CryptoManager {
             }
         } catch {
             Log.error("❌ Session export failed: \(error)", category: "CryptoManager")
+        }
+    }
+    
+    // MARK: - Session Archive Persistence
+    
+    /// Save archived sessions to Keychain
+    private func saveArchivedSessionsToKeychain(for userId: String) {
+        guard let archives = archivedSessions[userId] else { return }
+        
+        do {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            let data = try encoder.encode(archives)
+            
+            let key = "session_archives_\(userId)"
+            let saved = KeychainManager.shared.saveData(data, forKey: key)
+            
+            if saved {
+                Log.debug("💾 Saved \(archives.count) archived sessions for \(userId)", category: "CryptoManager")
+            } else {
+                Log.error("❌ Failed to save archived sessions to Keychain", category: "CryptoManager")
+            }
+        } catch {
+            Log.error("❌ Failed to encode archived sessions: \(error)", category: "CryptoManager")
+        }
+    }
+    
+    /// Load archived sessions from Keychain
+    private func loadArchivedSessionsFromKeychain(for userId: String) -> [SessionArchive]? {
+        let key = "session_archives_\(userId)"
+        guard let data = KeychainManager.shared.loadData(forKey: key) else {
+            return nil
+        }
+        
+        do {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let archives = try decoder.decode([SessionArchive].self, from: data)
+            Log.debug("📦 Loaded \(archives.count) archived sessions for \(userId)", category: "CryptoManager")
+            return archives
+        } catch {
+            Log.error("❌ Failed to decode archived sessions: \(error)", category: "CryptoManager")
+            return nil
+        }
+    }
+    
+    /// Clear all archived sessions for a user
+    func clearArchivedSessions(for userId: String) {
+        archivedSessions.removeValue(forKey: userId)
+        
+        let key = "session_archives_\(userId)"
+        KeychainManager.shared.deleteData(forKey: key)
+        
+        Log.info("🗑️ Cleared all archived sessions for \(userId)", category: "CryptoManager")
+    }
+    
+    /// Garbage collection: Remove archived sessions older than retention period
+    /// Called on app launch and periodically
+    func cleanupArchivedSessions() {
+        let cutoffDate = Date().addingTimeInterval(-TimeInterval(archiveRetentionDays * 24 * 60 * 60))
+        var totalRemoved = 0
+        
+        // Get all user IDs with archived sessions
+        // Since we can't enumerate Keychain, we'll clean up what's in memory
+        // and rely on lazy loading from Keychain
+        for userId in archivedSessions.keys {
+            guard var archives = archivedSessions[userId] else { continue }
+            
+            let beforeCount = archives.count
+            archives.removeAll { $0.archivedAt < cutoffDate }
+            let afterCount = archives.count
+            let removed = beforeCount - afterCount
+            
+            if removed > 0 {
+                archivedSessions[userId] = archives.isEmpty ? nil : archives
+                saveArchivedSessionsToKeychain(for: userId)
+                totalRemoved += removed
+                Log.debug("🗑️ Removed \(removed) expired archives for \(userId)", category: "CryptoManager")
+            }
+        }
+        
+        if totalRemoved > 0 {
+            Log.info("♻️ Garbage collection complete: removed \(totalRemoved) expired session archives", category: "CryptoManager")
+        } else {
+            Log.debug("✅ Garbage collection: no expired archives found", category: "CryptoManager")
         }
     }
 
@@ -339,6 +437,67 @@ class CryptoManager {
     }
 
     /// Delete a session for a user (called when deleting a chat)
+    /// Archive a session instead of deleting it
+    /// Allows fallback decryption for out-of-order messages
+    func archiveSession(for userId: String, reason: ArchiveReason) {
+        guard let core = core else {
+            Log.error("❌ Cannot archive session: Core not initialized", category: "CryptoManager")
+            return
+        }
+        
+        Log.info("📦 Archiving session for \(userId), reason: \(reason.rawValue)", category: "CryptoManager")
+        
+        // 1. Export current session to JSON
+        do {
+            let sessionJson = try core.exportSessionJson(contactId: userId)
+            
+            // 2. Create archive entry
+            let archive = SessionArchive(
+                sessionJson: sessionJson,
+                archivedAt: Date(),
+                reason: reason
+            )
+            
+            // 3. Add to archives (keep max limit)
+            var archives = archivedSessions[userId] ?? []
+            archives.append(archive)
+            
+            // Keep only newest N archives
+            if archives.count > maxArchivedSessions {
+                archives = Array(archives.suffix(maxArchivedSessions))
+                Log.debug("🗑️ Trimmed archives to max \(maxArchivedSessions)", category: "CryptoManager")
+            }
+            
+            archivedSessions[userId] = archives
+            
+            // 4. Save archives to Keychain
+            saveArchivedSessionsToKeychain(for: userId)
+            
+            Log.info("✅ Session archived (\(archives.count) total for user)", category: "CryptoManager")
+            
+        } catch {
+            Log.error("❌ Failed to export session for archiving: \(error)", category: "CryptoManager")
+        }
+        
+        // 5. Remove from active sessions
+        userSessions.removeValue(forKey: userId)
+        Log.info("✅ Removed session from memory: \(userId)", category: "CryptoManager")
+        
+        // 6. Remove from Rust core
+        let removed = core.removeSession(contactId: userId)
+        if removed {
+            Log.info("✅ Removed session from Rust core: \(userId)", category: "CryptoManager")
+        } else {
+            Log.info("⚠️ Session not found in Rust core: \(userId)", category: "CryptoManager")
+        }
+        
+        // 7. Remove from Keychain
+        KeychainManager.shared.deleteSession(for: userId)
+        Log.info("✅ Removed session from Keychain: \(userId)", category: "CryptoManager")
+    }
+    
+    /// Delete a session (legacy - use archiveSession instead)
+    @available(*, deprecated, message: "Use archiveSession() instead for better error recovery")
     func deleteSession(for userId: String) {
         // Remove from the Swift session mapping
         if userSessions.removeValue(forKey: userId) != nil {
@@ -492,11 +651,10 @@ class CryptoManager {
             Log.error("   Session ID: \(sessionId)", category: "CryptoManager")
             Log.error("   Message length: \(message.utf8.count) bytes", category: "CryptoManager")
             
-            // Check if it's a session-related error that requires deletion
-            // For now, delete session on any encryption error to allow reinitialization
-            // TODO: Could be more selective based on error type
-            Log.debug("🔄 Deleting session for \(userId) to allow reinitialization", category: "CryptoManager")
-            deleteSession(for: userId)
+            // Check if it's a session-related error that requires archiving
+            // Archive session to allow fallback with archived sessions
+            Log.debug("🔄 Archiving session for \(userId) to allow reinitialization", category: "CryptoManager")
+            archiveSession(for: userId, reason: .decryptionFailed)
 
             throw CryptoManagerError.encryptionFailed
         } catch {
@@ -504,9 +662,9 @@ class CryptoManager {
             Log.error("   Session ID: \(sessionId)", category: "CryptoManager")
             Log.error("   Message length: \(message.utf8.count) bytes", category: "CryptoManager")
             
-            // Delete session on unexpected errors too
-            Log.debug("🔄 Deleting session for \(userId) to allow reinitialization", category: "CryptoManager")
-            deleteSession(for: userId)
+            // Archive session on unexpected errors too
+            Log.debug("🔄 Archiving session for \(userId) to allow reinitialization", category: "CryptoManager")
+            archiveSession(for: userId, reason: .decryptionFailed)
 
             throw CryptoManagerError.encryptionFailed
         }
@@ -514,6 +672,7 @@ class CryptoManager {
 
     /// Decrypt a ChatMessage directly using clean API
     /// Uses clean API - Rust handles all MessagePack internally
+    /// Now with Session Archive fallback support
     func decryptMessage(_ message: ChatMessage) throws -> String {
         guard let core = core else {
             throw CryptoManagerError.coreNotInitialized
@@ -556,22 +715,92 @@ class CryptoManager {
             return plaintext
         } catch let error as CryptoError {
             Log.error("❌ Decryption failed for messageNumber \(message.messageNumber): \(error)", category: "CryptoManager")
+            
+            // 🆕 Try archived sessions before giving up
+            if let plaintext = try? tryDecryptWithArchivedSessions(message: message) {
+                Log.info("✅ Successfully decrypted with archived session!", category: "CryptoManager")
+                return plaintext
+            }
+            
             Log.error("   This usually means session desynchronization (sender and receiver out of sync)", category: "CryptoManager")
 
-            // ✅ Auto-delete corrupted session to allow reinitialization
-            Log.debug("🔄 Deleting corrupted session for \(message.from) to allow reinitialization", category: "CryptoManager")
-            deleteSession(for: message.from)
+            // ✅ Archive corrupted session (don't delete immediately)
+            Log.debug("🔄 Archiving corrupted session for \(message.from) to allow reinitialization", category: "CryptoManager")
+            archiveSession(for: message.from, reason: .decryptionFailed)
 
             throw CryptoManagerError.decryptionFailed
         } catch {
             Log.error("❌ Unexpected decryption error: \(error)", category: "CryptoManager")
 
-            // ✅ Auto-delete corrupted session to allow reinitialization
-            Log.debug("🔄 Deleting corrupted session for \(message.from) to allow reinitialization", category: "CryptoManager")
-            deleteSession(for: message.from)
+            // ✅ Archive corrupted session
+            Log.debug("🔄 Archiving corrupted session for \(message.from) to allow reinitialization", category: "CryptoManager")
+            archiveSession(for: message.from, reason: .decryptionFailed)
 
             throw CryptoManagerError.decryptionFailed
         }
+    }
+    
+    /// Try to decrypt message with archived sessions
+    /// Returns plaintext if successful, throws if all archives fail
+    private func tryDecryptWithArchivedSessions(message: ChatMessage) throws -> String {
+        guard let core = core else {
+            throw CryptoManagerError.coreNotInitialized
+        }
+        
+        // Load archives from memory or Keychain
+        var archives = archivedSessions[message.from]
+        if archives == nil {
+            archives = loadArchivedSessionsFromKeychain(for: message.from)
+            if let loaded = archives {
+                archivedSessions[message.from] = loaded
+            }
+        }
+        
+        guard let archives = archives, !archives.isEmpty else {
+            Log.debug("📦 No archived sessions available for \(message.from)", category: "CryptoManager")
+            throw CryptoManagerError.sessionNotFound
+        }
+        
+        Log.info("📦 Trying \(archives.count) archived sessions for \(message.from)", category: "CryptoManager")
+        
+        // Try each archived session (newest first - already ordered)
+        for (index, archive) in archives.enumerated().reversed() {
+            do {
+                // Temporarily restore archived session to Rust core
+                _ = try core.importSessionJson(contactId: message.from, sessionJson: archive.sessionJson)
+                
+                // Try to decrypt
+                let plaintext = try core.decryptMessage(
+                    sessionId: message.from,  // contactId is used as sessionId
+                    ephemeralPublicKey: [UInt8](message.ephemeralPublicKey),
+                    messageNumber: message.messageNumber,
+                    content: message.content
+                )
+                
+                Log.info("✅ Decrypted with archived session #\(index) (archived at: \(archive.archivedAt))", category: "CryptoManager")
+                
+                // Success! Restore this session as current
+                userSessions[message.from] = message.from
+                saveSessionToKeychain(for: message.from)
+                
+                // Remove from archives (it's valid again)
+                var updatedArchives = archivedSessions[message.from] ?? []
+                updatedArchives.remove(at: index)
+                archivedSessions[message.from] = updatedArchives
+                saveArchivedSessionsToKeychain(for: message.from)
+                
+                Log.info("♻️ Restored archived session as current", category: "CryptoManager")
+                
+                return plaintext
+                
+            } catch {
+                Log.debug("❌ Archive #\(index) failed: \(error)", category: "CryptoManager")
+                continue
+            }
+        }
+        
+        Log.info("⚠️ All \(archives.count) archived sessions failed to decrypt", category: "CryptoManager")
+        throw CryptoManagerError.decryptionFailed
     }
 }
 
@@ -604,5 +833,28 @@ enum CryptoManagerError: Error, LocalizedError {
         case .invalidKeyData:
             return "Invalid key data"
         }
+    }
+}
+
+// MARK: - Session Archive
+
+/// Reason for archiving a session
+enum ArchiveReason: String, Codable {
+    case decryptionFailed = "decryption_failed"
+    case endSessionReceived = "end_session_received"
+    case manualReset = "manual_reset"
+    case preKeyChanged = "prekey_changed"
+}
+
+/// Archived session data for fallback decryption
+struct SessionArchive: Codable {
+    let sessionJson: String  // Exported session from Rust
+    let archivedAt: Date
+    let reason: ArchiveReason
+    
+    /// Check if archive is expired (older than retention period)
+    func isExpired(retentionDays: Int) -> Bool {
+        let expirationDate = Calendar.current.date(byAdding: .day, value: retentionDays, to: archivedAt) ?? Date()
+        return Date() > expirationDate
     }
 }

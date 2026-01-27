@@ -196,6 +196,23 @@ class KeychainManager {
         // For now, return empty array - we'll track sessions in Core Data
         return []
     }
+    
+    // MARK: - Generic Data Storage (for archived sessions, etc.)
+    
+    /// Save generic data to Keychain
+    func saveData(_ data: Data, forKey key: String) -> Bool {
+        return save(data, forKey: key, accessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly)
+    }
+    
+    /// Load generic data from Keychain
+    func loadData(forKey key: String) -> Data? {
+        return load(forKey: key)
+    }
+    
+    /// Delete generic data from Keychain
+    func deleteData(forKey key: String) {
+        delete(forKey: key)
+    }
 
     // MARK: - Generic Helpers
     private func save(_ data: Data, forKey key: String, accessible: CFString) -> Bool {
