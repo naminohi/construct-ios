@@ -570,9 +570,9 @@ class AuthViewModel: ObservableObject {
             self.currentUser = user
             
             print("✅ Restored user data from Core Data:")
-            print("   userId: \(user.id ?? "nil")")
-            print("   username: \(user.username ?? "nil")")
-            print("   displayName: \(user.displayName ?? "nil")")
+            print("   userId: \(user.id)")
+            print("   username: \(user.username)")
+            print("   displayName: \(user.displayName)")
             
             // ✅ MIGRATION: Update legacy Chats and Messages with nil ownerId
             migrateLegacyData(for: userId)

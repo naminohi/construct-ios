@@ -30,8 +30,8 @@ class SettingsViewModel: ObservableObject {
         }
 
         userId = authViewModel.currentUserId ?? SessionManager.shared.currentUserId ?? ""
-        username = authViewModel.currentUsername ?? ""
-        displayName = authViewModel.currentDisplayName ?? ""
+        username = authViewModel.currentUsername
+        displayName = authViewModel.currentDisplayName
 
         print("📋 SettingsViewModel: Loaded user info")
         print("   userId: \(userId)")

@@ -377,6 +377,7 @@ struct ImagePicker: UIViewControllerRepresentable {
     }
 }
 
+#if DEBUG
 #Preview {
     let container = PreviewHelpers.createPreviewContainer()
     let context = container.viewContext
@@ -390,7 +391,7 @@ struct ImagePicker: UIViewControllerRepresentable {
     try? context.save()
 
     let authViewModel = AuthViewModel(context: context)
-    authViewModel.configureMockAuth()  // ✅ REFACTOR Phase 1.2
+    authViewModel.configureMockAuth()
 
     return NavigationStack {
         AccountSettingsView()
@@ -398,3 +399,4 @@ struct ImagePicker: UIViewControllerRepresentable {
             .environmentObject(authViewModel)
     }
 }
+#endif

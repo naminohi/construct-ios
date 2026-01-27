@@ -28,17 +28,17 @@ struct MainTabView: View {
     }
 }
 
+#if DEBUG
 #Preview {
     let container = PreviewHelpers.createPreviewContainer()
     let context = container.viewContext
     
-    // ✅ Ensure context is ready before using it
     guard context.persistentStoreCoordinator != nil else {
         fatalError("Preview Core Data context not ready")
     }
     
     let authViewModel = AuthViewModel(context: context)
-    authViewModel.configureMockAuth()  // ✅ REFACTOR Phase 1.2
+    authViewModel.configureMockAuth()
     
     let chatsViewModel = ChatsViewModel()
     chatsViewModel.setContext(context)
@@ -55,3 +55,4 @@ struct MainTabView: View {
         .environmentObject(authViewModel)
         .environmentObject(chatsViewModel)
 }
+#endif

@@ -473,6 +473,7 @@ private struct ScrollOffsetPreferenceKey: PreferenceKey {
     }
 }
 
+#if DEBUG
 #Preview {
     let container = PreviewHelpers.createPreviewContainer()
     let context = container.viewContext
@@ -493,4 +494,5 @@ private struct ScrollOffsetPreferenceKey: PreferenceKey {
             .environment(\.managedObjectContext, context)
     }
 }
+#endif
 
