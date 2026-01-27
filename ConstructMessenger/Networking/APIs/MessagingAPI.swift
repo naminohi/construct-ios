@@ -98,4 +98,31 @@ class MessagingAPI {
         
         return response
     }
+    
+    /// Send END_SESSION control message
+    /// POST /api/v1/control
+    func sendEndSession(to recipientId: String, reason: String? = nil) async throws -> EndSessionResponse {
+        let endpoint = "/api/v1/control"
+        
+        var requestBody: [String: Any] = [
+            "recipientId": recipientId
+        ]
+        
+        if let reason = reason {
+            requestBody["reason"] = reason
+        }
+        
+        Log.info("📤 Sending END_SESSION to \(recipientId), reason: \(reason ?? "none")", category: "Network")
+        
+        let response: EndSessionResponse = try await client.performRequest(
+            endpoint: endpoint,
+            method: "POST",
+            body: requestBody,
+            requiresAuth: true
+        )
+        
+        Log.info("✅ END_SESSION sent successfully, messageId: \(response.messageId)", category: "Network")
+        
+        return response
+    }
 }

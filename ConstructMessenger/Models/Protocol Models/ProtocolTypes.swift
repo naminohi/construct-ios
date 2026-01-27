@@ -12,14 +12,28 @@ struct ChatMessage: Codable, Identifiable {
     let id: String
     let from: String
     let to: String
+    
+    // Message type (from server Phase 4.5)
+    let messageType: String?  // "CONTROL_MESSAGE" | "DIRECT_MESSAGE" | nil (legacy)
 
     // Double Ratchet fields (per API_V3_SPEC.md section 5.2.6)
+    // Optional for CONTROL_MESSAGE type
     let ephemeralPublicKey: Data  // Binary 32 bytes (dh_public_key from EncryptedRatchetMessage)
     let messageNumber: UInt32  // message_number from EncryptedRatchetMessage
     let content: String  // Base64 encrypted content (ciphertext from EncryptedRatchetMessage)
     let suiteId: UInt16
 
     let timestamp: UInt64
+    
+    /// Check if this is an END_SESSION control message
+    var isEndSession: Bool {
+        messageType == "CONTROL_MESSAGE" && content == "END_SESSION"
+    }
+    
+    /// Check if this is a regular encrypted message
+    var isRegularMessage: Bool {
+        messageType == "DIRECT_MESSAGE" || messageType == nil  // nil for legacy messages
+    }
 }
 
 // MARK: - Public User Info

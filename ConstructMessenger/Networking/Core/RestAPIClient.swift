@@ -360,11 +360,23 @@ struct ChatMessageResponse: Codable {
     let id: String
     let from: String
     let to: String
+    let messageType: String?  // ← NEW: "CONTROL_MESSAGE" | "DIRECT_MESSAGE"
     let ephemeralPublicKey: String?
     let messageNumber: UInt32?
     let content: String
     let suiteId: UInt16
     let timestamp: UInt64
+    
+    enum CodingKeys: String, CodingKey {
+        case id, from, to, content, suiteId, timestamp
+        case messageType = "messageType"
+        case ephemeralPublicKey = "ephemeralPublicKey"
+        case messageNumber = "messageNumber"
+    }
+    
+    var isControlMessage: Bool {
+        messageType == "CONTROL_MESSAGE"
+    }
     
     func toChatMessage() throws -> ChatMessage {
         let ephemeralKeyData: Data
@@ -375,20 +387,39 @@ struct ChatMessageResponse: Codable {
             }
             ephemeralKeyData = keyData
         } else {
+            // Control messages or legacy messages may not have ephemeralPublicKey
             ephemeralKeyData = Data()
-            Log.debug("ℹ️ Message has no ephemeralPublicKey, using empty data", category: "Network")
+            if isControlMessage {
+                Log.debug("ℹ️ Control message has no ephemeralPublicKey (expected)", category: "Network")
+            } else {
+                Log.debug("ℹ️ Message has no ephemeralPublicKey, using empty data", category: "Network")
+            }
         }
         
         return ChatMessage(
             id: id,
             from: from,
             to: to,
+            messageType: messageType,  // ← NEW: Pass messageType
             ephemeralPublicKey: ephemeralKeyData,
             messageNumber: messageNumber ?? 0,
             content: content,
             suiteId: suiteId,
             timestamp: timestamp
         )
+    }
+}
+
+/// Response from sending END_SESSION control message
+struct EndSessionResponse: Codable {
+    let status: String
+    let messageId: String
+    let type: String
+    
+    enum CodingKeys: String, CodingKey {
+        case status
+        case messageId = "message_id"
+        case type
     }
 }
 

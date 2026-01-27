@@ -519,6 +519,7 @@ class ChatViewModel: NSObject, ObservableObject {
                 id: messageId,
                 from: currentUserId,
                 to: recipientId,
+                messageType: nil,  // Will be set by server as "DIRECT_MESSAGE"
                 ephemeralPublicKey: components.ephemeralPublicKey,  // Binary 32 bytes
                 messageNumber: components.messageNumber,
                 content: components.content,  // Base64(nonce || ciphertext_with_tag)
@@ -657,6 +658,7 @@ class ChatViewModel: NSObject, ObservableObject {
                     id: message.id,
                     from: currentUserId,
                     to: recipientId,
+                    messageType: nil,  // Will be set by server
                     ephemeralPublicKey: components.ephemeralPublicKey,
                     messageNumber: components.messageNumber,
                     content: components.content,
@@ -912,6 +914,7 @@ class ChatViewModel: NSObject, ObservableObject {
                 id: messageId,
                 from: currentUserId,
                 to: recipientId,
+                messageType: nil,  // Will be set by server
                 ephemeralPublicKey: components.ephemeralPublicKey,
                 messageNumber: components.messageNumber,
                 content: components.content,

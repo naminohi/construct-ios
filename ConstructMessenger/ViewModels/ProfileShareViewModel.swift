@@ -123,6 +123,7 @@ class ProfileShareViewModel: ObservableObject {
                     id: UUID().uuidString,
                     from: currentUserId,
                     to: userId,
+                    messageType: nil,  // Will be set by server
                     ephemeralPublicKey: encryptedComponents.ephemeralPublicKey,
                     messageNumber: encryptedComponents.messageNumber,
                     content: encryptedComponents.content,
