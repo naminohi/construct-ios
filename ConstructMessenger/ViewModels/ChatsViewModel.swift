@@ -499,6 +499,14 @@ class ChatsViewModel: ObservableObject {
 
         guard let context = viewContext else { return }
         guard SessionManager.shared.currentUserId != nil else { return }
+        
+        // 🆕 Track prekey ID and detect reinstall
+        // Use signedPrekeyPublic as the prekey identifier
+        let prekeyChanged = CryptoManager.shared.trackPreKeyId(data.signedPrekeyPublic, for: data.userId)
+        if prekeyChanged {
+            Log.info("⚠️ Prekey changed for \(data.userId) - potential reinstall detected!", category: "ChatsViewModel")
+            // Session was already archived by trackPreKeyId()
+        }
 
         // Create bundle tuple
         let bundleWithSuite = (
@@ -816,6 +824,14 @@ class ChatsViewModel: ObservableObject {
             user.displayName = data.username
             try? context.save()
             Log.info("Updated username for user: \(data.username)", category: "ChatsViewModel")
+        }
+        
+        // 🆕 Track prekey ID and detect reinstall
+        // Use signedPrekeyPublic as the prekey identifier
+        let prekeyChanged = CryptoManager.shared.trackPreKeyId(data.signedPrekeyPublic, for: data.userId)
+        if prekeyChanged {
+            Log.info("⚠️ Prekey changed for \(data.userId) - potential reinstall detected!", category: "ChatsViewModel")
+            // Session was already archived by trackPreKeyId()
         }
         
         // Initialize receiving session (we are the recipient)

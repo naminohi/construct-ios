@@ -34,6 +34,14 @@ class CryptoManager {
     
     /// How long to keep archived sessions (7 days)
     private let archiveRetentionDays = 7
+    
+    // MARK: - Prekey ID Tracking
+    
+    /// Tracked prekey IDs for reinstall detection
+    private var trackedPreKeyIds: [String: String] = [:]  // userId -> preKeyId
+    
+    /// UserDefaults key for prekey tracking
+    private let preKeyTrackingKey = "tracked_prekey_ids"
 
     private init() {
         do {
@@ -80,7 +88,61 @@ class CryptoManager {
             self?.restoreRecentSessions(limit: 10)
             // 🆕 Run garbage collection after restoring sessions
             self?.cleanupArchivedSessions()
+            // 🆕 Load tracked prekey IDs from UserDefaults
+            self?.loadTrackedPreKeyIds()
         }
+    }
+    
+    // MARK: - Prekey ID Tracking
+    
+    /// Load tracked prekey IDs from UserDefaults
+    private func loadTrackedPreKeyIds() {
+        if let data = UserDefaults.standard.data(forKey: preKeyTrackingKey),
+           let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
+            trackedPreKeyIds = decoded
+            Log.debug("📋 Loaded \(trackedPreKeyIds.count) tracked prekey IDs", category: "CryptoManager")
+        }
+    }
+    
+    /// Save tracked prekey IDs to UserDefaults
+    private func saveTrackedPreKeyIds() {
+        if let encoded = try? JSONEncoder().encode(trackedPreKeyIds) {
+            UserDefaults.standard.set(encoded, forKey: preKeyTrackingKey)
+        }
+    }
+    
+    /// Track a prekey ID for a user and detect reinstall
+    /// Returns true if prekey changed (potential reinstall detected)
+    public func trackPreKeyId(_ preKeyId: String, for userId: String) -> Bool {
+        let previousPreKeyId = trackedPreKeyIds[userId]
+        
+        // First time seeing this user or same prekey - no change
+        if previousPreKeyId == nil {
+            trackedPreKeyIds[userId] = preKeyId
+            saveTrackedPreKeyIds()
+            Log.debug("📝 Tracking prekey for \(userId): \(preKeyId.prefix(8))...", category: "CryptoManager")
+            return false
+        }
+        
+        // Prekey changed - potential reinstall!
+        if previousPreKeyId != preKeyId {
+            Log.info("⚠️ Prekey changed for \(userId): \(previousPreKeyId!.prefix(8))... -> \(preKeyId.prefix(8))...", category: "CryptoManager")
+            Log.info("   This indicates app reinstall or key rotation", category: "CryptoManager")
+            
+            // Update tracked prekey
+            trackedPreKeyIds[userId] = preKeyId
+            saveTrackedPreKeyIds()
+            
+            // Archive existing session (if any)
+            if hasSession(for: userId) {
+                archiveSession(for: userId, reason: .preKeyChanged)
+                Log.info("🗄️ Session archived due to prekey change", category: "CryptoManager")
+            }
+            
+            return true  // Prekey changed!
+        }
+        
+        return false  // No change
     }
 
     // MARK: - Session Persistence
