@@ -679,11 +679,13 @@ class ChatsViewModel: ObservableObject {
 
         // ✅ Check if we have a session for this user
         let hasSession = CryptoManager.shared.hasSession(for: otherUserId)
+        Log.info("🔐 SESSION_STATE[incoming_message]: userId=\(otherUserId.prefix(8))..., hasSession=\(hasSession), messageId=\(message.id.prefix(8))...", category: "SessionInit")
 
         let decryptedContent: String
         if !hasSession {
             // 🔑 First message from this user - need to initialize receiving session
             Log.info("📩 First message from \(otherUserId) - requesting public key bundle", category: "ChatsViewModel")
+            Log.info("🔐 SESSION_STATE[first_message]: userId=\(otherUserId.prefix(8))..., action=fetch_bundle", category: "SessionInit")
 
             // Store the first message temporarily
             pendingFirstMessages[otherUserId] = message
@@ -700,13 +702,20 @@ class ChatsViewModel: ObservableObject {
             }
 
             // ✅ FIXED: Request sender's public key bundle from server via REST API
+            let fetchStartTime = Date()
             Task {
                 do {
                     let publicKeyBundle = try await CryptoAPI.shared.getPublicKey(userId: otherUserId)
+                    let fetchDuration = Date().timeIntervalSince(fetchStartTime)
+                    Log.info("🔐 SESSION_STATE[bundle_fetched]: userId=\(otherUserId.prefix(8))..., duration=\(String(format: "%.2f", fetchDuration))s", category: "SessionInit")
+                    
                     await MainActor.run {
                         self.handlePublicKeyBundleForIncomingMessage(publicKeyBundle, message: message, otherUserId: otherUserId)
                     }
                 } catch {
+                    let fetchDuration = Date().timeIntervalSince(fetchStartTime)
+                    Log.error("🔐 SESSION_STATE[bundle_fetch_failed]: userId=\(otherUserId.prefix(8))..., duration=\(String(format: "%.2f", fetchDuration))s, error=\(error.localizedDescription)", category: "SessionInit")
+                    
                     await MainActor.run {
                         Log.error("❌ Failed to fetch public key for incoming message: \(error.localizedDescription)", category: "ChatsViewModel")
                     }
@@ -717,19 +726,26 @@ class ChatsViewModel: ObservableObject {
             return
         } else {
             // ✅ Existing session - decrypt normally
+            Log.info("🔐 SESSION_STATE[decrypt_attempt]: userId=\(otherUserId.prefix(8))..., hasSession=true", category: "SessionInit")
+            
             guard let content = try? CryptoManager.shared.decryptMessage(message) else {
                 Log.error("❌ ChatsViewModel: Failed to decrypt incoming message \(message.id)", category: "ChatsViewModel")
+                Log.error("🔐 SESSION_STATE[decrypt_failed]: userId=\(otherUserId.prefix(8))..., messageId=\(message.id.prefix(8))...", category: "SessionInit")
 
                 // ✅ Session was corrupted and auto-deleted by CryptoManager
                 // Request fresh public key bundle to reinitialize via REST API
                 Log.debug("🔄 Decryption failed, session was deleted. Requesting reinitialization...", category: "ChatsViewModel")
+                Log.info("🔐 SESSION_STATE[reinit_start]: userId=\(otherUserId.prefix(8))..., reason=decrypt_failed", category: "SessionInit")
+                
                 Task {
                     do {
                         let publicKeyBundle = try await CryptoAPI.shared.getPublicKey(userId: otherUserId)
+                        Log.info("🔐 SESSION_STATE[bundle_fetched]: userId=\(otherUserId.prefix(8))..., success=true", category: "SessionInit")
                         await MainActor.run {
                             self.handlePublicKeyBundleForIncomingMessage(publicKeyBundle, message: message, otherUserId: otherUserId)
                         }
                     } catch {
+                        Log.error("🔐 SESSION_STATE[bundle_fetch_failed]: userId=\(otherUserId.prefix(8))..., error=\(error.localizedDescription)", category: "SessionInit")
                         await MainActor.run {
                             Log.error("❌ Failed to fetch public key for reinitialization: \(error.localizedDescription)", category: "ChatsViewModel")
                             // Store the failed message to retry after reinitialization
@@ -835,6 +851,9 @@ class ChatsViewModel: ObservableObject {
         }
         
         // Initialize receiving session (we are the recipient)
+        let initStartTime = Date()
+        Log.info("🔐 SESSION_STATE[init_receiving_start]: userId=\(data.userId.prefix(8))..., prekeyChanged=\(prekeyChanged)", category: "SessionInit")
+        
         do {
             let bundleWithSuite = (
                 identityPublic: data.identityPublic,
@@ -852,7 +871,9 @@ class ChatsViewModel: ObservableObject {
                 firstMessage: message
             )
             
+            let initDuration = Date().timeIntervalSince(initStartTime)
             Log.info("✅ Receiving session initialized for \(data.userId), message decrypted", category: "ChatsViewModel")
+            Log.info("🔐 SESSION_STATE[init_receiving_success]: userId=\(data.userId.prefix(8))..., duration=\(String(format: "%.2f", initDuration))s", category: "SessionInit")
             
             // Process the decrypted message
             // Find or create chat
@@ -875,12 +896,16 @@ class ChatsViewModel: ObservableObject {
             
         } catch CryptoError.SessionInitializationFailed(let message) {
             // Log detailed error from Rust core
+            let initDuration = Date().timeIntervalSince(initStartTime)
             Log.error("❌ Session initialization failed: \(message)", category: "ChatsViewModel")
+            Log.error("🔐 SESSION_STATE[init_receiving_failed]: userId=\(data.userId.prefix(8))..., duration=\(String(format: "%.2f", initDuration))s, error=SessionInitializationFailed", category: "SessionInit")
             Log.info("🔄 Keeping message in pending for retry", category: "ChatsViewModel")
             // KEEP in pending for retry - don't remove!
             
         } catch {
+            let initDuration = Date().timeIntervalSince(initStartTime)
             Log.error("❌ Failed to initialize receiving session: \(error.localizedDescription)", category: "ChatsViewModel")
+            Log.error("🔐 SESSION_STATE[init_receiving_failed]: userId=\(data.userId.prefix(8))..., duration=\(String(format: "%.2f", initDuration))s, error=\(error.localizedDescription)", category: "SessionInit")
             Log.info("🔄 Keeping message in pending for retry", category: "ChatsViewModel")
             // Other errors: keep in pending for retry
         }
