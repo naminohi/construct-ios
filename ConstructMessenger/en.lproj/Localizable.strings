@@ -85,7 +85,7 @@
 "camera_access_required" = "Camera Access Required";
 "open_settings" = "Open Settings";
 "allow_camera_access_for_qr" = "Please allow camera access in Settings to scan QR codes";
-"invalid_qr_code_construct" = "Invalid QR code. Please scan a Construct Messenger contact code.";
+"invalid_qr_code_construct" = "Invalid QR code. Please scan a Konstruct contact code.";
 
 // MARK: - Settings Main
 "user" = "User";

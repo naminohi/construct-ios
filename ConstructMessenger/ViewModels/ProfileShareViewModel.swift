@@ -55,31 +55,18 @@ class ProfileShareViewModel: ObservableObject {
                 do {
                     Log.info("📤 Uploading avatar via Media Upload API", category: "ProfileShare")
                     
-                    // Upload avatar and get media info
-                    // For profile sharing, we need the raw media key (not Double Ratchet encrypted)
+                    // ✅ Use MediaAPI directly - it returns the raw encryption key
+                    // For profile sharing, we need raw key (not Double Ratchet encrypted)
                     // because the JSON itself is already E2E encrypted
-                    let optimized = try MediaOptimizer.optimizeImage(avatarImage)
+                    let uploadResult = try await MediaAPI.shared.uploadImage(avatarImage, quality: 0.8)
                     
-                    // Request upload token
-                    let token = try await MediaUploadService.shared.requestUploadToken()
-                    
-                    // Encrypt media
-                    let encrypted = try MediaUploadService.shared.encryptMedia(optimized.data)
-                    
-                    // Upload to server
-                    let response = try await MediaUploadService.shared.uploadToServer(
-                        data: encrypted.data,
-                        hash: encrypted.hash,
-                        token: token
-                    )
-                    
-                    avatarMediaId = response.mediaId
-                    avatarMediaUrl = response.mediaUrl
+                    avatarMediaId = uploadResult.mediaId
+                    avatarMediaUrl = uploadResult.mediaUrl
                     // Use raw key (base64) - JSON is already E2E encrypted
-                    avatarMediaKey = encrypted.key.base64EncodedString()
-                    avatarMediaType = optimized.metadata.mimeType
+                    avatarMediaKey = uploadResult.encryptionKey.base64EncodedString()
+                    avatarMediaType = uploadResult.mimeType
                     
-                    Log.info("✅ Avatar uploaded: \(response.mediaId)", category: "ProfileShare")
+                    Log.info("✅ Avatar uploaded: \(uploadResult.mediaId)", category: "ProfileShare")
                 } catch {
                     Log.error("❌ Failed to upload avatar: \(error.localizedDescription)", category: "ProfileShare")
                     // Continue without avatar - displayName will still be shared
