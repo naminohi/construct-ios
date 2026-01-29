@@ -384,6 +384,12 @@ uint64_t uniffi_construct_core_fn_func_create_crypto_core_from_keys_json(RustBuf
 RustBuffer uniffi_construct_core_fn_func_generate_dummy_message(uint64_t size, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_GENERATE_EPHEMERAL_KEYPAIR
+#define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_GENERATE_EPHEMERAL_KEYPAIR
+RustBuffer uniffi_construct_core_fn_func_generate_ephemeral_keypair(RustCallStatus *_Nonnull out_status
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_HEARTBEAT_INTERVAL_MS
 #define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_HEARTBEAT_INTERVAL_MS
 uint64_t uniffi_construct_core_fn_func_heartbeat_interval_ms(uint64_t base_interval_sec, RustCallStatus *_Nonnull out_status
@@ -407,6 +413,16 @@ uint64_t uniffi_construct_core_fn_func_random_send_delay_ms(uint64_t max_delay_m
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_RECOMMENDED_SEND_DELAY_MS
 #define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_RECOMMENDED_SEND_DELAY_MS
 uint64_t uniffi_construct_core_fn_func_recommended_send_delay_ms(int8_t is_high_priority, float battery_level, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_SIGN_INVITE_DATA
+#define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_SIGN_INVITE_DATA
+RustBuffer uniffi_construct_core_fn_func_sign_invite_data(RustBuffer data, RustBuffer identity_secret_key, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_VERIFY_INVITE_SIGNATURE
+#define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_VERIFY_INVITE_SIGNATURE
+int8_t uniffi_construct_core_fn_func_verify_invite_signature(RustBuffer data, RustBuffer signature, RustBuffer verifying_key, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_FFI_CONSTRUCT_CORE_RUSTBUFFER_ALLOC
@@ -693,6 +709,12 @@ uint16_t uniffi_construct_core_checksum_func_generate_dummy_message(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_FUNC_GENERATE_EPHEMERAL_KEYPAIR
+#define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_FUNC_GENERATE_EPHEMERAL_KEYPAIR
+uint16_t uniffi_construct_core_checksum_func_generate_ephemeral_keypair(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_FUNC_HEARTBEAT_INTERVAL_MS
 #define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_FUNC_HEARTBEAT_INTERVAL_MS
 uint16_t uniffi_construct_core_checksum_func_heartbeat_interval_ms(void
@@ -720,6 +742,18 @@ uint16_t uniffi_construct_core_checksum_func_random_send_delay_ms(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_FUNC_RECOMMENDED_SEND_DELAY_MS
 #define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_FUNC_RECOMMENDED_SEND_DELAY_MS
 uint16_t uniffi_construct_core_checksum_func_recommended_send_delay_ms(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_FUNC_SIGN_INVITE_DATA
+#define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_FUNC_SIGN_INVITE_DATA
+uint16_t uniffi_construct_core_checksum_func_sign_invite_data(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_FUNC_VERIFY_INVITE_SIGNATURE
+#define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_FUNC_VERIFY_INVITE_SIGNATURE
+uint16_t uniffi_construct_core_checksum_func_verify_invite_signature(void
     
 );
 #endif

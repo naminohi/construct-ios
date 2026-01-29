@@ -1247,6 +1247,106 @@ public func FfiConverterTypeEnergyMetrics_lower(_ value: EnergyMetrics) -> RustB
 }
 
 
+public struct EphemeralKeyPair: Equatable, Hashable {
+    public var secretKey: [UInt8]
+    public var publicKey: [UInt8]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(secretKey: [UInt8], publicKey: [UInt8]) {
+        self.secretKey = secretKey
+        self.publicKey = publicKey
+    }
+
+    
+}
+
+#if compiler(>=6)
+extension EphemeralKeyPair: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeEphemeralKeyPair: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> EphemeralKeyPair {
+        return
+            try EphemeralKeyPair(
+                secretKey: FfiConverterSequenceUInt8.read(from: &buf), 
+                publicKey: FfiConverterSequenceUInt8.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: EphemeralKeyPair, into buf: inout [UInt8]) {
+        FfiConverterSequenceUInt8.write(value.secretKey, into: &buf)
+        FfiConverterSequenceUInt8.write(value.publicKey, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeEphemeralKeyPair_lift(_ buf: RustBuffer) throws -> EphemeralKeyPair {
+    return try FfiConverterTypeEphemeralKeyPair.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeEphemeralKeyPair_lower(_ value: EphemeralKeyPair) -> RustBuffer {
+    return FfiConverterTypeEphemeralKeyPair.lower(value)
+}
+
+
+public struct InviteSignature: Equatable, Hashable {
+    public var signature: [UInt8]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(signature: [UInt8]) {
+        self.signature = signature
+    }
+
+    
+}
+
+#if compiler(>=6)
+extension InviteSignature: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeInviteSignature: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> InviteSignature {
+        return
+            try InviteSignature(
+                signature: FfiConverterSequenceUInt8.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: InviteSignature, into buf: inout [UInt8]) {
+        FfiConverterSequenceUInt8.write(value.signature, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeInviteSignature_lift(_ buf: RustBuffer) throws -> InviteSignature {
+    return try FfiConverterTypeInviteSignature.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeInviteSignature_lower(_ value: InviteSignature) -> RustBuffer {
+    return FfiConverterTypeInviteSignature.lower(value)
+}
+
+
 public struct PrivateKeysJson: Equatable, Hashable {
     public var identitySecret: String
     public var signingSecret: String
@@ -1704,6 +1804,12 @@ public func generateDummyMessage(size: UInt64) -> [UInt8]  {
     )
 })
 }
+public func generateEphemeralKeypair()throws  -> EphemeralKeyPair  {
+    return try  FfiConverterTypeEphemeralKeyPair_lift(try rustCallWithError(FfiConverterTypeCryptoError_lift) {
+    uniffi_construct_core_fn_func_generate_ephemeral_keypair($0
+    )
+})
+}
 public func heartbeatIntervalMs(baseIntervalSec: UInt64) -> UInt64  {
     return try!  FfiConverterUInt64.lift(try! rustCall() {
     uniffi_construct_core_fn_func_heartbeat_interval_ms(
@@ -1741,6 +1847,23 @@ public func recommendedSendDelayMs(isHighPriority: Bool, batteryLevel: Float) ->
     )
 })
 }
+public func signInviteData(data: String, identitySecretKey: [UInt8])throws  -> InviteSignature  {
+    return try  FfiConverterTypeInviteSignature_lift(try rustCallWithError(FfiConverterTypeCryptoError_lift) {
+    uniffi_construct_core_fn_func_sign_invite_data(
+        FfiConverterString.lower(data),
+        FfiConverterSequenceUInt8.lower(identitySecretKey),$0
+    )
+})
+}
+public func verifyInviteSignature(data: String, signature: [UInt8], verifyingKey: [UInt8])throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeCryptoError_lift) {
+    uniffi_construct_core_fn_func_verify_invite_signature(
+        FfiConverterString.lower(data),
+        FfiConverterSequenceUInt8.lower(signature),
+        FfiConverterSequenceUInt8.lower(verifyingKey),$0
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -1769,6 +1892,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_construct_core_checksum_func_generate_dummy_message() != 52724) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_construct_core_checksum_func_generate_ephemeral_keypair() != 59553) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_construct_core_checksum_func_heartbeat_interval_ms() != 51594) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -1782,6 +1908,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_construct_core_checksum_func_recommended_send_delay_ms() != 24315) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_construct_core_checksum_func_sign_invite_data() != 47259) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_construct_core_checksum_func_verify_invite_signature() != 39140) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_construct_core_checksum_method_classiccryptocore_decrypt_message() != 15129) {
