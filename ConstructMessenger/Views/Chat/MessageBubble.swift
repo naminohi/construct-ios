@@ -453,9 +453,62 @@ struct MediaMessageView: View {
             }
         }
         
-        // ✅ For receiver: download and decrypt media, then generate thumbnail
-        // TODO: Implement media download and thumbnail generation for receiver
-        // For now, show placeholder
-        isLoading = false
+        // ✅ For receiver: download and decrypt media
+        guard let mediaId = mediaContent.media["mediaId"] as? String,
+              let mediaUrl = mediaContent.media["mediaUrl"] as? String,
+              let mediaKeyBase64 = mediaContent.media["mediaKey"] as? String,
+              let mediaKey = Data(base64Encoded: mediaKeyBase64) else {
+            Log.error("❌ Missing media info in message", category: "MediaMessage")
+            isLoading = false
+            return
+        }
+        
+        isLoading = true
+        
+        Task {
+            do {
+                Log.info("📥 Downloading media: \(mediaId)", category: "MediaMessage")
+                
+                // Download and decrypt
+                let imageData = try await MediaUploadService.shared.downloadAndDecryptMedia(
+                    mediaUrl: mediaUrl,
+                    encryptionKey: mediaKey
+                )
+                
+                guard let image = UIImage(data: imageData) else {
+                    Log.error("❌ Failed to decode image data", category: "MediaMessage")
+                    await MainActor.run {
+                        isLoading = false
+                    }
+                    return
+                }
+                
+                // Generate thumbnail
+                let thumbnail = generateThumbnail(from: image, maxSize: 250)
+                
+                await MainActor.run {
+                    thumbnailImage = thumbnail
+                    isLoading = false
+                    Log.info("✅ Media loaded successfully", category: "MediaMessage")
+                }
+                
+            } catch {
+                Log.error("❌ Failed to load media: \(error.localizedDescription)", category: "MediaMessage")
+                await MainActor.run {
+                    isLoading = false
+                }
+            }
+        }
+    }
+    
+    private func generateThumbnail(from image: UIImage, maxSize: CGFloat) -> UIImage {
+        let size = image.size
+        let scale = min(maxSize / size.width, maxSize / size.height)
+        let thumbnailSize = CGSize(width: size.width * scale, height: size.height * scale)
+        
+        let renderer = UIGraphicsImageRenderer(size: thumbnailSize)
+        return renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: thumbnailSize))
+        }
     }
 }
