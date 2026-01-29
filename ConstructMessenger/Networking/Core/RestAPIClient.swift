@@ -475,13 +475,8 @@ struct MediaTokenResponse: Codable {
     let maxFileSize: Int
     let expiresAt: String
     
-    enum CodingKeys: String, CodingKey {
-        case requestId = "request_id"
-        case uploadToken = "upload_token"
-        case uploadUrl = "upload_url"
-        case maxFileSize = "max_file_size"
-        case expiresAt = "expires_at"
-    }
+    // Server returns camelCase, so we don't need CodingKeys
+    // (Swift Codable uses camelCase by default)
 }
 
 // MARK: - Push Notifications Response Types
