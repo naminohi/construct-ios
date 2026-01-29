@@ -36,7 +36,7 @@ struct ChatView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            statusBanner
+            // ❌ REMOVED: statusBanner (moved to overlay)
             
             ScrollViewReader { proxy in
                 ScrollView {
@@ -260,6 +260,11 @@ struct ChatView: View {
         )
         .offset(x: dragState)
         .overlay(alignment: .top, content: searchOverlay)
+        .overlay(alignment: .top) {
+            // ✅ Status banner as overlay (doesn't block messages)
+            statusBanner
+                .padding(.top, 0)  // Align to top under navbar
+        }
         .sheet(isPresented: $showingUserProfile) {
             if let user = viewModel.chat.otherUser {
                 UserProfileView(user: user)
@@ -326,9 +331,22 @@ struct ChatView: View {
                 .font(.caption)
                 .foregroundColor(color)
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
         .frame(maxWidth: .infinity)
-        .background(color.opacity(0.1))
+        .background(
+            // ✅ Solid background with blur for overlay
+            Color(uiColor: .systemBackground)
+                .opacity(0.95)
+        )
+        .overlay(
+            Rectangle()
+                .fill(color.opacity(0.2))
+        )
+        .cornerRadius(8)
+        .padding(.horizontal, 12)
+        .padding(.top, 4)
+        .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
     }
     
     @ViewBuilder
