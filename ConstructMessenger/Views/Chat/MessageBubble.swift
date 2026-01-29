@@ -90,8 +90,18 @@ struct MessageBubble: View {
             }
 
             VStack(alignment: message.isSentByMe ? .trailing : .leading, spacing: 4) {
+                // ✅ Check if this is a profile share message
+                if let content = message.decryptedContent,
+                   let profileData = parseProfileMessage(content) {
+                    // Display profile card
+                    ProfileShareBubbleView(profileData: profileData)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16)
+                                .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 2)
+                        )
+                }
                 // ✅ Check if this is a media message
-                if let mediaContent = parseMediaMessage(message.decryptedContent) {
+                else if let mediaContent = parseMediaMessage(message.decryptedContent) {
                     // Display media message without bubble - just rounded corners
                     MediaMessageView(mediaContent: mediaContent, message: message, isSelected: isSelected)
                 } else {
@@ -291,6 +301,19 @@ struct MessageBubble: View {
     
     // MARK: - Media Message Parsing
     
+    private func parseProfileMessage(_ content: String) -> ProfileShareData? {
+        guard let data = content.data(using: .utf8) else { return nil }
+        
+        // Check if it looks like a profile message
+        if let jsonDict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let type = jsonDict["type"] as? String,
+           type == "profile" {
+            // Try to decode it properly
+            return try? JSONDecoder().decode(ProfileShareData.self, from: data)
+        }
+        return nil
+    }
+    
     private func parseMediaMessage(_ content: String?) -> MediaMessageContent? {
         guard let content = content,
               let data = content.data(using: .utf8),
@@ -306,6 +329,52 @@ struct MessageBubble: View {
             caption: json["caption"] as? String ?? "",
             media: firstMedia
         )
+    }
+}
+
+// MARK: - Profile Share Bubble View
+struct ProfileShareBubbleView: View {
+    let profileData: ProfileShareData
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                // Avatar placeholder or image
+                if let avatarData = profileData.avatarData,
+                   let imageData = Data(base64Encoded: avatarData),
+                   let uiImage = UIImage(data: imageData) {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 60, height: 60)
+                        .clipShape(Circle())
+                } else {
+                    Circle()
+                        .fill(Color.blue.opacity(0.2))
+                        .frame(width: 60, height: 60)
+                        .overlay(
+                            Text(String(profileData.displayName.prefix(1)).uppercased())
+                                .font(.title2)
+                                .foregroundColor(.blue)
+                        )
+                }
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(profileData.displayName)
+                        .font(.headline)
+                        .foregroundColor(.primary)
+                    
+                    Text("Shared profile")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+            }
+        }
+        .padding(12)
+        .background(Color.gray.opacity(0.1))
+        .cornerRadius(16)
     }
 }
 

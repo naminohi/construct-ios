@@ -125,6 +125,10 @@ struct ChatView: View {
                     )
                 }
                 .coordinateSpace(name: "scroll")
+                .onTapGesture {
+                    // ✅ FIX: Dismiss keyboard when tapping chat area
+                    hideKeyboard()
+                }
                 .onPreferenceChange(ScrollOffsetPreferenceKey.self) { value in
                     scrollOffset = value
                 }
@@ -136,6 +140,11 @@ struct ChatView: View {
 
                     shouldScrollToBottom = true
                     hasScrolledToBottom = false
+                    
+                    // ✅ FIX: Scroll to bottom immediately on chat open
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        scrollToBottom(proxy: proxy)
+                    }
                     
                     // ✅ Clear badge when user opens a chat
                     LocalNotificationManager.shared.clearBadge()
@@ -326,6 +335,13 @@ struct ChatView: View {
                 viewModel.sendMessage(text: messageText, images: images, replyTo: replyingTo)
                 messageText = ""
                 replyingTo = nil
+                
+                // ✅ FIX: Scroll to bottom after sending
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    if let proxy = scrollProxy {
+                        scrollToBottom(proxy: proxy)
+                    }
+                }
             },
             onCancelReply: {
                 replyingTo = nil
@@ -509,6 +525,11 @@ struct ChatView: View {
 
         // Otherwise, use compact spacing within the group
         return 4
+    }
+    
+    /// Hide keyboard
+    private func hideKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 }
 
