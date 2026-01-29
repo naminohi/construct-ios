@@ -128,6 +128,18 @@ class MediaAPI {
             throw NetworkError.serverError(message: "Upload failed: \(httpResponse.statusCode)", responseBody: nil)
         }
         
+        // Log response data for debugging
+        if let responseString = String(data: data, encoding: .utf8) {
+            Log.info("📥 Upload response body: \(responseString)", category: "MediaAPI")
+        } else {
+            Log.info("📥 Upload response: \(data.count) bytes (binary)", category: "MediaAPI")
+        }
+        
+        // Handle empty response
+        guard !data.isEmpty else {
+            throw NetworkError.serverError(message: "Empty response from upload server", responseBody: nil)
+        }
+        
         let uploadResponse = try JSONDecoder().decode(UploadResponse.self, from: data)
         Log.info("✅ Upload successful: mediaId=\(uploadResponse.mediaId)", category: "MediaAPI")
         
