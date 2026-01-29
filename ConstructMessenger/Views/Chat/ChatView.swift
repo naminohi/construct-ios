@@ -140,22 +140,13 @@ struct ChatView: View {
                         print("ChatView appeared with \(viewModel.messages.count) messages")
                     }
 
-                    shouldScrollToBottom = true
-                    hasScrolledToBottom = false
-                    
-                    // ✅ FIX: Scroll to bottom immediately on chat open
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        scrollToBottom(proxy: proxy)
-                    }
-                    
                     // ✅ Clear badge when user opens a chat
                     LocalNotificationManager.shared.clearBadge()
                     
-                    // Scroll to bottom when view appears if we have messages
-                    if !viewModel.messages.isEmpty {
-                        DispatchQueue.main.async {
-                            scrollToBottom(proxy: proxy)
-                        }
+                    // Scroll to bottom instantly (no animation) on initial load
+                    if !viewModel.messages.isEmpty, let newestMessage = viewModel.messages.first {
+                        proxy.scrollTo(newestMessage.id, anchor: .bottom)
+                        hasScrolledToBottom = true
                     }
                 }
                 .onChange(of: viewModel.messages.count) { count in
