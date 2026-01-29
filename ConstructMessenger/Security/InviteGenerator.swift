@@ -1,0 +1,191 @@
+//
+//  InviteGenerator.swift
+//  Construct Messenger
+//
+//  Created by Copilot on 29.01.2026.
+//
+
+import Foundation
+
+/// Generator for cryptographically secure one-time invite links
+///
+/// Usage:
+/// ```swift
+/// let generator = InviteGenerator()
+/// let invite = try generator.generate(
+///     userId: "user-uuid",
+///     serverFQDN: "konstruct.cc"
+/// )
+/// ```
+class InviteGenerator {
+    
+    // MARK: - Configuration
+    
+    /// Default server FQDN
+    /// Can be overridden per invite
+    private let defaultServer: String
+    
+    init(defaultServer: String = "konstruct.cc") {
+        self.defaultServer = defaultServer
+    }
+    
+    // MARK: - Generation
+    
+    /// Generate a new invite object
+    ///
+    /// Process:
+    /// 1. Generate fresh ephemeral X25519 keypair
+    /// 2. Create JTI (UUIDv4)
+    /// 3. Build invite data structure
+    /// 4. Sign with user's Ed25519 identity key
+    ///
+    /// - Parameters:
+    ///   - userId: Sender's user UUID
+    ///   - serverFQDN: Server FQDN (optional, uses default if nil)
+    /// - Returns: Signed InviteObject
+    /// - Throws: InviteGenerationError
+    func generate(
+        userId: String,
+        serverFQDN: String? = nil
+    ) throws -> InviteObject {
+        // Validate inputs
+        guard UUID(uuidString: userId) != nil else {
+            throw InviteGenerationError.invalidUserId
+        }
+        
+        let server = serverFQDN ?? defaultServer
+        
+        // Step 1: Generate ephemeral keypair
+        let ephemeralKeypair = try generateEphemeralKeypair()
+        Log.debug("🔐 Generated ephemeral keypair for invite", category: "InviteGenerator")
+        
+        // Step 2: Generate JTI
+        let jti = UUID().uuidString
+        
+        // Step 3: Current timestamp
+        let timestamp = Int(Date().timeIntervalSince1970)
+        
+        // Step 4: Encode ephemeral public key to Base64
+        let ephKeyBase64 = Data(ephemeralKeypair.publicKey).base64EncodedString()
+        
+        // Step 5: Get user's identity secret key from CryptoManager
+        guard let identitySecretKey = try? getIdentitySecretKey() else {
+            throw InviteGenerationError.missingIdentityKey
+        }
+        
+        // Step 6: Create unsigned invite
+        let unsignedInvite = InviteObject(
+            v: 1,
+            jti: jti,
+            uuid: userId,
+            server: server,
+            ephKey: ephKeyBase64,
+            ts: timestamp,
+            sig: "" // Will be filled after signing
+        )
+        
+        // Step 7: Get canonical string for signing
+        let dataToSign = unsignedInvite.canonicalString()
+        
+        // Step 8: Sign with identity key
+        let signature = try signInviteData(
+            data: dataToSign,
+            identitySecretKey: identitySecretKey
+        )
+        
+        // Step 9: Encode signature to Base64
+        let signatureBase64 = Data(signature.signature).base64EncodedString()
+        
+        // Step 10: Create final signed invite
+        let signedInvite = InviteObject(
+            v: 1,
+            jti: jti,
+            uuid: userId,
+            server: server,
+            ephKey: ephKeyBase64,
+            ts: timestamp,
+            sig: signatureBase64
+        )
+        
+        // Validate before returning
+        try signedInvite.validate()
+        
+        Log.info("✅ Generated invite: jti=\(jti.prefix(8))..., expires in 3 minutes", category: "InviteGenerator")
+        
+        return signedInvite
+    }
+    
+    // MARK: - Helper Methods
+    
+    /// Get identity secret key from CryptoManager
+    /// - Returns: 32-byte identity secret key
+    /// - Throws: InviteGenerationError if key not available
+    private func getIdentitySecretKey() throws -> [UInt8] {
+        // Get CryptoManager core instance
+        guard let core = CryptoManager.shared.core else {
+            throw InviteGenerationError.missingIdentityKey
+        }
+        
+        // Get private keys JSON from Rust core
+        guard let keysJSON = try? core.exportPrivateKeysJson() else {
+            throw InviteGenerationError.missingIdentityKey
+        }
+        
+        // Parse JSON
+        guard let data = keysJSON.data(using: String.Encoding.utf8),
+              let keys = try? JSONDecoder().decode(PrivateKeysJSON.self, from: data) else {
+            throw InviteGenerationError.keyDecodingFailed
+        }
+        
+        // Decode Base64 identity secret
+        guard let identitySecretData = Data(base64Encoded: keys.identitySecret) else {
+            throw InviteGenerationError.keyDecodingFailed
+        }
+        
+        return [UInt8](identitySecretData)
+    }
+    
+    // MARK: - Private Keys JSON Structure
+    
+    /// Matches Rust PrivateKeysJson structure
+    private struct PrivateKeysJSON: Codable {
+        let identitySecret: String      // Base64
+        let signingSecret: String       // Base64
+        let signedPrekeySecret: String  // Base64
+        let prekeySignature: String     // Base64
+        let suiteId: String
+        
+        enum CodingKeys: String, CodingKey {
+            case identitySecret = "identity_secret"
+            case signingSecret = "signing_secret"
+            case signedPrekeySecret = "signed_prekey_secret"
+            case prekeySignature = "prekey_signature"
+            case suiteId = "suite_id"
+        }
+    }
+}
+
+// MARK: - Errors
+
+enum InviteGenerationError: LocalizedError {
+    case invalidUserId
+    case missingIdentityKey
+    case keyDecodingFailed
+    case ephemeralKeyGenerationFailed
+    case signingFailed
+    
+    var errorDescription: String? {
+        switch self {
+        case .invalidUserId:
+            return "Invalid user ID (must be UUIDv4)"
+        case .missingIdentityKey:
+            return "Identity key not available. User may not be logged in."
+        case .keyDecodingFailed:
+            return "Failed to decode cryptographic keys"
+        case .ephemeralKeyGenerationFailed:
+            return "Failed to generate ephemeral keypair"
+        case .signingFailed:
+            return "Failed to sign invite data"
+        }
+    }
+}

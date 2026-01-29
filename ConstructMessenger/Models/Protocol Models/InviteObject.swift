@@ -1,0 +1,197 @@
+//
+//  InviteObject.swift
+//  Construct Messenger
+//
+//  Created by Copilot on 29.01.2026.
+//
+
+import Foundation
+
+/// Dynamic contact invite with cryptographic security
+///
+/// Security model:
+/// - Ephemeral X25519 public key (unique per invite)
+/// - Ed25519 signature from sender's identity key
+/// - JTI (JWT ID) for one-time use tracking
+/// - 3-5 minute time-to-live (TTL)
+/// - Server-side validation and invalidation
+///
+/// Format:
+/// ```json
+/// {
+///   "v": 1,
+///   "jti": "550e8400-e29b-41d4-a716-446655440000",
+///   "uuid": "user-uuid-here",
+///   "server": "konstruct.cc",
+///   "ephKey": "base64-x25519-public-key",
+///   "ts": 1738156800,
+///   "sig": "base64-ed25519-signature"
+/// }
+/// ```
+struct InviteObject: Codable, Equatable {
+    /// Protocol version (currently 1)
+    let v: Int
+    
+    /// JTI - unique invite ID for one-time use tracking
+    /// UUIDv4 format, tracked by server to prevent reuse
+    let jti: String
+    
+    /// Sender's user UUID
+    let uuid: String
+    
+    /// Server FQDN (e.g., "konstruct.cc")
+    /// Enables federation support
+    let server: String
+    
+    /// Ephemeral X25519 public key (Base64)
+    /// Generated fresh for each invite, 32 bytes
+    let ephKey: String
+    
+    /// Unix timestamp when invite was created
+    /// Used to calculate expiry (current + TTL)
+    let ts: Int
+    
+    /// Ed25519 signature (Base64)
+    /// Signs all fields above with sender's identity key
+    /// 64 bytes, proves authenticity
+    let sig: String
+    
+    // MARK: - Validation
+    
+    /// Validate invite object structure
+    /// - Throws: InviteValidationError if invalid
+    func validate() throws {
+        // Version check
+        guard v == 1 else {
+            throw InviteValidationError.unsupportedVersion(v)
+        }
+        
+        // JTI format (UUID)
+        guard UUID(uuidString: jti) != nil else {
+            throw InviteValidationError.invalidJTI
+        }
+        
+        // User UUID format
+        guard UUID(uuidString: uuid) != nil else {
+            throw InviteValidationError.invalidUserUUID
+        }
+        
+        // Server FQDN (basic check)
+        guard !server.isEmpty, server.contains(".") else {
+            throw InviteValidationError.invalidServer
+        }
+        
+        // Ephemeral key format (Base64, should decode to 32 bytes)
+        guard let ephKeyData = Data(base64Encoded: ephKey),
+              ephKeyData.count == 32 else {
+            throw InviteValidationError.invalidEphemeralKey
+        }
+        
+        // Timestamp (must be positive, not too far in future)
+        let now = Int(Date().timeIntervalSince1970)
+        guard ts > 0, ts <= now + 300 else {  // Allow 5 min clock skew
+            throw InviteValidationError.invalidTimestamp
+        }
+        
+        // Signature format (Base64, should decode to 64 bytes)
+        guard let sigData = Data(base64Encoded: sig),
+              sigData.count == 64 else {
+            throw InviteValidationError.invalidSignature
+        }
+    }
+    
+    /// Check if invite has expired
+    /// - Parameter ttlSeconds: Time-to-live in seconds (default: 180 = 3 minutes)
+    /// - Returns: true if expired
+    func isExpired(ttl: TimeInterval = 180) -> Bool {
+        let now = Date().timeIntervalSince1970
+        let expiresAt = TimeInterval(ts) + ttl
+        return now > expiresAt
+    }
+    
+    /// Get remaining time until expiry
+    /// - Parameter ttlSeconds: Time-to-live in seconds (default: 180)
+    /// - Returns: Seconds remaining, or 0 if expired
+    func timeRemaining(ttl: TimeInterval = 180) -> TimeInterval {
+        let now = Date().timeIntervalSince1970
+        let expiresAt = TimeInterval(ts) + ttl
+        return max(0, expiresAt - now)
+    }
+    
+    // MARK: - Signing Data
+    
+    /// Get canonical string representation for signing
+    ///
+    /// Fields are concatenated in order: v,jti,uuid,server,ephKey,ts
+    /// This exact order must be used for both signing and verification.
+    ///
+    /// - Returns: String to sign/verify
+    func canonicalString() -> String {
+        return "\(v)|\(jti)|\(uuid)|\(server)|\(ephKey)|\(ts)"
+    }
+}
+
+// MARK: - Validation Errors
+
+enum InviteValidationError: LocalizedError {
+    case unsupportedVersion(Int)
+    case invalidJTI
+    case invalidUserUUID
+    case invalidServer
+    case invalidEphemeralKey
+    case invalidTimestamp
+    case invalidSignature
+    
+    var errorDescription: String? {
+        switch self {
+        case .unsupportedVersion(let v):
+            return "Unsupported invite version: \(v)"
+        case .invalidJTI:
+            return "Invalid JTI format (must be UUIDv4)"
+        case .invalidUserUUID:
+            return "Invalid user UUID format"
+        case .invalidServer:
+            return "Invalid server FQDN"
+        case .invalidEphemeralKey:
+            return "Invalid ephemeral key (must be 32-byte Base64)"
+        case .invalidTimestamp:
+            return "Invalid timestamp"
+        case .invalidSignature:
+            return "Invalid signature (must be 64-byte Base64)"
+        }
+    }
+}
+
+// MARK: - Encoding/Decoding Helpers
+
+extension InviteObject {
+    /// Encode to JSON string
+    /// - Returns: JSON string
+    /// - Throws: EncodingError
+    func toJSON() throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let data = try encoder.encode(self)
+        guard let json = String(data: data, encoding: .utf8) else {
+            throw EncodingError.invalidValue(self, EncodingError.Context(
+                codingPath: [],
+                debugDescription: "Failed to convert JSON data to UTF-8 string"
+            ))
+        }
+        return json
+    }
+    
+    /// Decode from JSON string
+    /// - Parameter json: JSON string
+    /// - Returns: InviteObject
+    /// - Throws: DecodingError
+    static func fromJSON(_ json: String) throws -> InviteObject {
+        guard let data = json.data(using: .utf8) else {
+            throw DecodingError.dataCorrupted(DecodingError.Context(
+                codingPath: [],
+                debugDescription: "Invalid UTF-8 in JSON string"
+            ))
+        }
+        return try JSONDecoder().decode(InviteObject.self, from: data)
+    }
+}
