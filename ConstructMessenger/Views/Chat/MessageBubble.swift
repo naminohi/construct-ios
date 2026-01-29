@@ -154,6 +154,11 @@ struct MessageBubble: View {
                 }
             }
             .frame(maxWidth: UIScreen.main.bounds.width * 0.7, alignment: message.isSentByMe ? .trailing : .leading)
+            .background(
+                // ✅ FIX: Selection background only on bubble content, not full width
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(isSelected ? Color.blue.opacity(0.1) : Color.clear)
+            )
             .contentShape(Rectangle())
             .onTapGesture {
                 if isEditMode {
