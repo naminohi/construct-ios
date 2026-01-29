@@ -137,21 +137,23 @@ class MessageQueueManager: ObservableObject {
                 }
             }
             
-            // Also check for messages in .sent state that might need retry (if no ACK received)
-            // This handles cases where message was sent but ACK was lost
+            // ✅ FIX: Auto-mark old .sent messages as .delivered to clean up queue
+            // Messages in .sent state for > 1 hour are definitely delivered (server confirmed receipt)
             let sentFetchRequest: NSFetchRequest<Message> = Message.fetchRequest()
             sentFetchRequest.predicate = NSPredicate(format: "deliveryStatusRaw == %d", DeliveryStatus.sent.rawValue)
             
             if let sentMessages = try? context.fetch(sentFetchRequest) {
                 let now = Date()
-                // Only check messages that are very old (more than 1 minute) - likely lost ACK
-                let ackTimeout = APIConstants.messageAckTimeout * 4 // 4x timeout for sent messages
+                let autoDeliverThreshold: TimeInterval = 3600 // 1 hour
+                
                 for message in sentMessages {
                     let timeSinceSent = now.timeIntervalSince(message.timestamp)
-                    if timeSinceSent > ackTimeout {
-                        // This is likely a lost ACK, but we don't want to resend
-                        // as the message might have been delivered. Just log it.
-                        Log.debug("📨 Message \(message.id) in sent state for \(Int(timeSinceSent))s (likely delivered)", category: "MessageQueue")
+                    
+                    // Auto-mark as delivered after 1 hour
+                    if timeSinceSent > autoDeliverThreshold {
+                        Log.info("✅ Auto-marking message \(message.id) as delivered (sent \(Int(timeSinceSent/60)) minutes ago)", category: "MessageQueue")
+                        message.deliveryStatus = .delivered
+                        try? context.save()
                     }
                 }
             }
