@@ -456,8 +456,7 @@ struct MediaMessageView: View {
         // ✅ For receiver: download and decrypt media
         guard let mediaId = mediaContent.media["mediaId"] as? String,
               let mediaUrl = mediaContent.media["mediaUrl"] as? String,
-              let mediaKeyBase64 = mediaContent.media["mediaKey"] as? String,
-              let mediaKey = Data(base64Encoded: mediaKeyBase64) else {
+              let mediaKeyBase64 = mediaContent.media["mediaKey"] as? String else {
             Log.error("❌ Missing media info in message", category: "MediaMessage")
             isLoading = false
             return
@@ -469,10 +468,10 @@ struct MediaMessageView: View {
             do {
                 Log.info("📥 Downloading media: \(mediaId)", category: "MediaMessage")
                 
-                // Download and decrypt
+                // Download and decrypt (mediaKeyBase64 is String, not Data)
                 let imageData = try await MediaUploadService.shared.downloadAndDecryptMedia(
                     mediaUrl: mediaUrl,
-                    encryptionKey: mediaKey
+                    mediaKeyBase64: mediaKeyBase64
                 )
                 
                 guard let image = UIImage(data: imageData) else {

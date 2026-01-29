@@ -187,7 +187,7 @@ struct ChatView: View {
 
                     if shouldScrollToBottom && !isSearchActive && !viewModel.messages.isEmpty {
                         // ✅ Longer delay for media messages to render
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                             scrollToBottom(proxy: proxy)
                         }
                     }
@@ -195,7 +195,7 @@ struct ChatView: View {
                 .onChange(of: searchText) { newValue in
 
                     if !newValue.isEmpty, !filteredMessages.isEmpty, let firstMatch = filteredMessages.first {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                             withAnimation {
                                 proxy.scrollTo(firstMatch.id, anchor: .center)
                             }
@@ -245,7 +245,7 @@ struct ChatView: View {
                 .updating($dragState) { value, state, _ in
                     // Only allow swipe from left edge (right swipe)
                     if value.startLocation.x < 20 && value.translation.width > 0 {
-                        state = min(value.translation.width, UIScreen.main.bounds.width * 0.5)
+                        state = min(value.translation.width, UIScreen.main.bounds.width * 0.2)
                     }
                 }
                 .onEnded { value in
