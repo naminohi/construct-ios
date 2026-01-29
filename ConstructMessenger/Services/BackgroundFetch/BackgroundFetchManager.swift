@@ -351,7 +351,7 @@ class BackgroundFetchManager: NSObject, ObservableObject {
                     
                     // Update chat's last message
                     if let lastMessage = chatMessages.last {
-                        chat.lastMessageText = decryptedContent ?? "[Encrypted]"
+                        chat.lastMessageText = Chat.formatPreviewText(decryptedContent ?? "[Encrypted]")
                         chat.lastMessageTime = Date(timeIntervalSince1970: TimeInterval(lastMessage.timestamp))
                     }
                 }

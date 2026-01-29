@@ -38,7 +38,7 @@ struct ChatRowView: View {
                     .fontWeight(.semibold)
 
                 if let lastMessage = chat.lastMessageText {
-                    Text(lastMessage)
+                    Text(Chat.formatPreviewText(lastMessage))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }

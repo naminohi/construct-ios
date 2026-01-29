@@ -310,6 +310,8 @@ struct ChatView: View {
             statusBannerRow(text: errorMessage, color: .red, isLocalized: false)
         } else if viewModel.isSending {
             statusBannerRow(text: NSLocalizedString("sending", comment: ""), color: .secondary)
+        } else if viewModel.isInitializingSession {
+            statusBannerRow(text: NSLocalizedString("initializing_secure_connection", comment: ""), color: .orange, showProgress: true)
         } else if !viewModel.isSessionReady {
             statusBannerRow(text: NSLocalizedString("initializing_secure_connection", comment: ""), color: .orange, showProgress: true)
         } else if !connectionManager.isConnected {

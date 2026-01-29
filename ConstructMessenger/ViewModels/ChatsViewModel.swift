@@ -424,7 +424,7 @@ class ChatsViewModel: ObservableObject {
         message.deliveryStatus = .delivered  // ← System messages are always "delivered"
         message.retryCount = 0
         
-        chat.lastMessageText = text
+        chat.lastMessageText = Chat.formatPreviewText(text)
         chat.lastMessageTime = Date()
         
         do {
@@ -596,7 +596,7 @@ class ChatsViewModel: ObservableObject {
             // Save the message
             saveMessage(for: chat, with: firstMessage, decryptedContent: decryptedContent)
 
-            chat.lastMessageText = decryptedContent
+            chat.lastMessageText = Chat.formatPreviewText(decryptedContent)
             chat.lastMessageTime = Date(timeIntervalSince1970: TimeInterval(firstMessage.timestamp))
 
             // Remove from pending
@@ -705,7 +705,7 @@ class ChatsViewModel: ObservableObject {
             let fetchStartTime = Date()
             Task {
                 do {
-                    let publicKeyBundle = try await CryptoAPI.shared.getPublicKey(userId: otherUserId)
+                    let publicKeyBundle = try await fetchPublicKeyWithRetry(userId: otherUserId)
                     let fetchDuration = Date().timeIntervalSince(fetchStartTime)
                     Log.info("🔐 SESSION_STATE[bundle_fetched]: userId=\(otherUserId.prefix(8))..., duration=\(String(format: "%.2f", fetchDuration))s", category: "SessionInit")
                     
@@ -717,7 +717,7 @@ class ChatsViewModel: ObservableObject {
                     Log.error("🔐 SESSION_STATE[bundle_fetch_failed]: userId=\(otherUserId.prefix(8))..., duration=\(String(format: "%.2f", fetchDuration))s, error=\(error.localizedDescription)", category: "SessionInit")
                     
                     await MainActor.run {
-                        Log.error("❌ Failed to fetch public key for incoming message: \(error.localizedDescription)", category: "ChatsViewModel")
+                        Log.error("❌ Failed to fetch public key for incoming message after retries: \(error.localizedDescription)", category: "ChatsViewModel")
                     }
                 }
             }
@@ -739,7 +739,7 @@ class ChatsViewModel: ObservableObject {
                 
                 Task {
                     do {
-                        let publicKeyBundle = try await CryptoAPI.shared.getPublicKey(userId: otherUserId)
+                        let publicKeyBundle = try await fetchPublicKeyWithRetry(userId: otherUserId)
                         Log.info("🔐 SESSION_STATE[bundle_fetched]: userId=\(otherUserId.prefix(8))..., success=true", category: "SessionInit")
                         await MainActor.run {
                             self.handlePublicKeyBundleForIncomingMessage(publicKeyBundle, message: message, otherUserId: otherUserId)
@@ -747,7 +747,7 @@ class ChatsViewModel: ObservableObject {
                     } catch {
                         Log.error("🔐 SESSION_STATE[bundle_fetch_failed]: userId=\(otherUserId.prefix(8))..., error=\(error.localizedDescription)", category: "SessionInit")
                         await MainActor.run {
-                            Log.error("❌ Failed to fetch public key for reinitialization: \(error.localizedDescription)", category: "ChatsViewModel")
+                            Log.error("❌ Failed to fetch public key for reinitialization after retries: \(error.localizedDescription)", category: "ChatsViewModel")
                             // Store the failed message to retry after reinitialization
                             self.pendingFirstMessages[otherUserId] = message
                             Log.info("📝 Message stored for retry after session reinitialization", category: "ChatsViewModel")
@@ -770,7 +770,7 @@ class ChatsViewModel: ObservableObject {
                     Log.info("🔄 Username/displayName for user \(otherUserId) is still UUID (username=\(user.username), displayName=\(user.displayName)), requesting publicKeyBundle to update", category: "ChatsViewModel")
                     Task {
                         do {
-                            let publicKeyBundle = try await CryptoAPI.shared.getPublicKey(userId: otherUserId)
+                            let publicKeyBundle = try await fetchPublicKeyWithRetry(userId: otherUserId)
                             await MainActor.run {
                                 // Update username from public key bundle
                                 if let chatUser = chat.otherUser {
@@ -809,7 +809,7 @@ class ChatsViewModel: ObservableObject {
 
         saveMessage(for: chat, with: message, decryptedContent: decryptedContent)
 
-        chat.lastMessageText = decryptedContent
+        chat.lastMessageText = Chat.formatPreviewText(decryptedContent)
         chat.lastMessageTime = Date(timeIntervalSince1970: TimeInterval(message.timestamp))
 
         // ✅ REMOVED: ACK sending via WebSocket
@@ -885,7 +885,7 @@ class ChatsViewModel: ObservableObject {
             
             if let chat = try? context.fetch(chatFetchRequest).first {
                 saveMessage(for: chat, with: message, decryptedContent: decryptedContent)
-                chat.lastMessageText = decryptedContent
+                chat.lastMessageText = Chat.formatPreviewText(decryptedContent)
                 chat.lastMessageTime = Date(timeIntervalSince1970: TimeInterval(message.timestamp))
                 try? context.save()
                 Log.info("✅ Successfully saved decrypted pending message", category: "ChatsViewModel")
@@ -909,6 +909,45 @@ class ChatsViewModel: ObservableObject {
             Log.info("🔄 Keeping message in pending for retry", category: "ChatsViewModel")
             // Other errors: keep in pending for retry
         }
+    }
+    
+    // MARK: - Session Initialization Utilities
+    
+    /// Fetch public key bundle with retry and exponential backoff
+    /// - Parameters:
+    ///   - userId: Target user ID
+    ///   - maxAttempts: Maximum retry attempts (default: 3)
+    ///   - initialDelay: Initial retry delay in seconds (default: 1.0)
+    /// - Returns: Public key bundle data
+    /// - Throws: Last error if all attempts fail
+    private func fetchPublicKeyWithRetry(
+        userId: String,
+        maxAttempts: Int = 3,
+        initialDelay: TimeInterval = 1.0
+    ) async throws -> PublicKeyBundleData {
+        var lastError: Error?
+        var delay = initialDelay
+        
+        for attempt in 1...maxAttempts {
+            do {
+                Log.info("🔑 SESSION_STATE[fetch_bundle_attempt_\(attempt)]: userId=\(userId.prefix(8))..., maxAttempts=\(maxAttempts)", category: "SessionInit")
+                let bundle = try await CryptoAPI.shared.getPublicKey(userId: userId)
+                Log.info("✅ SESSION_STATE[fetch_bundle_success]: userId=\(userId.prefix(8))..., attempt=\(attempt)", category: "SessionInit")
+                return bundle
+            } catch {
+                lastError = error
+                Log.info("⚠️ SESSION_STATE[fetch_bundle_failed]: attempt=\(attempt)/\(maxAttempts), error=\(error.localizedDescription)", category: "SessionInit")
+                
+                if attempt < maxAttempts {
+                    Log.info("⏳ Retrying public key fetch in \(delay)s...", category: "SessionInit")
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    delay *= 2  // Exponential backoff: 1s, 2s, 4s
+                }
+            }
+        }
+        
+        Log.error("❌ SESSION_STATE[fetch_bundle_exhausted]: userId=\(userId.prefix(8))..., allAttemptsFailed", category: "SessionInit")
+        throw lastError ?? NetworkError.connectionFailed
     }
     
     // MARK: - Profile Sharing
@@ -1070,7 +1109,8 @@ class ChatsViewModel: ObservableObject {
         message.deliveryStatus = .delivered
         
         // Update chat's last message
-        chat.lastMessageText = message.decryptedContent?.replacingOccurrences(of: "[SYSTEM]", with: "")
+        let systemMessageText = message.decryptedContent?.replacingOccurrences(of: "[SYSTEM]", with: "") ?? ""
+        chat.lastMessageText = Chat.formatPreviewText(systemMessageText)
         chat.lastMessageTime = message.timestamp
         
         do {
