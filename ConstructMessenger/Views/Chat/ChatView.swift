@@ -263,6 +263,8 @@ struct ChatView: View {
         .sheet(isPresented: $showingUserProfile) {
             if let user = viewModel.chat.otherUser {
                 UserProfileView(user: user)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
             }
         }
         .confirmationDialog(
