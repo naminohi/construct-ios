@@ -464,7 +464,8 @@ struct ChatView: View {
     private func scrollToBottom(proxy: ScrollViewProxy) {
         guard !isSearchActive, !viewModel.messages.isEmpty else { return }
         
-        if let lastMessage = viewModel.messages.last {
+        // messages stored newest-first, so .first = newest message
+        if let lastMessage = viewModel.messages.first {
             withAnimation {
                 proxy.scrollTo(lastMessage.id, anchor: .bottom)
             }
