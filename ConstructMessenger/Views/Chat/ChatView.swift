@@ -27,6 +27,7 @@ struct ChatView: View {
     @State private var scrollOffset: CGFloat = 0
     @State private var dragOffset: CGFloat = 0
     @GestureState private var dragState: CGFloat = 0
+    @State private var keyboardHeight: CGFloat = 0
 
     init(chat: Chat, context: NSManagedObjectContext) {
         // ✅ FIX: Use StateObject initializer to create ViewModel only once
@@ -148,6 +149,36 @@ struct ChatView: View {
                         proxy.scrollTo(newestMessage.id, anchor: .bottom)
                         hasScrolledToBottom = true
                     }
+                    
+                    // ✅ Subscribe to keyboard notifications
+                    NotificationCenter.default.addObserver(
+                        forName: UIResponder.keyboardWillShowNotification,
+                        object: nil,
+                        queue: .main
+                    ) { notification in
+                        if let keyboardFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect {
+                            keyboardHeight = keyboardFrame.height
+                            // Scroll to bottom when keyboard appears
+                            if let proxy = scrollProxy, !viewModel.messages.isEmpty {
+                                withAnimation(.easeOut(duration: 0.25)) {
+                                    scrollToBottom(proxy: proxy)
+                                }
+                            }
+                        }
+                    }
+                    
+                    NotificationCenter.default.addObserver(
+                        forName: UIResponder.keyboardWillHideNotification,
+                        object: nil,
+                        queue: .main
+                    ) { _ in
+                        keyboardHeight = 0
+                    }
+                }
+                .onDisappear {
+                    // Clean up observers
+                    NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillShowNotification, object: nil)
+                    NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillHideNotification, object: nil)
                 }
                 .onChange(of: viewModel.messages.count) { count in
                     if AppConstants.enableDebugLogging {
