@@ -17,9 +17,6 @@ class MediaAPI {
     
     private let client = RestAPIClient.shared
     
-    // ✅ Media Upload API is on messaging-service, not gateway
-    private let messagingServiceURL = "https://construct-messaging-service.fly.dev"
-    
     private init() {}
     
     // MARK: - Models
@@ -42,52 +39,27 @@ class MediaAPI {
     // MARK: - Step 1: Request Upload Token
     
     /// Request upload token for media
-    /// POST /api/v1/media/token on messaging-service
+    /// POST /api/v1/media/token (should be proxied by gateway to messaging-service)
     func requestMediaToken() async throws -> MediaTokenData {
-        let endpoint = "\(messagingServiceURL)/api/v1/media/token"
+        let endpoint = "/api/v1/media/token"
         
-        Log.info("📤 Requesting media upload token from messaging-service", category: "MediaAPI")
+        Log.info("📤 Requesting media upload token", category: "MediaAPI")
         
-        // Get JWT token
-        guard let token = SessionManager.shared.sessionToken else {
-            throw NetworkError.serverError(message: "Not authenticated", responseBody: nil)
-        }
+        let response: MediaTokenResponse = try await client.performRequest(
+            endpoint: endpoint,
+            method: "POST",
+            body: [:],  // Empty body
+            requiresAuth: true
+        )
         
-        // Create request manually (bypass RestAPIClient fallback)
-        guard let url = URL(string: endpoint) else {
-            throw NetworkError.serverError(message: "Invalid URL", responseBody: nil)
-        }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue(URL(string: messagingServiceURL)?.host ?? "construct-messaging-service.fly.dev", forHTTPHeaderField: "Host")
-        request.httpBody = "{}".data(using: .utf8)
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw NetworkError.serverError(message: "Invalid response", responseBody: nil)
-        }
-        
-        guard (200...299).contains(httpResponse.statusCode) else {
-            let body = String(data: data, encoding: .utf8)
-            throw NetworkError.serverError(message: "Server error (status: \(httpResponse.statusCode))", responseBody: body)
-        }
-        
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        let tokenResponse = try decoder.decode(MediaTokenResponse.self, from: data)
-        
-        Log.info("✅ Received upload token (expires: \(tokenResponse.expiresAt))", category: "MediaAPI")
+        Log.info("✅ Received upload token (expires: \(response.expiresAt))", category: "MediaAPI")
         
         return MediaTokenData(
-            requestId: tokenResponse.requestId ?? UUID().uuidString,
-            uploadToken: tokenResponse.uploadToken,
-            uploadUrl: tokenResponse.uploadUrl,
-            maxFileSize: tokenResponse.maxFileSize,
-            expiresAt: tokenResponse.expiresAt
+            requestId: response.requestId ?? UUID().uuidString,
+            uploadToken: response.uploadToken,
+            uploadUrl: response.uploadUrl,
+            maxFileSize: response.maxFileSize,
+            expiresAt: response.expiresAt
         )
     }
     
