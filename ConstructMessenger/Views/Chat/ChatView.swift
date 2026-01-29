@@ -186,8 +186,8 @@ struct ChatView: View {
                     }
 
                     if shouldScrollToBottom && !isSearchActive && !viewModel.messages.isEmpty {
-  
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        // ✅ Longer delay for media messages to render
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                             scrollToBottom(proxy: proxy)
                         }
                     }
@@ -382,8 +382,11 @@ struct ChatView: View {
                 messageText = ""
                 replyingTo = nil
                 
-                // ✅ FIX: Scroll to bottom after sending
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                // ✅ Enable auto-scroll for new message
+                shouldScrollToBottom = true
+                
+                // ✅ FIX: Scroll to bottom after sending (longer delay for media)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     if let proxy = scrollProxy {
                         scrollToBottom(proxy: proxy)
                     }
