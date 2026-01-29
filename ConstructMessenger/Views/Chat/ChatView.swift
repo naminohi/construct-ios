@@ -69,38 +69,50 @@ struct ChatView: View {
                         }
                         
                         ForEach(Array(filteredMessages.enumerated()), id: \.element.id) { index, message in
-                            MessageBubble(
-                                message: message,
-                                isLastInGroup: isLastInGroup(message, at: index, in: filteredMessages),
-                                isSelected: selectedMessages.contains(message.id),
-                                isEditMode: isEditMode,
-                                onRetry: { msg in
-                                    viewModel.retryMessage(msg)
-                                },
-                                onReply: { msg in
-                                    replyingTo = msg
-                                },
-                                onDelete: { msg in
-                                    viewModel.deleteMessage(msg)
-                                },
-                                onSelect: { msg in
-                                    toggleMessageSelection(msg)
-                                },
-                                onEnterSelectMode: { msg in
-                                    withAnimation {
-                                        isEditMode = true
-                                        isSearchActive = false
-                                        searchText = ""
-                                        selectedMessages.insert(msg.id)
+                            VStack(spacing: 0) {
+                                MessageBubble(
+                                    message: message,
+                                    isLastInGroup: isLastInGroup(message, at: index, in: filteredMessages),
+                                    isSelected: selectedMessages.contains(message.id),
+                                    isEditMode: isEditMode,
+                                    onRetry: { msg in
+                                        viewModel.retryMessage(msg)
+                                    },
+                                    onReply: { msg in
+                                        replyingTo = msg
+                                    },
+                                    onDelete: { msg in
+                                        viewModel.deleteMessage(msg)
+                                    },
+                                    onSelect: { msg in
+                                        toggleMessageSelection(msg)
+                                    },
+                                    onEnterSelectMode: { msg in
+                                        withAnimation {
+                                            isEditMode = true
+                                            isSearchActive = false
+                                            searchText = ""
+                                            selectedMessages.insert(msg.id)
+                                        }
+                                    }
+                                )
+                                .id(message.id)
+
+                                // Add spacing after each message
+                                if index < filteredMessages.count - 1 {
+                                    Spacer()
+                                        .frame(height: spacingAfterMessage(at: index, in: filteredMessages))
+                                }
+                            }
+                            .listRowBackground(Color.clear)  // ✅ FIX: Remove default selection background
+                            .listRowInsets(EdgeInsets())  // ✅ FIX: Remove default list row insets
+                            .onAppear {
+
+                                if index == filteredMessages.count - 1 && shouldScrollToBottom && !hasScrolledToBottom {
+                                    DispatchQueue.main.async {
+                                        scrollToBottom(proxy: proxy)
                                     }
                                 }
-                            )
-                            .id(message.id)
-
-                            // Add spacing after each message
-                            if index < filteredMessages.count - 1 {
-                                Spacer()
-                                    .frame(height: spacingAfterMessage(at: index, in: filteredMessages))
                             }
                         }
                     }
@@ -128,15 +140,23 @@ struct ChatView: View {
                         print("ChatView appeared with \(viewModel.messages.count) messages")
                     }
 
-                    // ✅ FIX: Scroll to bottom IMMEDIATELY without animation or delay
-                    if !viewModel.messages.isEmpty, let lastMessage = viewModel.messages.last {
-                        proxy.scrollTo(lastMessage.id, anchor: .bottom)
-                        hasScrolledToBottom = true
-                        shouldScrollToBottom = false
+                    shouldScrollToBottom = true
+                    hasScrolledToBottom = false
+                    
+                    // ✅ FIX: Scroll to bottom immediately on chat open
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        scrollToBottom(proxy: proxy)
                     }
                     
                     // ✅ Clear badge when user opens a chat
                     LocalNotificationManager.shared.clearBadge()
+                    
+                    // Scroll to bottom when view appears if we have messages
+                    if !viewModel.messages.isEmpty {
+                        DispatchQueue.main.async {
+                            scrollToBottom(proxy: proxy)
+                        }
+                    }
                 }
                 .onChange(of: viewModel.messages.count) { count in
                     if AppConstants.enableDebugLogging {
@@ -443,8 +463,9 @@ struct ChatView: View {
         guard !isSearchActive, !viewModel.messages.isEmpty else { return }
         
         if let lastMessage = viewModel.messages.last {
-            // ✅ FIX: No animation for instant scroll
-            proxy.scrollTo(lastMessage.id, anchor: .bottom)
+            withAnimation {
+                proxy.scrollTo(lastMessage.id, anchor: .bottom)
+            }
             hasScrolledToBottom = true
             shouldScrollToBottom = false
         }
