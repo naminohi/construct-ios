@@ -450,11 +450,13 @@ struct ChatView: View {
     
     private var filteredMessages: [Message] {
         if searchText.isEmpty {
-            return viewModel.messages
+            // ✅ FIX: Reverse for display (messages are stored newest-first, display oldest-first)
+            // This prevents loading old messages first and scrolling
+            return viewModel.messages.reversed()
         }
         return viewModel.messages.filter { message in
             message.decryptedContent?.localizedCaseInsensitiveContains(searchText) ?? false
-        }
+        }.reversed()  // ✅ Also reverse search results
     }
 
     // MARK: - Actions

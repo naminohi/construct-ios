@@ -72,7 +72,11 @@ class ChatViewModel: NSObject, ObservableObject {
         let ownerPredicate = fetchRequest.predicate!
         let chatPredicate = NSPredicate(format: "chat == %@", chat)
         fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, chatPredicate])
-        fetchRequest.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: true)]
+        
+        // ✅ FIX: Sort descending (newest first) and limit to recent messages
+        // This prevents loading ALL messages into memory (would crash with 100k+ messages)
+        fetchRequest.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: false)]
+        fetchRequest.fetchLimit = initialMessageLimit  // Only load recent 30 messages
 
         fetchedResultsController = NSFetchedResultsController(
             fetchRequest: fetchRequest,
@@ -86,9 +90,12 @@ class ChatViewModel: NSObject, ObservableObject {
         
         do {
             try fetchedResultsController?.performFetch()
-            // Initialize messages from FRC
+            // ✅ FIX: Store in descending order (newest first), will reverse in UI
             messages = fetchedResultsController?.fetchedObjects ?? []
-            Log.debug("✅ FRC initial fetch: \(messages.count) messages", category: "ChatViewModel")
+            oldestLoadedTimestamp = messages.last?.timestamp  // Last = oldest in desc order
+            allLoadedMessageIds = Set(messages.map { $0.id })
+            
+            Log.debug("✅ FRC initial fetch: \(messages.count) messages (newest first)", category: "ChatViewModel")
         } catch {
             Log.error("❌ FRC fetch failed: \(error)", category: "ChatViewModel")
         }
@@ -253,20 +260,21 @@ class ChatViewModel: NSObject, ObservableObject {
         let ownerPredicate = fetchRequest.predicate!
         let chatPredicate = NSPredicate(format: "chat == %@", chat)
         fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, chatPredicate])
-        // Sort by descending timestamp to get the newest messages first
+        
+        // ✅ FIX: Sort descending to get newest messages first
         fetchRequest.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: false)]
         fetchRequest.fetchLimit = initialMessageLimit
 
         if let fetchedMessages = try? viewContext.fetch(fetchRequest) {
-            // Reverse to get chronological order (oldest first)
-            messages = Array(fetchedMessages.reversed())
-            oldestLoadedTimestamp = messages.first?.timestamp
+            // ✅ FIX: Store as-is (newest first), will reverse in ChatView for display
+            messages = fetchedMessages
+            oldestLoadedTimestamp = messages.last?.timestamp  // Last = oldest
             allLoadedMessageIds = Set(messages.map { $0.id })
             
             // Check if there are more messages to load
             checkIfHasMoreMessages()
             
-            Log.debug("📬 Loaded \(messages.count) messages (most recent)", category: "ChatViewModel")
+            Log.debug("📬 Loaded \(messages.count) messages (newest first in array)", category: "ChatViewModel")
         } else {
             Log.error("❌ Failed to fetch messages", category: "ChatViewModel")
         }
