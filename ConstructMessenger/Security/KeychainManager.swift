@@ -42,6 +42,39 @@ class KeychainManager {
     func deleteSessionToken() {
         delete(forKey: APIConstants.sessionTokenKey)
     }
+    
+    // MARK: - Refresh Token
+    
+    func saveRefreshToken(_ token: String) {
+        guard let data = token.data(using: .utf8) else {
+            Log.error("Failed to convert refresh token to UTF-8 data", category: "Keychain")
+            return
+        }
+        let success = save(data, forKey: "com.construct.refreshToken", accessible: kSecAttrAccessibleAfterFirstUnlock)
+        if !success {
+            Log.error("Failed to save refresh token to Keychain", category: "Keychain")
+        } else {
+            Log.info("✅ Refresh token saved to Keychain (length: \(token.count))", category: "Keychain")
+        }
+    }
+    
+    func loadRefreshToken() -> String? {
+        guard let data = load(forKey: "com.construct.refreshToken") else {
+            Log.debug("No refresh token found in Keychain", category: "Keychain")
+            return nil
+        }
+        guard let token = String(data: data, encoding: .utf8) else {
+            Log.error("Failed to convert refresh token Keychain data to UTF-8 string", category: "Keychain")
+            return nil
+        }
+        Log.debug("✅ Refresh token loaded from Keychain (length: \(token.count))", category: "Keychain")
+        return token
+    }
+    
+    func deleteRefreshToken() {
+        delete(forKey: "com.construct.refreshToken")
+        Log.info("🗑️ Refresh token deleted from Keychain", category: "Keychain")
+    }
 
     // MARK: - Private Key
     func savePrivateKey(_ keyData: Data) {

@@ -38,6 +38,9 @@ class SessionManager: ObservableObject {
     // This allows downstream components to react to token changes automatically
     @Published private(set) var sessionToken: String?
     
+    // ✅ NEW: Refresh token for automatic token renewal
+    @Published private(set) var refreshToken: String?
+    
     var currentUserId: String? {
         KeychainManager.shared.loadUserId()
     }
@@ -63,9 +66,32 @@ class SessionManager: ObservableObject {
     // ✅ Load token from keychain on init or when needed
     func loadSessionToken() {
         sessionToken = KeychainManager.shared.loadSessionToken()
+        refreshToken = KeychainManager.shared.loadRefreshToken()
+    }
+    
+    // ✅ NEW: Save both access and refresh tokens with expiration
+    func saveTokens(accessToken: String, refreshToken: String, expiresIn: Int) {
+        guard let userId = currentUserId else {
+            print("❌ Cannot save tokens: no userId")
+            return
+        }
+        
+        // Save tokens to keychain
+        KeychainManager.shared.saveSessionToken(accessToken)
+        KeychainManager.shared.saveRefreshToken(refreshToken)
+        
+        // Calculate expiration (expiresIn is in seconds)
+        let expiresAt = Date().addingTimeInterval(TimeInterval(expiresIn))
+        UserDefaults.standard.set(expiresAt.timeIntervalSince1970, forKey: UserDefaultsKey.sessionExpires.key)
+        
+        // Update published properties
+        self.sessionToken = accessToken
+        self.refreshToken = refreshToken
+        
+        Log.info("✅ Tokens saved - expires in: \(expiresIn / 60) minutes", category: "SessionManager")
     }
 
-    // ✅ FIXED: Save session with expiration timestamp
+    // ✅ FIXED: Save session with expiration timestamp (DEPRECATED - use saveTokens)
     func saveSession(userId: String, token: String, expires: Int64) {
         KeychainManager.shared.saveUserId(userId)
         KeychainManager.shared.saveSessionToken(token)
@@ -96,11 +122,13 @@ class SessionManager: ObservableObject {
 
     func clearSession() {
         KeychainManager.shared.deleteSessionToken()
+        KeychainManager.shared.deleteRefreshToken()
         // Clear expiration timestamp
         UserDefaults.standard.removeObject(forKey: UserDefaultsKey.sessionExpires.key)
         
-        // ✅ REACTIVE: Clear published property to trigger subscribers
+        // ✅ REACTIVE: Clear published properties to trigger subscribers
         self.sessionToken = nil
+        self.refreshToken = nil
         // Note: We keep currentUserId so user data persists in Core Data
     }
 }

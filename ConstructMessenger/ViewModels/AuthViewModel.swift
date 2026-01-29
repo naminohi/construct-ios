@@ -140,8 +140,48 @@ class AuthViewModel: ObservableObject {
         guard isAuthenticated else { return }
 
         if !SessionManager.shared.isSessionValid {
-            print("⚠️ Session token expired or expiring soon")
-            handleSessionExpired()
+            Log.info("⚠️ Token expiring soon - attempting automatic refresh", category: "Auth")
+            
+            Task {
+                await refreshAccessToken()
+            }
+        }
+    }
+    
+    /// Refresh access token automatically
+    private func refreshAccessToken() async {
+        guard let refreshToken = SessionManager.shared.refreshToken else {
+            Log.error("❌ No refresh token available - forcing logout", category: "Auth")
+            await MainActor.run {
+                handleSessionExpired()
+            }
+            return
+        }
+        
+        do {
+            Log.info("🔄 Attempting to refresh access token", category: "Auth")
+            
+            let response = try await AuthAPI.shared.refreshToken(refreshToken: refreshToken)
+            
+            // Save new tokens
+            await MainActor.run {
+                let expiresIn = response.expiresIn ?? 3600
+                SessionManager.shared.saveTokens(
+                    accessToken: response.accessToken,
+                    refreshToken: response.refreshToken,
+                    expiresIn: expiresIn
+                )
+                
+                Log.info("✅ Access token refreshed successfully (expires in: \(expiresIn / 60) min)", category: "Auth")
+            }
+            
+        } catch {
+            Log.error("❌ Token refresh failed: \(error.localizedDescription)", category: "Auth")
+            
+            // If refresh fails, logout user
+            await MainActor.run {
+                handleSessionExpired()
+            }
         }
     }
 
@@ -209,6 +249,7 @@ class AuthViewModel: ObservableObject {
                             userId: result.userId,
                             username: result.username,
                             token: result.sessionToken,
+                            refreshToken: result.refreshToken,
                             expires: result.expires
                         )
                         
@@ -242,6 +283,7 @@ class AuthViewModel: ObservableObject {
                             userId: result.userId,
                             username: result.username,
                             token: result.sessionToken,
+                            refreshToken: result.refreshToken,
                             expires: result.expires
                         )
                         
@@ -349,24 +391,39 @@ class AuthViewModel: ObservableObject {
 
     // MARK: - State Updaters
     // ✅ WebSocket message handling removed - using REST API only
-    private func handleAuthSuccess(userId: String, username: String, token: String, expires: Int64) {
+    private func handleAuthSuccess(userId: String, username: String, token: String, refreshToken: String, expires: Int64) {
         // ✅ DEBUG: Log token before saving
-        Log.info("💾 Saving session token (length: \(token.count), prefix: \(token.prefix(30))...)", category: "Auth")
+        Log.info("💾 Saving session tokens (access token length: \(token.count))", category: "Auth")
         
-        // ✅ REACTIVE: Pass expires timestamp to SessionManager
-        // This will automatically trigger @Published sessionToken update,
-        // which will notify all subscribers (like ChatsViewModel)
-        SessionManager.shared.saveSession(userId: userId, token: token, expires: expires)
+        // ✅ Save userId first
+        KeychainManager.shared.saveUserId(userId)
+        
+        // ✅ NEW: Use saveTokens() method with expiresIn
+        // Calculate expiresIn from expiresAt timestamp
+        let expiresDate = Date(timeIntervalSince1970: TimeInterval(expires))
+        let expiresIn = Int(expiresDate.timeIntervalSinceNow)
+        
+        SessionManager.shared.saveTokens(
+            accessToken: token,
+            refreshToken: refreshToken,
+            expiresIn: max(expiresIn, 3600)  // At least 1 hour
+        )
         
         // ✅ DEBUG: Verify token was saved correctly
         if let savedToken = SessionManager.shared.sessionToken {
             if savedToken == token {
-                Log.info("✅ Token saved and verified correctly", category: "Auth")
+                Log.info("✅ Access token saved and verified correctly", category: "Auth")
             } else {
                 Log.error("❌ Token mismatch! Original length: \(token.count), Saved length: \(savedToken.count)", category: "Auth")
             }
         } else {
             Log.error("❌ Token not found after saving!", category: "Auth")
+        }
+        
+        if SessionManager.shared.refreshToken != nil {
+            Log.info("✅ Refresh token saved successfully", category: "Auth")
+        } else {
+            Log.error("❌ Refresh token not saved!", category: "Auth")
         }
         
         // ✅ Save username to Keychain for autofill convenience

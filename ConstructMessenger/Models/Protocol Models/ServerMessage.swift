@@ -131,6 +131,7 @@ struct RegisterSuccessData: Codable {
     let userId: String
     let username: String
     let sessionToken: String
+    let refreshToken: String  // ✅ NEW
     let expires: Int64
 }
 
@@ -138,6 +139,7 @@ struct LoginSuccessData: Codable {
     let userId: String
     let username: String
     let sessionToken: String
+    let refreshToken: String  // ✅ NEW
     let expires: Int64
 }
 

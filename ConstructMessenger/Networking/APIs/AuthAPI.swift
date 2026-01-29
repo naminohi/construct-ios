@@ -39,11 +39,24 @@ class AuthAPI {
             body: requestBody
         )
         
+        // Calculate expiration timestamp
+        let expiresTimestamp: Int64
+        if let expiresAt = response.expiresAt {
+            expiresTimestamp = expiresAt
+        } else if let expiresIn = response.expiresIn {
+            let expiresDate = Date().addingTimeInterval(TimeInterval(expiresIn))
+            expiresTimestamp = Int64(expiresDate.timeIntervalSince1970)
+        } else {
+            let expiresDate = Date().addingTimeInterval(3600)
+            expiresTimestamp = Int64(expiresDate.timeIntervalSince1970)
+        }
+        
         return RegisterSuccessData(
             userId: response.userId,
             username: username,
             sessionToken: response.accessToken,
-            expires: response.expiresAt
+            refreshToken: response.refreshToken,
+            expires: expiresTimestamp
         )
     }
     
@@ -65,17 +78,38 @@ class AuthAPI {
         Log.info("📥 Login response received:", category: "Network")
         Log.info("   userId: \(response.userId)", category: "Network")
         Log.info("   accessToken length: \(response.accessToken.count)", category: "Network")
-        Log.info("   expiresAt: \(response.expiresAt) (raw value)", category: "Network")
-        
-        // Check if expiresAt is in seconds or milliseconds
-        let expiresDate: Date
-        if response.expiresAt > 1_000_000_000_000 {
-            expiresDate = Date(timeIntervalSince1970: TimeInterval(response.expiresAt) / 1000.0)
-            Log.info("   Interpreting as milliseconds", category: "Network")
-        } else {
-            expiresDate = Date(timeIntervalSince1970: TimeInterval(response.expiresAt))
-            Log.info("   Interpreting as seconds", category: "Network")
+        if let expiresAt = response.expiresAt {
+            Log.info("   expiresAt: \(expiresAt) (raw value)", category: "Network")
+        } else if let expiresIn = response.expiresIn {
+            Log.info("   expiresIn: \(expiresIn) seconds", category: "Network")
         }
+        
+        // Calculate expiration timestamp
+        let expiresTimestamp: Int64
+        if let expiresAt = response.expiresAt {
+            // Old format: Unix timestamp
+            if expiresAt > 1_000_000_000_000 {
+                // Milliseconds
+                expiresTimestamp = expiresAt / 1000
+                Log.info("   Interpreting expiresAt as milliseconds", category: "Network")
+            } else {
+                // Seconds
+                expiresTimestamp = expiresAt
+                Log.info("   Interpreting expiresAt as seconds", category: "Network")
+            }
+        } else if let expiresIn = response.expiresIn {
+            // New format: seconds from now
+            let expiresDate = Date().addingTimeInterval(TimeInterval(expiresIn))
+            expiresTimestamp = Int64(expiresDate.timeIntervalSince1970)
+            Log.info("   Calculated expiration from expiresIn", category: "Network")
+        } else {
+            // Fallback: 1 hour
+            let expiresDate = Date().addingTimeInterval(3600)
+            expiresTimestamp = Int64(expiresDate.timeIntervalSince1970)
+            Log.info("⚠️ No expiration info - defaulting to 1 hour", category: "Network")
+        }
+        
+        let expiresDate = Date(timeIntervalSince1970: TimeInterval(expiresTimestamp))
         Log.info("   Expires at: \(expiresDate)", category: "Network")
         Log.info("   Expires in: \(Int(expiresDate.timeIntervalSinceNow / 60)) minutes", category: "Network")
         
@@ -83,7 +117,8 @@ class AuthAPI {
             userId: response.userId,
             username: username,
             sessionToken: response.accessToken,
-            expires: response.expiresAt
+            refreshToken: response.refreshToken,
+            expires: expiresTimestamp
         )
     }
     
@@ -117,5 +152,27 @@ class AuthAPI {
             body: requestBody,
             requiresAuth: true
         )
+    }
+    
+    /// Refresh access token using refresh token
+    /// POST /api/v1/auth/refresh
+    func refreshToken(refreshToken: String) async throws -> AuthResponse {
+        let endpoint = "/api/v1/auth/refresh"
+        
+        Log.info("🔄 Refreshing access token", category: "AuthAPI")
+        
+        let requestBody: [String: Any] = [
+            "refreshToken": refreshToken
+        ]
+        
+        let response: AuthResponse = try await client.performRequest(
+            endpoint: endpoint,
+            method: "POST",
+            body: requestBody,
+            requiresAuth: true  // May use expired access_token (server allows this)
+        )
+        
+        Log.info("✅ Token refreshed successfully (expiresIn: \(response.expiresIn ?? 0)s)", category: "AuthAPI")
+        return response
     }
 }

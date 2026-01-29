@@ -310,7 +310,12 @@ struct AuthResponse: Codable {
     let userId: String
     let accessToken: String
     let refreshToken: String
-    let expiresAt: Int64
+    let expiresAt: Int64?      // Old format: Unix timestamp
+    let expiresIn: Int?        // New format: Seconds from now
+    
+    // ✅ At least one must be present
+    // expiresAt = Unix timestamp (1738227600)
+    // expiresIn = Seconds (3600 = 1 hour)
 }
 
 /// Empty response for endpoints that return no data
