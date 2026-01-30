@@ -125,11 +125,14 @@ struct MessageBubble: View {
                             .padding(.top, 8)
                         }
 
-                        // Main message content
-                        Text(message.decryptedContent ?? NSLocalizedString("encrypted", comment: "Fallback for encrypted content"))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, message.replyToContent != nil ? 4 : 8)
-                            .padding(.bottom, message.replyToContent != nil ? 8 : 0)
+                        // Main message content with link detection
+                        LinkDetectingText(
+                            message.decryptedContent ?? NSLocalizedString("encrypted", comment: "Fallback for encrypted content"),
+                            color: message.isSentByMe ? .white : .primary
+                        )
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, message.replyToContent != nil ? 4 : 8)
+                        .padding(.bottom, message.replyToContent != nil ? 8 : 0)
                     }
                     .background(message.isSentByMe ? Color.blue : Color.gray.opacity(0.2))
                     .foregroundColor(message.isSentByMe ? .white : .primary)

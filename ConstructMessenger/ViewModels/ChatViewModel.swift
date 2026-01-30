@@ -147,9 +147,19 @@ class ChatViewModel: NSObject, ObservableObject {
     // ✅ FIXED: Check if we already have a session for this user
     private func checkExistingSession() {
         guard let userId = chat.otherUser?.id else { return }
-        isSessionReady = CryptoManager.shared.hasSession(for: userId)
-        if isSessionReady {
-            Log.info("Session already exists for user: \(userId)", category: "ChatViewModel")
+        
+        // Safely check session (might fail in Preview/tests)
+        do {
+            isSessionReady = CryptoManager.shared.hasSession(for: userId)
+            if isSessionReady {
+                Log.info("✅ Session already exists for user: \(userId)", category: "ChatViewModel")
+            } else {
+                Log.debug("No session yet for user: \(userId)", category: "ChatViewModel")
+            }
+        } catch {
+            // Preview/test mode - assume session ready to avoid initialization banner
+            Log.debug("⚠️ Could not check session (likely Preview mode): \(error)", category: "ChatViewModel")
+            isSessionReady = true
         }
     }
 
