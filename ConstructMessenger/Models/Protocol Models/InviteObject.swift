@@ -165,7 +165,46 @@ enum InviteValidationError: LocalizedError {
 // MARK: - Encoding/Decoding Helpers
 
 extension InviteObject {
-    /// Encode to JSON string
+    /// Encode to MessagePack binary (compact, optimized for QR codes)
+    /// - Returns: MessagePack-encoded data
+    /// - Throws: EncodingError
+    func toMessagePack() throws -> Data {
+        return try MessagePackHelper.encode(self)
+    }
+    
+    /// Decode from MessagePack binary
+    /// - Parameter data: MessagePack-encoded data
+    /// - Returns: InviteObject
+    /// - Throws: DecodingError
+    static func fromMessagePack(_ data: Data) throws -> InviteObject {
+        return try MessagePackHelper.decode(from: data)
+    }
+    
+    /// Encode to Base64-encoded MessagePack (for QR codes and links)
+    /// - Returns: Base64 string
+    /// - Throws: EncodingError
+    func toBase64() throws -> String {
+        let msgpackData = try toMessagePack()
+        return msgpackData.base64EncodedString()
+    }
+    
+    /// Decode from Base64-encoded MessagePack
+    /// - Parameter base64: Base64 string
+    /// - Returns: InviteObject
+    /// - Throws: DecodingError
+    static func fromBase64(_ base64: String) throws -> InviteObject {
+        guard let data = Data(base64Encoded: base64) else {
+            throw DecodingError.dataCorrupted(DecodingError.Context(
+                codingPath: [],
+                debugDescription: "Invalid Base64 encoding"
+            ))
+        }
+        return try fromMessagePack(data)
+    }
+    
+    // MARK: - Legacy JSON Support (for debugging)
+    
+    /// Encode to JSON string (legacy, use toMessagePack for production)
     /// - Returns: JSON string
     /// - Throws: EncodingError
     func toJSON() throws -> String {
@@ -181,7 +220,7 @@ extension InviteObject {
         return json
     }
     
-    /// Decode from JSON string
+    /// Decode from JSON string (legacy, use fromMessagePack for production)
     /// - Parameter json: JSON string
     /// - Returns: InviteObject
     /// - Throws: DecodingError

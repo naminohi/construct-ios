@@ -19,25 +19,17 @@ class InviteVerifier {
     
     // MARK: - Decoding
     
-    /// Decode invite from encoded string
+    /// Decode invite from Base64-encoded MessagePack
     ///
-    /// Expected format: Base64-encoded JSON
+    /// Expected format: Base64(MessagePack(InviteObject))
+    /// This is the production format for QR codes and links.
     ///
-    /// - Parameter encoded: Base64-encoded invite string
+    /// - Parameter encoded: Base64-encoded MessagePack string
     /// - Returns: Decoded InviteObject
     /// - Throws: InviteVerificationError
     func decode(_ encoded: String) throws -> InviteObject {
-        // Decode Base64 to JSON
-        guard let data = Data(base64Encoded: encoded) else {
-            throw InviteVerificationError.invalidEncoding
-        }
-        
-        guard let json = String(data: data, encoding: .utf8) else {
-            throw InviteVerificationError.invalidUTF8
-        }
-        
-        // Parse JSON to InviteObject
-        let invite = try InviteObject.fromJSON(json)
+        // Decode from Base64-encoded MessagePack
+        let invite = try InviteObject.fromBase64(encoded)
         
         // Validate structure
         try invite.validate()
@@ -45,6 +37,25 @@ class InviteVerifier {
         Log.debug("📥 Decoded invite: jti=\(invite.jti.prefix(8))..., from=\(invite.uuid.prefix(8))...", category: "InviteVerifier")
         
         return invite
+    }
+    
+    /// Decode from deep link URL
+    ///
+    /// Supported formats:
+    /// - `konstruct://add?invite=<base64>`
+    /// - `https://konstruct.cc/add?invite=<base64>`
+    ///
+    /// - Parameter url: Deep link URL
+    /// - Returns: Decoded InviteObject
+    /// - Throws: InviteVerificationError
+    func decodeFromURL(_ url: URL) throws -> InviteObject {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: true),
+              let inviteParam = components.queryItems?.first(where: { $0.name == "invite" }),
+              let encoded = inviteParam.value else {
+            throw InviteVerificationError.invalidEncoding
+        }
+        
+        return try decode(encoded)
     }
     
     // MARK: - Verification
@@ -137,7 +148,6 @@ class InviteVerifier {
 
 enum InviteVerificationError: LocalizedError {
     case invalidEncoding
-    case invalidUTF8
     case invalidSignature
     case invalidVerifyingKey
     case expired
@@ -147,9 +157,7 @@ enum InviteVerificationError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidEncoding:
-            return "Invalid Base64 encoding"
-        case .invalidUTF8:
-            return "Invalid UTF-8 in decoded data"
+            return "Invalid Base64 or MessagePack encoding"
         case .invalidSignature:
             return "Invalid or tampered signature"
         case .invalidVerifyingKey:
@@ -164,20 +172,4 @@ enum InviteVerificationError: LocalizedError {
     }
 }
 
-// MARK: - Encoding Helper
 
-extension InviteObject {
-    /// Encode invite to Base64 string for sharing
-    /// - Returns: Base64-encoded invite
-    /// - Throws: EncodingError
-    func encode() throws -> String {
-        let json = try toJSON()
-        guard let data = json.data(using: .utf8) else {
-            throw EncodingError.invalidValue(self, EncodingError.Context(
-                codingPath: [],
-                debugDescription: "Failed to convert JSON to UTF-8"
-            ))
-        }
-        return data.base64EncodedString()
-    }
-}

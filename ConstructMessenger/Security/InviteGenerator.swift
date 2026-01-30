@@ -115,6 +115,46 @@ class InviteGenerator {
         return signedInvite
     }
     
+    // MARK: - QR Code & Link Generation
+    
+    /// Generate QR code payload (Base64-encoded MessagePack)
+    ///
+    /// This is the optimized format for QR codes:
+    /// - MessagePack encoding: 35% smaller than JSON
+    /// - Base64: Safe for QR code encoding
+    /// - Result: QR Version 9 instead of 10 (easier to scan)
+    ///
+    /// - Parameters:
+    ///   - userId: Current user's UUID
+    ///   - server: Server FQDN (optional, uses default)
+    /// - Returns: Base64 string ready for QR code
+    /// - Throws: InviteGenerationError or EncodingError
+    func generateQRPayload(userId: String, server: String? = nil) throws -> String {
+        let invite = try generate(userId: userId, serverFQDN: server ?? defaultServer)
+        return try invite.toBase64()
+    }
+    
+    /// Generate deep link URL for sharing
+    ///
+    /// Format: `konstruct://add?invite=<base64>`
+    /// Also supports: `https://konstruct.cc/add?invite=<base64>`
+    ///
+    /// - Parameters:
+    ///   - userId: Current user's UUID
+    ///   - server: Server FQDN (optional, uses default)
+    ///   - useHTTPS: Use HTTPS URL instead of custom scheme (default: false)
+    /// - Returns: Deep link URL string
+    /// - Throws: InviteGenerationError or EncodingError
+    func generateDeepLink(userId: String, server: String? = nil, useHTTPS: Bool = false) throws -> String {
+        let payload = try generateQRPayload(userId: userId, server: server)
+        
+        if useHTTPS {
+            return "https://\(server ?? defaultServer)/add?invite=\(payload)"
+        } else {
+            return "konstruct://add?invite=\(payload)"
+        }
+    }
+    
     // MARK: - Helper Methods
     
     /// Get identity secret key from CryptoManager
