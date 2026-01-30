@@ -97,18 +97,23 @@ struct ChatsListView: View {
             return
         }
 
-        do {
-            let contactInfo = try LinkParser.parseContactLink(url)
-            print("✅ Parsed contact: userId=\(contactInfo.userId), username=\(contactInfo.username)")
-            
-            addContact(userId: contactInfo.userId, username: contactInfo.username)
-        } catch {
-            print("❌ Failed to parse contact link: \(error.localizedDescription)")
-            // TODO: Show alert to user with specific error message
+        Task {
+            do {
+                let contactInfo = try await LinkParser.parseContactLink(url)
+                print("✅ Parsed contact: userId=\(contactInfo.userId), username=\(contactInfo.username)")
+                
+                await MainActor.run {
+                    addContact(userId: contactInfo.userId, username: contactInfo.username)
+                    showingQRScanner = false
+                }
+            } catch {
+                print("❌ Failed to parse contact link: \(error.localizedDescription)")
+                // TODO: Show alert to user with specific error message
+                await MainActor.run {
+                    showingQRScanner = false
+                }
+            }
         }
-
-        // Close scanner
-        showingQRScanner = false
     }
 
     private func addContact(userId: String, username: String) {

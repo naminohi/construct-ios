@@ -3,6 +3,7 @@
 //  Construct Messenger
 //
 //  Created by Maxim Eliseyev on 30.12.2025.
+//  Updated for Dynamic Invites on 30.01.2026.
 //
 
 import SwiftUI
@@ -12,12 +13,13 @@ struct ContactQRCodeView: View {
     @Environment(\.dismiss) private var dismiss
     let userId: String
     let username: String
-
-    private var contactLink: String {
-        let link = generateContactLink(userId: userId, username: username)
-        print("🔗 ContactQRCodeView: Generated link: \(link)")
-        return link
-    }
+    
+    @State private var qrPayload: String?
+    @State private var timeRemaining: TimeInterval = 180 // 3 minutes
+    @State private var generationError: String?
+    
+    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    private let generator = InviteGenerator()
 
     var body: some View {
         NavigationStack {
@@ -30,7 +32,7 @@ struct ContactQRCodeView: View {
                         .fontWeight(.semibold)
 
                     // QR Code
-                    if let qrImage = generateQRCode(from: contactLink) {
+                    if let payload = qrPayload, let qrImage = generateQRCode(from: payload) {
                         Image(uiImage: qrImage)
                             .interpolation(.none)
                             .resizable()
@@ -40,15 +42,26 @@ struct ContactQRCodeView: View {
                             .background(Color.white)
                             .cornerRadius(16)
                             .shadow(radius: 8)
-                    } else {
+                    } else if let error = generationError {
                         Rectangle()
                             .fill(Color.gray.opacity(0.2))
                             .frame(width: 250, height: 250)
                             .cornerRadius(16)
                             .overlay {
-                                Text("failed_to_generate_qr_code")
-                                    .foregroundColor(.secondary)
+                                VStack(spacing: 8) {
+                                    Image(systemName: "exclamationmark.triangle")
+                                        .font(.largeTitle)
+                                        .foregroundColor(.orange)
+                                    Text(error)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                        .multilineTextAlignment(.center)
+                                        .padding(.horizontal)
+                                }
                             }
+                    } else {
+                        ProgressView()
+                            .frame(width: 250, height: 250)
                     }
 
                     VStack(spacing: 8) {
@@ -56,6 +69,21 @@ struct ContactQRCodeView: View {
                             .font(.headline)
                             .foregroundColor(.primary)
 
+                        // Countdown timer
+                        if timeRemaining > 0 {
+                            HStack(spacing: 4) {
+                                Image(systemName: "clock")
+                                    .font(.caption)
+                                Text("Expires in \(formatTime(timeRemaining))")
+                                    .font(.caption)
+                            }
+                            .foregroundColor(timeRemaining < 60 ? .orange : .secondary)
+                        } else {
+                            Text("Code expired")
+                                .font(.caption)
+                                .foregroundColor(.red)
+                        }
+                        
                         Text("show_this_code_to_someone_nearby")
                             .font(.caption)
                             .foregroundColor(.secondary)
@@ -66,6 +94,21 @@ struct ContactQRCodeView: View {
 
                 Spacer()
 
+                // Regenerate button if expired
+                if timeRemaining <= 0 {
+                    Button {
+                        regenerateQRCode()
+                    } label: {
+                        Label("Generate New Code", systemImage: "arrow.clockwise")
+                            .padding()
+                            .frame(maxWidth: .infinity)
+                            .background(Color.accentColor)
+                            .foregroundColor(.white)
+                            .cornerRadius(12)
+                    }
+                    .padding(.horizontal, 32)
+                }
+                
                 // Hint text
                 Text("scan_with_camera_or_screenshot")
                     .font(.caption)
@@ -82,10 +125,38 @@ struct ContactQRCodeView: View {
                     }
                 }
             }
+            .onAppear {
+                generateInitialQRCode()
+            }
+            .onReceive(timer) { _ in
+                if timeRemaining > 0 {
+                    timeRemaining -= 1
+                }
+            }
         }
     }
 
     // MARK: - QR Code Generation
+    
+    private func generateInitialQRCode() {
+        do {
+            let payload = try generator.generateQRPayload(userId: userId)
+            qrPayload = payload
+            timeRemaining = 180 // Reset to 3 minutes
+            generationError = nil
+            Log.info("✅ Generated QR code for \(username)", category: "ContactQRCodeView")
+        } catch {
+            generationError = "Failed to generate code"
+            Log.error("❌ Failed to generate QR: \(error)", category: "ContactQRCodeView")
+        }
+    }
+    
+    private func regenerateQRCode() {
+        qrPayload = nil
+        generationError = nil
+        generateInitialQRCode()
+    }
+    
     private func generateQRCode(from string: String) -> UIImage? {
         let context = CIContext()
         let filter = CIFilter.qrCodeGenerator()
@@ -106,18 +177,10 @@ struct ContactQRCodeView: View {
         return nil
     }
     
-    private func generateContactLink(userId: String, username: String) -> String {
-        let encodedUsername = username.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? username
-        
-        var components = URLComponents()
-        components.scheme = "https"
-        components.host = "konstruct.cc"
-        components.path = "/c/\(userId)"
-        components.queryItems = [
-            URLQueryItem(name: "username", value: encodedUsername)
-        ]
-
-        return components.string ?? "https://konstruct.cc/c/\(userId)?username=\(encodedUsername)"
+    private func formatTime(_ seconds: TimeInterval) -> String {
+        let minutes = Int(seconds) / 60
+        let secs = Int(seconds) % 60
+        return String(format: "%d:%02d", minutes, secs)
     }
 }
 

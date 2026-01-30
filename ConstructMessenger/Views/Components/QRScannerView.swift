@@ -222,16 +222,27 @@ struct QRScannerView: View {
 
     // ✅ Simulate QR code scan for testing
     private func simulateQRCodeScan() {
-        // Генерируем тестовый QR код
+        // Generate Dynamic Invite for testing
+        let generator = InviteGenerator()
         let testUserId = UUID().uuidString
-        let testUsername = "test_user_\(Int.random(in: 100...999))"
-        let testCode = "https://konstruct.cc/c/\(testUserId)?username=\(testUsername)"
-
-        print("🧪 QRScannerView: Simulating QR scan")
-        print("   Generated URL: \(testCode)")
-        print("   UserId: \(testUserId)")
-        print("   Username: \(testUsername)")
-        handleScannedCode(testCode)
+        
+        do {
+            let invitePayload = try generator.generateQRPayload(userId: testUserId)
+            let testCode = "konstruct://add?invite=\(invitePayload)"
+            
+            print("🧪 QRScannerView: Simulating Dynamic Invite scan")
+            print("   Generated URL: \(testCode.prefix(100))...")
+            print("   UserId: \(testUserId)")
+            print("   Payload size: \(invitePayload.count) bytes")
+            handleScannedCode(testCode)
+        } catch {
+            print("❌ Failed to generate test invite: \(error)")
+            // Fallback to legacy format
+            let testUsername = "test_user_\(Int.random(in: 100...999))"
+            let testCode = "https://konstruct.cc/c/\(testUserId)?username=\(testUsername)"
+            print("🧪 Using legacy format: \(testCode)")
+            handleScannedCode(testCode)
+        }
     }
 
     private func checkCameraPermission() {
@@ -267,7 +278,10 @@ struct QRScannerView: View {
     private func handleScannedCode(_ code: String) {
         scanner.stopScanning()
 
-        if code.hasPrefix("https://konstruct.cc/c/") {
+        // Support both legacy and Dynamic Invite formats
+        if code.hasPrefix("https://konstruct.cc/c/") ||
+           code.hasPrefix("https://konstruct.cc/add") ||
+           code.hasPrefix("konstruct://add") {
             onCodeScanned(code)
         } else {
             errorMessage = NSLocalizedString("invalid_qr_code_construct", comment: "Error message for invalid QR code")
