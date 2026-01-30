@@ -57,9 +57,9 @@ struct ChatView: View {
                                         viewModel.loadMoreMessages()
                                     } label: {
                                         Text(NSLocalizedString("load_older_messages", comment: "Load older messages button"))
-                                            .font(.caption)
-                                            .foregroundColor(.blue)
-                                            .padding(.vertical, 8)
+                                            .font(FontStyle.caption)
+                                            .foregroundColor(Color.AppText.accent)
+                                            .padding(.vertical, Spacing.small)
                                     }
                                 }
                                 Spacer()
@@ -109,7 +109,7 @@ struct ChatView: View {
                                         .frame(height: message.spacingAfterMessage(at: index, in: filteredMessages))
                                 }
                             }
-                            .listRowBackground(Color.clear)  // ✅ FIX: Remove default selection background
+                            .listRowBackground(Color.AppBackground.clear)  // ✅ FIX: Remove default selection background
                             .listRowInsets(EdgeInsets())  // ✅ FIX: Remove default list row insets
                             .onAppear {
                                 // ✅ Auto-scroll to bottom on last message appear
@@ -164,7 +164,7 @@ struct ChatView: View {
                     // ✅ Auto-scroll when new messages arrive
                     if scrollManager.shouldScrollToBottom && !isSearchActive && !viewModel.messages.isEmpty {
                         // ✅ Longer delay for media messages to render
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + ChatViewConstants.MessageDelay.mediaRender) {
                             scrollManager.scrollToBottom()
                         }
                     }
@@ -172,7 +172,7 @@ struct ChatView: View {
                 .onChange(of: searchText) { newValue in
                     // ✅ Scroll to first search result
                     if !newValue.isEmpty, !filteredMessages.isEmpty, let firstMatch = filteredMessages.first {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + ChatViewConstants.SearchDelay.scrollToResult) {
                             scrollManager.proxy?.scrollTo(firstMatch.id, anchor: .center)
                         }
                     } else if newValue.isEmpty {
@@ -213,21 +213,27 @@ struct ChatView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .toolbarBackground(.visible, for: .navigationBar)  // ✅ FIX: Make navbar opaque
-        .toolbarBackground(Color(uiColor: .systemBackground), for: .navigationBar)  // ✅ FIX: Set background color
+        .toolbarBackground(Color.AppBackground.primary, for: .navigationBar)  // ✅ FIX: Set background color
         .toolbar(content: toolbarContent)
         .gesture(
             DragGesture(minimumDistance: 10)
                 .updating($dragState) { value, state, _ in
                     // Only allow swipe from left edge (right swipe)
                     if value.startLocation.x < 20 && value.translation.width > 0 {
-                        state = min(value.translation.width, UIScreen.main.bounds.width * 0.2)
+                        state = min(value.translation.width, UIScreen.main.bounds.width * ChatViewConstants.Gesture.maxDragRatio)
                     }
                 }
                 .onEnded { value in
-                    // If swiped more than 100 points or 30% of screen width, dismiss
-                    let threshold = max(100, UIScreen.main.bounds.width * 0.3)
+                    // If swiped more than threshold, dismiss
+                    let threshold = max(
+                        ChatViewConstants.Gesture.dismissThreshold,
+                        UIScreen.main.bounds.width * ChatViewConstants.Gesture.dismissThresholdRatio
+                    )
                     if value.translation.width > threshold && value.startLocation.x < 20 {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        withAnimation(.spring(
+                            response: ChatViewConstants.Gesture.dismissSpringResponse,
+                            dampingFraction: ChatViewConstants.Gesture.dismissSpringDamping
+                        )) {
                             dismiss()
                         }
                     }
@@ -363,7 +369,7 @@ struct ChatView: View {
                 scrollManager.shouldScrollToBottom = true
                 
                 // ✅ FIX: Scroll to bottom after sending (longer delay for media)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + ChatViewConstants.MessageDelay.scrollAfterSend) {
                     scrollManager.scrollToBottom()
                 }
             },
