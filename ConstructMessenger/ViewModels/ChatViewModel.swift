@@ -717,10 +717,24 @@ class ChatViewModel: NSObject, ObservableObject {
                     )
                     
                     await MainActor.run {
-                        // Update message status to sent
-                        Log.info("🔄 Updating message status from sending → sent for \(messageId)", category: "ChatViewModel")
-                        updateMessageStatus(messageId: messageId, status: .sent)
-                        Log.info("✅ Message sent via REST API: \(response.messageId), status: \(response.status)", category: "ChatViewModel")
+                        // ✅ IMPROVED: Use server-provided status if available
+                        let deliveryStatus: DeliveryStatus
+                        
+                        switch response.status.lowercased() {
+                        case "delivered":
+                            deliveryStatus = .delivered
+                        case "queued":
+                            deliveryStatus = .queued
+                        case "sent", "success":
+                            deliveryStatus = .sent
+                        default:
+                            deliveryStatus = .sent  // Fallback to sent
+                            Log.info("⚠️ Unknown server status: \(response.status), using .sent", category: "ChatViewModel")
+                        }
+                        
+                        Log.info("🔄 Updating message status from sending → \(deliveryStatus) for \(messageId)", category: "ChatViewModel")
+                        updateMessageStatus(messageId: messageId, status: deliveryStatus)
+                        Log.info("✅ Message sent via REST API: \(response.messageId), server status: \(response.status)", category: "ChatViewModel")
                     }
                 } catch {
                     await MainActor.run {
@@ -862,7 +876,7 @@ class ChatViewModel: NSObject, ObservableObject {
     }
 
     func retryMessage(_ message: Message) {
-        // Retry for failed or queued messages
+        // ✅ Retry for failed or queued messages
         guard message.canRetry || message.deliveryStatus == .queued else {
             Log.info("Message cannot be retried", category: "ChatViewModel")
             return
@@ -873,13 +887,66 @@ class ChatViewModel: NSObject, ObservableObject {
             return
         }
 
-        // Increment retry count
+        guard let recipientId = chat.otherUser?.id else {
+            Log.error("❌ No recipient ID for retry", category: "ChatViewModel")
+            return
+        }
+
+        // ✅ Increment retry count
         message.retryCount += 1
         try? viewContext.save()
 
-        // Re-send the message
-        sendMessage(text: decryptedText)
-        Log.info("Retrying message (attempt \(message.retryCount))", category: "ChatViewModel")
+        Log.info("🔄 Retrying message \(message.id.prefix(8))... (attempt \(message.retryCount))", category: "ChatViewModel")
+
+        // ✅ FIXED: Update existing message status instead of creating new one
+        message.deliveryStatus = .sending
+        try? viewContext.save()
+
+        // ✅ Re-encrypt and resend using SAME message ID
+        do {
+            let components = try CryptoManager.shared.encryptMessage(decryptedText, for: recipientId)
+
+            Task {
+                do {
+                    let response = try await MessagingAPI.shared.sendMessage(
+                        recipientId: recipientId,
+                        ephemeralPublicKey: components.ephemeralPublicKey,
+                        messageNumber: components.messageNumber,
+                        content: components.content,
+                        timestamp: UInt64(Date().timeIntervalSince1970),
+                        suiteId: components.suiteId
+                    )
+                    
+                    await MainActor.run {
+                        // ✅ Use server-provided status
+                        let deliveryStatus: DeliveryStatus
+                        switch response.status.lowercased() {
+                        case "delivered": deliveryStatus = .delivered
+                        case "queued": deliveryStatus = .queued
+                        default: deliveryStatus = .sent
+                        }
+                        
+                        message.deliveryStatus = deliveryStatus
+                        try? self.viewContext.save()
+                        Log.info("✅ Message retry successful: \(response.messageId), status: \(deliveryStatus)", category: "ChatViewModel")
+                    }
+                } catch {
+                    await MainActor.run {
+                        // ✅ Keep existing message as failed
+                        message.deliveryStatus = .failed
+                        try? self.viewContext.save()
+                        Log.error("❌ Message retry failed: \(error.localizedDescription)", category: "ChatViewModel")
+                        self.errorMessage = "Failed to send message: \(error.localizedDescription)"
+                    }
+                }
+            }
+        } catch {
+            // ✅ Encryption failed - mark as failed
+            message.deliveryStatus = .failed
+            try? viewContext.save()
+            errorMessage = "Failed to encrypt message: \(error.localizedDescription)"
+            Log.error("❌ Retry encryption failed: \(error.localizedDescription)", category: "ChatViewModel")
+        }
     }
 
     // ✅ NOTE: WebSocket removed - using REST API only

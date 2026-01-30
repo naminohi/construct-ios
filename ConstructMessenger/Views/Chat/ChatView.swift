@@ -12,6 +12,7 @@ struct ChatView: View {
     @Environment(\.managedObjectContext) private var viewContext
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: ChatViewModel  // ✅ FIX: StateObject persists across view updates
+    @StateObject private var scrollManager = ChatScrollManager()  // ✅ NEW: Isolated scroll management
     @ObservedObject private var connectionManager = ConnectionStatusManager.shared
     @State private var messageText = ""
     @State private var replyingTo: Message?
@@ -19,15 +20,18 @@ struct ChatView: View {
     @State private var showResetSessionConfirm = false  // ← NEW
     @State private var searchText = ""
     @State private var isSearchActive = false
-    @State private var hasScrolledToBottom = false
-    @State private var scrollProxy: ScrollViewProxy?
     @State private var isEditMode = false
     @State private var selectedMessages: Set<String> = []
-    @State private var shouldScrollToBottom = true
-    @State private var scrollOffset: CGFloat = 0
-    @State private var dragOffset: CGFloat = 0
+    
+    // ✅ Swipe-to-dismiss gesture state (not scroll-related)
     @GestureState private var dragState: CGFloat = 0
-    @State private var keyboardHeight: CGFloat = 0
+    
+    // ❌ REMOVED: Scroll-related @State variables (moved to ChatScrollManager)
+    // - hasScrolledToBottom
+    // - scrollProxy
+    // - shouldScrollToBottom
+    // - scrollOffset
+    // - dragOffset
 
     init(chat: Chat, context: NSManagedObjectContext) {
         // ✅ FIX: Use StateObject initializer to create ViewModel only once
@@ -73,7 +77,7 @@ struct ChatView: View {
                             VStack(spacing: 0) {
                                 MessageBubble(
                                     message: message,
-                                    isLastInGroup: isLastInGroup(message, at: index, in: filteredMessages),
+                                    isLastInGroup: message.isLastInGroup(at: index, in: filteredMessages),
                                     isSelected: selectedMessages.contains(message.id),
                                     isEditMode: isEditMode,
                                     onRetry: { msg in
@@ -102,16 +106,16 @@ struct ChatView: View {
                                 // Add spacing after each message
                                 if index < filteredMessages.count - 1 {
                                     Spacer()
-                                        .frame(height: spacingAfterMessage(at: index, in: filteredMessages))
+                                        .frame(height: message.spacingAfterMessage(at: index, in: filteredMessages))
                                 }
                             }
                             .listRowBackground(Color.clear)  // ✅ FIX: Remove default selection background
                             .listRowInsets(EdgeInsets())  // ✅ FIX: Remove default list row insets
                             .onAppear {
-
-                                if index == filteredMessages.count - 1 && shouldScrollToBottom && !hasScrolledToBottom {
+                                // ✅ Auto-scroll to bottom on last message appear
+                                if index == filteredMessages.count - 1 && scrollManager.shouldScrollToBottom && !scrollManager.hasScrolledToBottom {
                                     DispatchQueue.main.async {
-                                        scrollToBottom(proxy: proxy)
+                                        scrollManager.scrollToBottom()
                                     }
                                 }
                             }
@@ -122,7 +126,8 @@ struct ChatView: View {
                         GeometryReader { geometry in
                             Color.clear.preference(key: ScrollOffsetPreferenceKey.self, value: geometry.frame(in: .named("scroll")).minY)
                             Color.clear.onAppear {
-                                scrollProxy = proxy
+                                // ✅ Register ScrollViewProxy with manager
+                                scrollManager.registerProxy(proxy)
                             }
                         }
                     )
@@ -133,10 +138,11 @@ struct ChatView: View {
                     hideKeyboard()
                 }
                 .onPreferenceChange(ScrollOffsetPreferenceKey.self) { value in
-                    scrollOffset = value
+                    scrollManager.updateScrollOffset(value)
                 }
                 .onAppear {
-                    scrollProxy = proxy
+                    // ✅ Register proxy with scroll manager
+                    scrollManager.registerProxy(proxy)
                     if AppConstants.enableDebugLogging {
                         print("ChatView appeared with \(viewModel.messages.count) messages")
                     }
@@ -144,66 +150,35 @@ struct ChatView: View {
                     // ✅ Clear badge when user opens a chat
                     LocalNotificationManager.shared.clearBadge()
                     
-                    // Scroll to bottom instantly (no animation) on initial load
-                    if !viewModel.messages.isEmpty, let newestMessage = viewModel.messages.first {
-                        proxy.scrollTo(newestMessage.id, anchor: .bottom)
-                        hasScrolledToBottom = true
+                    // ✅ Scroll to bottom instantly (no animation) on initial load
+                    if !viewModel.messages.isEmpty {
+                        scrollManager.scrollToBottom()
+                        scrollManager.hasScrolledToBottom = true
                     }
-                    
-                    // ✅ Subscribe to keyboard notifications
-                    NotificationCenter.default.addObserver(
-                        forName: UIResponder.keyboardWillShowNotification,
-                        object: nil,
-                        queue: .main
-                    ) { notification in
-                        if let keyboardFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect {
-                            keyboardHeight = keyboardFrame.height
-                            // Scroll to bottom when keyboard appears
-                            if let proxy = scrollProxy, !viewModel.messages.isEmpty {
-                                withAnimation(.easeOut(duration: 0.25)) {
-                                    scrollToBottom(proxy: proxy)
-                                }
-                            }
-                        }
-                    }
-                    
-                    NotificationCenter.default.addObserver(
-                        forName: UIResponder.keyboardWillHideNotification,
-                        object: nil,
-                        queue: .main
-                    ) { _ in
-                        keyboardHeight = 0
-                    }
-                }
-                .onDisappear {
-                    // Clean up observers
-                    NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillShowNotification, object: nil)
-                    NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillHideNotification, object: nil)
                 }
                 .onChange(of: viewModel.messages.count) { count in
                     if AppConstants.enableDebugLogging {
                         print("ChatView: messages count changed to \(count)")
                     }
 
-                    if shouldScrollToBottom && !isSearchActive && !viewModel.messages.isEmpty {
+                    // ✅ Auto-scroll when new messages arrive
+                    if scrollManager.shouldScrollToBottom && !isSearchActive && !viewModel.messages.isEmpty {
                         // ✅ Longer delay for media messages to render
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            scrollToBottom(proxy: proxy)
+                            scrollManager.scrollToBottom()
                         }
                     }
                 }
                 .onChange(of: searchText) { newValue in
-
+                    // ✅ Scroll to first search result
                     if !newValue.isEmpty, !filteredMessages.isEmpty, let firstMatch = filteredMessages.first {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                            withAnimation {
-                                proxy.scrollTo(firstMatch.id, anchor: .center)
-                            }
+                            scrollManager.proxy?.scrollTo(firstMatch.id, anchor: .center)
                         }
                     } else if newValue.isEmpty {
                         // When search is cleared, scroll back to bottom
-                        shouldScrollToBottom = true
-                        scrollToBottom(proxy: proxy)
+                        scrollManager.shouldScrollToBottom = true
+                        scrollManager.scrollToBottom()
                     }
                 }
                 .onChange(of: isSearchActive) { active in
@@ -216,8 +191,8 @@ struct ChatView: View {
                     } else {
                         // When search is dismissed, scroll back to bottom
                         searchText = ""
-                        shouldScrollToBottom = true
-                        scrollToBottom(proxy: proxy)
+                        scrollManager.shouldScrollToBottom = true
+                        scrollManager.scrollToBottom()
                     }
                 }
                 .onChange(of: isEditMode) { editMode in
@@ -385,13 +360,11 @@ struct ChatView: View {
                 replyingTo = nil
                 
                 // ✅ Enable auto-scroll for new message
-                shouldScrollToBottom = true
+                scrollManager.shouldScrollToBottom = true
                 
                 // ✅ FIX: Scroll to bottom after sending (longer delay for media)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    if let proxy = scrollProxy {
-                        scrollToBottom(proxy: proxy)
-                    }
+                    scrollManager.scrollToBottom()
                 }
             },
             onCancelReply: {
@@ -508,19 +481,8 @@ struct ChatView: View {
 
     // MARK: - Actions
     
-    private func scrollToBottom(proxy: ScrollViewProxy) {
-        guard !isSearchActive, !viewModel.messages.isEmpty else { return }
-        
-        // messages stored newest-first, so .first = newest message
-        if let lastMessage = viewModel.messages.first {
-            withAnimation {
-                proxy.scrollTo(lastMessage.id, anchor: .bottom)
-            }
-            hasScrolledToBottom = true
-            shouldScrollToBottom = false
-        }
-    }
-
+    // MARK: - Actions
+    
     private func toggleMessageSelection(_ message: Message) {
         if selectedMessages.contains(message.id) {
             selectedMessages.remove(message.id)
@@ -541,45 +503,7 @@ struct ChatView: View {
         }
     }
 
-    // MARK: - Message Grouping Logic
-
-    /// Determines if a message is the last in a group of consecutive messages from the same sender
-    private func isLastInGroup(_ message: Message, at index: Int, in messages: [Message]) -> Bool {
-        // ✅ REFACTOR: No more defensive checks needed - FRC ensures valid messages only
-        
-        // If this is the last message, it's always the last in its group
-        guard index < messages.count - 1 else {
-            return true
-        }
-
-        let nextMessage = messages[index + 1]
-
-        // Different sender = end of group
-        if message.isSentByMe != nextMessage.isSentByMe {
-            return true
-        }
-
-        // If more than 5 minutes apart, start a new group
-        let timeDifference = nextMessage.timestamp.timeIntervalSince(message.timestamp)
-        if timeDifference > 300 { // 5 minutes
-            return true
-        }
-
-        return false
-    }
-
-    /// Returns appropriate spacing after a message
-    private func spacingAfterMessage(at index: Int, in messages: [Message]) -> CGFloat {
-        let message = messages[index]
-
-        // If this is the last in group, use larger spacing
-        if isLastInGroup(message, at: index, in: messages) {
-            return 12
-        }
-
-        // Otherwise, use compact spacing within the group
-        return 4
-    }
+    // ✅ REMOVED: Message grouping logic moved to Message+Grouping.swift extension
     
     /// Hide keyboard
     private func hideKeyboard() {

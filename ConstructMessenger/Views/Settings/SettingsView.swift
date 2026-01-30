@@ -14,6 +14,8 @@ struct SettingsView: View {
     @ObservedObject private var connectionStatus = ConnectionStatusManager.shared
     @State private var showingQRCode = false
     @State private var linkCopied = false
+    
+    private let inviteGenerator = InviteGenerator()
 
     var body: some View {
         NavigationStack {
@@ -203,22 +205,19 @@ struct SettingsView: View {
     // MARK: - Contact Link
     private var contactLink: String {
         guard let userId = authViewModel.currentUserId,
-              !authViewModel.currentUsername.isEmpty else {  // ✅ FIX: currentUsername is String, not String?
+              !authViewModel.currentUsername.isEmpty else {
             return ""
         }
         
-        let username = authViewModel.currentUsername
-        let encodedUsername = username.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? username
-        
-        var components = URLComponents()
-        components.scheme = "https"
-        components.host = "konstruct.cc"
-        components.path = "/c/\(userId)"
-        components.queryItems = [
-            URLQueryItem(name: "username", value: encodedUsername)
-        ]
-
-        return components.string ?? "https://konstruct.cc/c/\(userId)?username=\(encodedUsername)"
+        // ✅ Generate Dynamic Invite deep link (HTTPS format for sharing)
+        do {
+            return try inviteGenerator.generateDeepLink(userId: userId, useHTTPS: true)
+        } catch {
+            // ❌ Fallback to legacy format if generation fails
+            let username = authViewModel.currentUsername
+            let encodedUsername = username.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? username
+            return "https://konstruct.cc/c/\(userId)?username=\(encodedUsername)"
+        }
     }
 
     private func copyContactLink() {
