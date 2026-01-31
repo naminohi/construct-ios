@@ -265,3 +265,20 @@ extension View {
         self.cornerRadius(CornerRadius.medium)
     }
 }
+
+// MARK: - QR Code Constants
+
+struct QRCodeSize {
+    /// Standard QR code size for contact sharing
+    /// ~80% of iPhone screen width, but max 350pt for larger devices
+    static let standard: CGFloat = min(UIScreen.main.bounds.width * 0.8, 350)
+    
+    /// Padding around QR code
+    static let padding: CGFloat = 20
+    
+    /// Corner radius for QR code container
+    static let cornerRadius: CGFloat = 20
+    
+    /// Shadow radius for QR code container
+    static let shadowRadius: CGFloat = 10
+}

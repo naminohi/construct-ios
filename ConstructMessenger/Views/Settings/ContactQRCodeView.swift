@@ -37,16 +37,16 @@ struct ContactQRCodeView: View {
                             .interpolation(.none)
                             .resizable()
                             .scaledToFit()
-                            .frame(width: 250, height: 250)
-                            .padding()
+                            .frame(width: QRCodeSize.standard, height: QRCodeSize.standard)
+                            .padding(QRCodeSize.padding)
                             .background(Color.white)
-                            .cornerRadius(16)
-                            .shadow(radius: 8)
+                            .cornerRadius(QRCodeSize.cornerRadius)
+                            .shadow(radius: QRCodeSize.shadowRadius)
                     } else if let error = generationError {
                         Rectangle()
                             .fill(Color.gray.opacity(0.2))
-                            .frame(width: 250, height: 250)
-                            .cornerRadius(16)
+                            .frame(width: QRCodeSize.standard, height: QRCodeSize.standard)
+                            .cornerRadius(QRCodeSize.cornerRadius)
                             .overlay {
                                 VStack(spacing: 8) {
                                     Image(systemName: "exclamationmark.triangle")
@@ -61,7 +61,7 @@ struct ContactQRCodeView: View {
                             }
                     } else {
                         ProgressView()
-                            .frame(width: 250, height: 250)
+                            .frame(width: QRCodeSize.standard, height: QRCodeSize.standard)
                     }
 
                     VStack(spacing: 8) {
