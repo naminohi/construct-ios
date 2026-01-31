@@ -21,16 +21,8 @@ class ChatsViewModel: ObservableObject {
     // ✅ Chat ID to open programmatically (e.g., from deep link)
     @Published var chatToOpen: String?
 
-    // ✅ Long polling state
-    private var isPolling = false
-    private var pollingTask: Task<Void, Never>?
-    
-    // ✅ Exponential backoff for error retry
-    private var retryCount = 0
-    private let maxRetryDelay: UInt64 = 60_000_000_000  // 60 seconds max
-    
-    // ✅ App lifecycle state
-    private var isPaused = false
+    // ✅ Long polling manager
+    private let pollingManager = LongPollingManager()
     
     // ✅ Persistent lastMessageId (survives app restart)
     private var lastMessageId: String? {
@@ -59,7 +51,7 @@ class ChatsViewModel: ObservableObject {
     }
 
     isolated deinit {
-        stopLongPolling()
+        pollingManager.stopPolling()
     }
 
     func setContext(_ context: NSManagedObjectContext) {
@@ -124,8 +116,7 @@ class ChatsViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 Log.info("📱 App going to background - pausing polling", category: "ChatsViewModel")
-                self?.isPaused = true
-                self?.stopLongPolling()
+                self?.pollingManager.pause()
             }
             .store(in: &cancellables)
         
@@ -134,7 +125,6 @@ class ChatsViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 Log.info("📱 App became active - resuming polling if conditions met", category: "ChatsViewModel")
-                self?.isPaused = false
                 // Don't manually restart - let Combine publisher handle it
                 // based on token + connection status
             }
@@ -144,108 +134,31 @@ class ChatsViewModel: ObservableObject {
     // MARK: - Long Polling
 
     func startLongPolling() {
-        guard !isPolling else {
-            Log.info("📡 Long polling already running, skipping duplicate start", category: "ChatsViewModel")
-            return
-        }
-        // ✅ Token check removed - now handled by Combine publisher
-        // The subscriber only calls this when token is present
-
-        isPolling = true
-        Log.info("📡 ✅ Starting long polling for messages", category: "ChatsViewModel")
-
-        pollingTask = Task { [weak self] in
-            await self?.pollMessagesLoop()
-        }
-    }
-
-    func stopLongPolling() {
-        isPolling = false
-        pollingTask?.cancel()
-        pollingTask = nil
-        retryCount = 0  // ✅ Reset backoff counter when stopping
-        Log.info("📡 Stopped long polling", category: "ChatsViewModel")
-    }
-
-    private func pollMessagesLoop() async {
-        while isPolling && !Task.isCancelled {
-            do {
-                // ✅ DEBUG: Log current lastMessageId before request
-                if let lastId = lastMessageId {
-                    Log.info("📡 Polling loop: lastMessageId=\(lastId)", category: "ChatsViewModel")
-                } else {
-                    Log.info("📡 Polling loop: lastMessageId is nil (first request)", category: "ChatsViewModel")
-                }
+        pollingManager.startPolling(
+            getLastMessageId: { [weak self] in
+                return self?.lastMessageId
+            },
+            updateLastMessageId: { [weak self] newId in
+                self?.lastMessageId = newId
+            },
+            onMessagesReceived: { [weak self] messages in
+                guard let self = self else { return }
                 
-                let response = try await MessagingAPI.shared.pollMessages(
-                    sinceId: lastMessageId,
-                    timeout: 30
-                )
-
-                // ✅ DEBUG: Log response summary
-                Log.info("📥 Poll response: \(response.messages.count) messages, nextSince=\(response.nextSince ?? "nil"), hasMore=\(response.hasMore ?? false)", category: "ChatsViewModel")
-
                 // Process received messages
-                for messageResponse in response.messages {
+                for messageResponse in messages {
                     do {
                         let chatMessage = try messageResponse.toChatMessage()
-                        await MainActor.run {
-                            self.handleIncomingMessage(chatMessage)
-                        }
+                        self.handleIncomingMessage(chatMessage)
                     } catch {
                         Log.error("❌ Failed to convert message: \(error)", category: "ChatsViewModel")
                     }
                 }
-
-                // Update last message ID for next poll
-                let previousLastId = lastMessageId
-                if let nextSince = response.nextSince {
-                    lastMessageId = nextSince
-                    Log.info("✅ Updated lastMessageId from nextSince: \(previousLastId ?? "nil") -> \(nextSince)", category: "ChatsViewModel")
-                } else if let lastMessage = response.messages.last {
-                    lastMessageId = lastMessage.id
-                    Log.info("✅ Updated lastMessageId from last message: \(previousLastId ?? "nil") -> \(lastMessage.id)", category: "ChatsViewModel")
-                } else {
-                    Log.info("ℹ️ No nextSince and no messages, keeping lastMessageId: \(lastMessageId ?? "nil")", category: "ChatsViewModel")
-                }
-                
-                // ✅ Reset retry count on successful poll
-                retryCount = 0
-
-                // If there are more messages, poll again immediately
-                if response.hasMore == true {
-                    Log.info("🔄 hasMore=true, polling again immediately", category: "ChatsViewModel")
-                    continue
-                }
-
-            } catch {
-                // ✅ Check if polling was explicitly stopped (e.g., app went to background)
-                // In that case, don't log error or retry - this is expected behavior
-                guard isPolling else {
-                    Log.debug("📡 Polling stopped, exiting loop (error was: \(error.localizedDescription))", category: "ChatsViewModel")
-                    break
-                }
-                
-                Log.error("❌ Long polling error: \(error.localizedDescription)", category: "ChatsViewModel")
-                
-                // ✅ EXPONENTIAL BACKOFF: Increase delay with each consecutive failure
-                // Pattern: 5s → 10s → 20s → 40s → 60s (max)
-                // Prevents hammering server when it's down, saves battery
-                retryCount += 1
-                let baseDelay: UInt64 = 5_000_000_000  // 5 seconds
-                let exponentialDelay = baseDelay * UInt64(pow(2.0, Double(min(retryCount - 1, 4))))
-                
-                // ✅ Add random jitter (0-2.5s) to prevent thundering herd
-                // If many clients reconnect simultaneously, jitter spreads the load
-                let jitter = UInt64.random(in: 0...(baseDelay / 2))
-                let delay = min(exponentialDelay + jitter, maxRetryDelay)
-                
-                let delaySeconds = Double(delay) / 1_000_000_000.0
-                Log.info("⏳ Retry attempt #\(retryCount) in \(String(format: "%.1f", delaySeconds))s (exponential backoff)", category: "ChatsViewModel")
-                
-                try? await Task.sleep(nanoseconds: delay)
             }
-        }
+        )
+    }
+
+    func stopLongPolling() {
+        pollingManager.stopPolling()
     }
 
     // MARK: - Start Chat
