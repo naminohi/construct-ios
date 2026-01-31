@@ -154,6 +154,24 @@ struct SettingsView: View {
                     Text("preferences")
                 }
 
+                // MARK: - Debug Section
+                #if DEBUG
+                Section {
+                    NavigationLink(destination: DebugLogsView()) {
+                        Label {
+                            Text("Debug Logs")
+                        } icon: {
+                            Image(systemName: "doc.text.magnifyingglass")
+                                .foregroundColor(.gray)
+                        }
+                    }
+                } header: {
+                    Text("Developer")
+                } footer: {
+                    Text("Debug build only - Export logs for troubleshooting")
+                }
+                #endif
+
                 // MARK: - About Section
                 Section {
                     HStack {
