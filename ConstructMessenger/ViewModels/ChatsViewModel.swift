@@ -362,10 +362,10 @@ class ChatsViewModel: ObservableObject {
     func deleteChat(chat: Chat) {
         guard let context = viewContext else { return }
 
-        // ✅ CRITICAL FIX: Delete crypto session when deleting chat
+        // ✅ CRITICAL FIX: Archive crypto session when deleting chat
         if let userId = chat.otherUser?.id {
-            CryptoManager.shared.deleteSession(for: userId)
-            Log.info("🗑️ Deleted crypto session for user: \(userId)", category: "ChatsViewModel")
+            CryptoManager.shared.archiveSession(for: userId, reason: .manualReset)
+            Log.info("🗑️ Archived crypto session for user: \(userId)", category: "ChatsViewModel")
         }
 
         context.delete(chat)

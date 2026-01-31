@@ -131,7 +131,9 @@ class AuthViewModel: ObservableObject {
     private func startTokenRefreshMonitoring() {
         // Check every minute
         tokenRefreshTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            self?.checkTokenExpiration()
+            Task { @MainActor in
+                self?.checkTokenExpiration()
+            }
         }
     }
 
@@ -363,14 +365,18 @@ class AuthViewModel: ObservableObject {
     private func startAuthTimeout() {
         authOperationTimer?.invalidate()
         authOperationTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: false) { [weak self] _ in
-            self?.handleTimeout()
+            Task { @MainActor in
+                self?.handleTimeout()
+            }
         }
     }
     
     private func startSessionRestoreTimeout() {
         sessionRestoreTimer?.invalidate()
         sessionRestoreTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: false) { [weak self] _ in
-            self?.handleTimeout()
+            Task { @MainActor in
+                self?.handleTimeout()
+            }
         }
     }
     

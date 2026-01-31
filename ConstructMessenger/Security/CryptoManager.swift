@@ -448,11 +448,11 @@ class CryptoManager {
             throw CryptoManagerError.coreNotInitialized
         }
         
-        // ✅ CRITICAL FIX: Force delete any existing session before initializing
+        // ✅ CRITICAL FIX: Archive any existing session before initializing
         // This prevents session desynchronization when one party reinstalls app
         if userSessions[userId] != nil {
-            Log.info("⚠️ Existing session found for \(userId) - deleting before reinitialization to prevent desync", category: "CryptoManager")
-            deleteSession(for: userId)
+            Log.info("⚠️ Existing session found for \(userId) - archiving before reinitialization to prevent desync", category: "CryptoManager")
+            archiveSession(for: userId, reason: .manualReset)
         }
 
         // 1. Decode base64 strings to Data
@@ -626,11 +626,11 @@ class CryptoManager {
             throw CryptoManagerError.coreNotInitialized
         }
         
-        // ✅ CRITICAL FIX: Force delete any existing session before initializing
+        // ✅ CRITICAL FIX: Archive any existing session before initializing
         // This ensures we start fresh and prevents Double Ratchet desynchronization
         if userSessions[userId] != nil {
-            Log.info("⚠️ Existing session found for \(userId) - deleting before receiving session init to prevent desync", category: "CryptoManager")
-            deleteSession(for: userId)
+            Log.info("⚠️ Existing session found for \(userId) - archiving before receiving session init to prevent desync", category: "CryptoManager")
+            archiveSession(for: userId, reason: .manualReset)
         }
 
         // 1. Decode base64 strings to Data
