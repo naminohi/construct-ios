@@ -922,29 +922,11 @@ class ChatsViewModel: ObservableObject {
                 do {
                     Log.info("📥 Downloading avatar from Media Upload API: \(avatarMediaId)", category: "ChatsViewModel")
                     
-                    // The avatarMediaKey is base64-encoded raw key (JSON is already E2E encrypted)
-                    guard let keyData = Data(base64Encoded: avatarMediaKey) else {
-                        Log.error("❌ Failed to decode avatar media key", category: "ChatsViewModel")
-                        return
-                    }
-                    
-                    // Download encrypted media
-                    guard let url = URL(string: avatarMediaUrl) else {
-                        Log.error("❌ Invalid avatar media URL", category: "ChatsViewModel")
-                        return
-                    }
-                    
-                    let (encryptedData, response) = try await URLSession.shared.data(from: url)
-                    
-                    guard let httpResponse = response as? HTTPURLResponse,
-                          httpResponse.statusCode == 200 else {
-                        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-                        Log.error("❌ Failed to download avatar: HTTP \(statusCode)", category: "ChatsViewModel")
-                        return
-                    }
-                    
-                    // Decrypt media using the key
-                    let decryptedData = try CryptoManager.shared.decryptMediaData(encryptedData, with: keyData)
+                    // Use MediaManager for avatar download and decryption
+                    let decryptedData = try await MediaManager.shared.downloadAndDecryptAvatar(
+                        mediaUrl: avatarMediaUrl,
+                        mediaKeyBase64: avatarMediaKey
+                    )
                     
                     await MainActor.run {
                         user.avatarData = decryptedData

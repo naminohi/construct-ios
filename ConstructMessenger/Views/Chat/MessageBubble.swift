@@ -447,16 +447,16 @@ struct MediaMessageView: View {
     }
     
     private func loadThumbnail() {
-        // ✅ For sender: try to load from local storage
+        // For sender: try to load from local storage via MediaManager
         if message.isSentByMe {
-            if let thumbnailData = UserDefaults.standard.data(forKey: "message_thumbnail_\(message.id)"),
+            if let thumbnailData = MediaManager.shared.retrieveThumbnail(for: message.id),
                let image = UIImage(data: thumbnailData) {
                 thumbnailImage = image
                 return
             }
         }
         
-        // ✅ For receiver: download and decrypt media
+        // For receiver: download and decrypt media
         guard let mediaId = mediaContent.media["mediaId"] as? String,
               let mediaUrl = mediaContent.media["mediaUrl"] as? String,
               let mediaKeyBase64 = mediaContent.media["mediaKey"] as? String else {
@@ -471,8 +471,8 @@ struct MediaMessageView: View {
             do {
                 Log.info("📥 Downloading media: \(mediaId)", category: "MediaMessage")
                 
-                // Download and decrypt (mediaKeyBase64 is String, not Data)
-                let imageData = try await MediaUploadService.shared.downloadAndDecryptMedia(
+                // Download and decrypt via MediaManager
+                let imageData = try await MediaManager.shared.downloadAndDecryptMedia(
                     mediaUrl: mediaUrl,
                     mediaKeyBase64: mediaKeyBase64
                 )
@@ -485,8 +485,8 @@ struct MediaMessageView: View {
                     return
                 }
                 
-                // Generate thumbnail
-                let thumbnail = generateThumbnail(from: image, maxSize: 250)
+                // Generate thumbnail via MediaManager
+                let thumbnail = MediaManager.shared.generateThumbnailImage(from: image, maxSize: 250)
                 
                 await MainActor.run {
                     thumbnailImage = thumbnail
@@ -500,17 +500,6 @@ struct MediaMessageView: View {
                     isLoading = false
                 }
             }
-        }
-    }
-    
-    private func generateThumbnail(from image: UIImage, maxSize: CGFloat) -> UIImage {
-        let size = image.size
-        let scale = min(maxSize / size.width, maxSize / size.height)
-        let thumbnailSize = CGSize(width: size.width * scale, height: size.height * scale)
-        
-        let renderer = UIGraphicsImageRenderer(size: thumbnailSize)
-        return renderer.image { _ in
-            image.draw(in: CGRect(origin: .zero, size: thumbnailSize))
         }
     }
 }

@@ -976,20 +976,20 @@ class ChatViewModel: NSObject, ObservableObject {
         Task {
             do {
                 var mediaDataList: [MediaMessageData] = []
-                var thumbnails: [Data] = []  // ✅ Store thumbnails locally for sender
+                var thumbnails: [Data] = []  // Store thumbnails locally for sender
 
-                // Upload each image
+                // Upload each image using MediaManager
                 for (index, image) in images.enumerated() {
                     Log.info("📤 Uploading image \(index + 1)/\(images.count)", category: "ChatViewModel")
 
-                    // ✅ Generate thumbnail before upload (for local storage on sender side)
-                    let optimized = try MediaOptimizer.optimizeImage(image)
-                    if let thumbnail = optimized.thumbnail {
+                    // Generate thumbnail before upload (for local storage on sender side)
+                    if let thumbnail = MediaManager.shared.generateThumbnail(from: image) {
                         thumbnails.append(thumbnail)
                         Log.debug("📸 Generated thumbnail: \(thumbnail.count) bytes", category: "ChatViewModel")
                     }
 
-                    let mediaData = try await MediaUploadService.shared.uploadImage(image, for: recipientId)
+                    // Upload via MediaManager
+                    let mediaData = try await MediaManager.shared.uploadImage(image, for: recipientId)
                     mediaDataList.append(mediaData)
 
                     Log.info("✅ Image \(index + 1) uploaded: \(mediaData.mediaId)", category: "ChatViewModel")
@@ -1003,8 +1003,7 @@ class ChatViewModel: NSObject, ObservableObject {
 
                 // Send as regular encrypted message
                 await MainActor.run {
-                    // ✅ Store thumbnails locally before sending
-                    // We'll save them with the message after it's created
+                    // Store thumbnails locally before sending
                     sendTextMessage(text: messageContent, replyTo: replyTo, localThumbnails: thumbnails)
                 }
 
@@ -1216,13 +1215,11 @@ class ChatViewModel: NSObject, ObservableObject {
                 newMessage.replyToContent = replyMessage.decryptedContent
             }
             
-            // ✅ Store thumbnails locally for media messages (sender side)
+            // Store thumbnails locally for media messages (sender side)
             if !localThumbnails.isEmpty {
-                // Store first thumbnail in UserDefaults (temporary solution)
-                // TODO: Add thumbnailData field to Message entity in Core Data
+                // Store first thumbnail using MediaManager
                 if let firstThumbnail = localThumbnails.first {
-                    UserDefaults.standard.set(firstThumbnail, forKey: "message_thumbnail_\(message.id)")
-                    Log.debug("💾 Stored thumbnail locally for message \(message.id)", category: "ChatViewModel")
+                    MediaManager.shared.storeThumbnail(firstThumbnail, for: message.id)
                 }
             }
             
