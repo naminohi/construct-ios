@@ -120,6 +120,11 @@ struct ChatView: View {
                                 }
                             }
                         }
+                        
+                        // ✅ Invisible anchor at the bottom for scrollToBottom()
+                        Color.clear
+                            .frame(height: 1)
+                            .id("bottom")
                     }
                     .padding()
                     .background(
