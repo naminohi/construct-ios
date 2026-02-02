@@ -389,6 +389,44 @@ struct ChatView: View {
             }
         )
         .disabled(isEditMode)
+        .overlay(alignment: .bottomTrailing) {
+            // ✅ Scroll to bottom button (appears when scrolled far from newest)
+            if scrollManager.shouldShowScrollToBottomButton && !isEditMode {
+                Button {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        if let lastMessage = filteredMessages.last {
+                            scrollManager.scrollToBottom(messageId: lastMessage.id)
+                        }
+                        scrollManager.shouldScrollToBottom = true
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                        Text(NSLocalizedString("new_messages", comment: "Scroll to new messages"))
+                            .font(.system(size: 14, weight: .medium))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(
+                        Capsule()
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color.accentColor, Color.accentColor.opacity(0.8)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 4)
+                    )
+                }
+                .padding(.trailing, 16)
+                .padding(.bottom, 80) // Above message input
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: scrollManager.shouldShowScrollToBottomButton)
+            }
+        }
     }
     
     @ToolbarContentBuilder

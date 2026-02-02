@@ -177,4 +177,16 @@ extension ChatScrollManager {
     var isNearBottom: Bool {
         scrollOffset > -100
     }
+    
+    /// Whether to show "scroll to bottom" button (scrolled far from newest messages)
+    /// With rotation approach: scrolling up = away from newest (at visual bottom)
+    var shouldShowScrollToBottomButton: Bool {
+        // Get screen height for dynamic threshold
+        let screenHeight = UIScreen.main.bounds.height
+        let threshold = screenHeight * 2  // 2 screen heights
+        
+        // With rotation: positive offset = scrolled up (away from newest)
+        // Negative offset = at or near newest messages
+        return scrollOffset > threshold
+    }
 }
