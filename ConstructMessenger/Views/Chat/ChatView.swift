@@ -173,7 +173,7 @@ struct ChatView: View {
                     // ✅ Scroll to first search result
                     if !newValue.isEmpty, !filteredMessages.isEmpty, let firstMatch = filteredMessages.first {
                         DispatchQueue.main.asyncAfter(deadline: .now() + ChatViewConstants.SearchDelay.scrollToResult) {
-                            scrollManager.proxy?.scrollTo(firstMatch.id, anchor: .center)
+                            scrollManager.scrollTo(messageId: firstMatch.id, anchor: .center)
                         }
                     } else if newValue.isEmpty {
                         // When search is cleared, scroll back to bottom

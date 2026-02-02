@@ -41,7 +41,7 @@ class ChatScrollManager: ObservableObject {
     // MARK: - Private State
     
     /// Reference to ScrollViewProxy for programmatic scrolling
-    private(set) var proxy: ScrollViewProxy?
+    private var proxy: ScrollViewProxy?
     
     /// Drag offset for pull-to-refresh gestures
     private(set) var dragOffset: CGFloat = 0
@@ -77,6 +77,28 @@ class ChatScrollManager: ObservableObject {
         
         hasScrolledToBottom = true
         Log.debug("📜 Scrolled to bottom (messageId: \(messageId))", category: "ChatScrollManager")
+    }
+    
+    /// Scroll to a specific message
+    /// - Parameters:
+    ///   - messageId: Message ID to scroll to
+    ///   - anchor: Anchor position (default: .center)
+    ///   - animated: Whether to animate the scroll (default: true)
+    func scrollTo(messageId: String, anchor: UnitPoint = .center, animated: Bool = true) {
+        guard let proxy = proxy else {
+            Log.debug("⚠️ ScrollViewProxy not registered yet", category: "ChatScrollManager")
+            return
+        }
+        
+        if animated {
+            withAnimation(.easeOut(duration: 0.3)) {
+                proxy.scrollTo(messageId, anchor: anchor)
+            }
+        } else {
+            proxy.scrollTo(messageId, anchor: anchor)
+        }
+        
+        Log.debug("📜 Scrolled to message: \(messageId)", category: "ChatScrollManager")
     }
     
     /// Update scroll offset (called from GeometryReader)
