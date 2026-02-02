@@ -56,6 +56,9 @@ class ChatViewModel: NSObject, ObservableObject {
 
     // ✅ FIX: Use NSFetchedResultsController for automatic Core Data updates
     private var fetchedResultsController: NSFetchedResultsController<Message>?
+    
+    // ✅ REFACTOR: Extracted services
+    private let sessionInitService = SessionInitializationService()
 
     init(chat: Chat, context: NSManagedObjectContext) {
         self.chat = chat
@@ -200,10 +203,10 @@ class ChatViewModel: NSObject, ObservableObject {
             }
         }
 
-        // ✅ FIXED: Use REST API instead of WebSocket with retry
+        // ✅ REFACTOR: Use SessionInitializationService with retry
         Task {
             do {
-                let publicKeyBundle = try await fetchPublicKeyWithRetry(userId: userId)
+                let publicKeyBundle = try await sessionInitService.fetchPublicKeyWithRetry(userId: userId)
                 
                 await MainActor.run {
                     self.handlePublicKeyBundle(publicKeyBundle)
@@ -232,14 +235,7 @@ class ChatViewModel: NSObject, ObservableObject {
             self.recipientBundle = (data.identityPublic, data.signedPrekeyPublic, data.signature, data.verifyingKey)
             guard SessionManager.shared.currentUserId != nil else { return }
             
-            // ✅ FIX: Proactively delete any stale session before starting a new one.
-            CryptoManager.shared.deleteSession(for: data.userId)
-            Log.info("🗑️ Proactively deleted any existing session for \(data.userId) before initialization.", category: "ChatViewModel")
-
-            // ✅ FIX: If we requested the keys, WE are the initiator
-            Log.info("🔑 Received public key bundle - we requested it, so we are INITIATOR", category: "ChatViewModel")
-
-            // ✅ Prevent self-session initialization
+            // ✅ FIX: Prevent self-session initialization
             guard let currentUserId = SessionManager.shared.currentUserId else {
                 Log.error("❌ Cannot initialize session: currentUserId is nil", category: "ChatViewModel")
                 errorMessage = "Cannot initialize session: user not authenticated"
@@ -255,18 +251,11 @@ class ChatViewModel: NSObject, ObservableObject {
             }
 
             do {
-                let bundleWithSuite = (
-                    identityPublic: data.identityPublic,
-                    signedPrekeyPublic: data.signedPrekeyPublic,
-                    signature: data.signature,
-                    verifyingKey: data.verifyingKey,
-                    suiteId: String(data.suiteId)
-                )
-                try CryptoManager.shared.initializeSession(for: data.userId, recipientBundle: bundleWithSuite)
+                // ✅ REFACTOR: Use SessionInitializationService
+                try sessionInitService.initializeSession(userId: data.userId, bundle: data, deleteExisting: true)
 
                 isSessionReady = true
                 errorMessage = nil
-                Log.info("✅ Session initialized as INITIATOR for \(data.userId)", category: "ChatViewModel")
 
                 // Process any pending messages
                 processPendingMessages()
@@ -456,91 +445,38 @@ class ChatViewModel: NSObject, ObservableObject {
     // ✅ REFACTOR: Simplified - FRC now handles all updates automatically
     
     // MARK: - Session Initialization Utilities
-    
-    /// Fetch public key bundle with retry and exponential backoff
-    /// - Parameters:
-    ///   - userId: Target user ID
-    ///   - maxAttempts: Maximum retry attempts (default: 3)
-    ///   - initialDelay: Initial retry delay in seconds (default: 1.0)
-    /// - Returns: Public key bundle data
-    /// - Throws: Last error if all attempts fail
-    private func fetchPublicKeyWithRetry(
-        userId: String,
-        maxAttempts: Int = 3,
-        initialDelay: TimeInterval = 1.0
-    ) async throws -> PublicKeyBundleData {
-        var lastError: Error?
-        var delay = initialDelay
-        
-        for attempt in 1...maxAttempts {
-            do {
-                Log.info("🔑 SESSION_STATE[fetch_bundle_attempt_\(attempt)]: userId=\(userId.prefix(8))..., maxAttempts=\(maxAttempts)", category: "SessionInit")
-                let bundle = try await CryptoAPI.shared.getPublicKey(userId: userId)
-                Log.info("✅ SESSION_STATE[fetch_bundle_success]: userId=\(userId.prefix(8))..., attempt=\(attempt)", category: "SessionInit")
-                return bundle
-            } catch {
-                lastError = error
-                Log.info("⚠️ SESSION_STATE[fetch_bundle_failed]: attempt=\(attempt)/\(maxAttempts), error=\(error.localizedDescription)", category: "SessionInit")
-                
-                if attempt < maxAttempts {
-                    Log.info("⏳ Retrying public key fetch in \(delay)s...", category: "SessionInit")
-                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                    delay *= 2  // Exponential backoff: 1s, 2s, 4s
-                }
-            }
-        }
-        
-        Log.error("❌ SESSION_STATE[fetch_bundle_exhausted]: userId=\(userId.prefix(8))..., allAttemptsFailed", category: "SessionInit")
-        throw lastError ?? NetworkError.connectionFailed
-    }
+    // ✅ REFACTOR: Session initialization logic moved to SessionInitializationService
     
     /// Proactively initialize session for a user
     /// Called when message is queued but session doesn't exist yet
     private func initializeSessionProactively(userId: String) async {
-        Log.info("🔐 SESSION_STATE[proactive_init_start]: userId=\(userId.prefix(8))...", category: "SessionInit")
-        
         await MainActor.run {
             isInitializingSession = true
         }
         
-        do {
-            // Fetch bundle with retry
-            let bundle = try await fetchPublicKeyWithRetry(userId: userId)
-            
-            // Initialize sending session
-            let bundleWithSuite = (
-                identityPublic: bundle.identityPublic,
-                signedPrekeyPublic: bundle.signedPrekeyPublic,
-                signature: bundle.signature,
-                verifyingKey: bundle.verifyingKey,
-                suiteId: "1"
-            )
-            
-            try CryptoManager.shared.initializeSession(for: userId, recipientBundle: bundleWithSuite)
-            
-            Log.info("✅ SESSION_STATE[proactive_init_success]: userId=\(userId.prefix(8))...", category: "SessionInit")
-            
-            // Mark session as ready
-            await MainActor.run {
-                isSessionReady = true
-                isInitializingSession = false
-                errorMessage = nil
-            }
-            
-            // Send queued messages
-            await sendQueuedMessages(userId: userId)
-            
-        } catch {
-            Log.error("❌ SESSION_STATE[proactive_init_failed]: userId=\(userId.prefix(8))..., error=\(error.localizedDescription)", category: "SessionInit")
-            
-            await MainActor.run {
-                isInitializingSession = false
-                errorMessage = "Failed to initialize secure connection: \(error.localizedDescription)"
+        // ✅ REFACTOR: Use SessionInitializationService
+        await sessionInitService.initializeSessionProactively(
+            userId: userId,
+            onSuccess: { [weak self] in
+                guard let self = self else { return }
+                self.isSessionReady = true
+                self.isInitializingSession = false
+                self.errorMessage = nil
+                
+                // Send queued messages
+                Task {
+                    await self.sendQueuedMessages(userId: userId)
+                }
+            },
+            onFailure: { [weak self] error in
+                guard let self = self else { return }
+                self.isInitializingSession = false
+                self.errorMessage = "Failed to initialize secure connection: \(error.localizedDescription)"
                 
                 // Mark queued messages as failed
-                failQueuedMessages(reason: error.localizedDescription)
+                self.failQueuedMessages(reason: error.localizedDescription)
             }
-        }
+        )
     }
     
     /// Send all queued messages after session is ready
