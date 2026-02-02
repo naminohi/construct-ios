@@ -338,7 +338,7 @@ struct SendMessageResponse: Codable {
     let status: String
 
     enum CodingKeys: String, CodingKey {
-        case messageId = "message_id"
+        case messageId = "messageId"  // Server uses camelCase
         case status
     }
 }
