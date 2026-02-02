@@ -27,6 +27,9 @@ class ChatsViewModel: ObservableObject {
     // ✅ Message router
     private let messageRouter = MessageRouter()
     
+    // ✅ Public key bundle handler
+    private let publicKeyBundleHandler = PublicKeyBundleHandler()
+    
     // ✅ Persistent lastMessageId (survives app restart)
     private var lastMessageId: String? {
         didSet {
@@ -62,6 +65,8 @@ class ChatsViewModel: ObservableObject {
 
     func setContext(_ context: NSManagedObjectContext) {
         self.viewContext = context
+        messageRouter.setContext(context)
+        publicKeyBundleHandler.setContext(context)
     }
 
     private func setupSubscribers() {
@@ -294,25 +299,35 @@ class ChatsViewModel: ObservableObject {
     // MARK: - Message Router Setup
     
     private func setupMessageRouterCallbacks() {
-        // Callback when public key bundle is needed
+        // Callback when public key bundle is needed for incoming message
         messageRouter.onPublicKeyBundleNeeded = { [weak self] userId, message in
             guard let self = self else { return }
             Task {
                 do {
                     let fetchStartTime = Date()
-                    let publicKeyBundle = try await self.fetchPublicKeyWithRetry(userId: userId)
+                    let publicKeyBundle = try await self.publicKeyBundleHandler.fetchPublicKeyWithRetry(userId: userId)
                     let fetchDuration = Date().timeIntervalSince(fetchStartTime)
                     Log.info("🔐 SESSION_STATE[bundle_fetched]: userId=\(userId.prefix(8))..., duration=\(String(format: "%.2f", fetchDuration))s", category: "SessionInit")
                     
                     await MainActor.run {
-                        self.handlePublicKeyBundleForIncomingMessage(publicKeyBundle, message: message, otherUserId: userId)
+                        let success = self.publicKeyBundleHandler.handlePublicKeyBundleForIncomingMessage(
+                            publicKeyBundle,
+                            message: message
+                        ) { chat, message, decryptedContent in
+                            // Save the decrypted message
+                            self.saveMessage(for: chat, with: message, decryptedContent: decryptedContent)
+                        }
+                        
+                        if success {
+                            // Remove from pending messages
+                            self.pendingFirstMessages.removeValue(forKey: userId)
+                        } else {
+                            Log.info("🔄 Keeping message in pending for retry", category: "ChatsViewModel")
+                        }
                     }
                 } catch {
                     Log.error("🔐 SESSION_STATE[bundle_fetch_failed]: userId=\(userId.prefix(8))..., error=\(error.localizedDescription)", category: "SessionInit")
-                    
-                    await MainActor.run {
-                        Log.error("❌ Failed to fetch public key after retries: \(error.localizedDescription)", category: "ChatsViewModel")
-                    }
+                    Log.error("❌ Failed to fetch public key after retries: \(error.localizedDescription)", category: "ChatsViewModel")
                 }
             }
         }
@@ -322,22 +337,9 @@ class ChatsViewModel: ObservableObject {
             guard let self = self else { return }
             Task {
                 do {
-                    let publicKeyBundle = try await self.fetchPublicKeyWithRetry(userId: userId)
+                    let publicKeyBundle = try await self.publicKeyBundleHandler.fetchPublicKeyWithRetry(userId: userId)
                     await MainActor.run {
-                        guard let context = self.viewContext else { return }
-                        
-                        // Find chat and update username
-                        let chatFetch = Chat.fetchRequestForCurrentUser()
-                        let ownerPredicate = chatFetch.predicate!
-                        let otherUserPredicate = NSPredicate(format: "otherUser.id == %@", userId)
-                        chatFetch.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, otherUserPredicate])
-                        
-                        if let chat = try? context.fetch(chatFetch).first,
-                           let user = chat.otherUser {
-                            user.username = publicKeyBundle.username
-                            user.displayName = publicKeyBundle.username
-                            try? context.save()
-                        }
+                        _ = self.publicKeyBundleHandler.handlePublicKeyBundle(publicKeyBundle)
                     }
                 } catch {
                     Log.error("❌ Failed to fetch public key for username update: \(error.localizedDescription)", category: "ChatsViewModel")
@@ -350,183 +352,6 @@ class ChatsViewModel: ObservableObject {
     
     /// Handle incoming END_SESSION control message
     
-    /// Add a system message to chat
-
-    // MARK: - Handle Public Key Bundle (for receiving session initialization)
-    private func handlePublicKeyBundle(_ data: PublicKeyBundleData) {
-        Log.debug("📦 ChatsViewModel: Received publicKeyBundle for userId: \(data.userId), hasPendingMessage: \(pendingFirstMessages[data.userId] != nil)", category: "ChatsViewModel")
-
-        // Check if we have a pending first message from this user
-        guard let firstMessage = pendingFirstMessages[data.userId] else {
-            // No pending message - this bundle was requested for updating username or outgoing session
-            Log.debug("ChatsViewModel: No pending first message for \(data.userId) - updating username or for ChatViewModel", category: "ChatsViewModel")
-
-            // ✅ FIX: Always update username for existing user if found (even if no pending message)
-            // This handles the case when we request publicKeyBundle just to update username
-            guard let context = viewContext else { return }
-            
-            // Find user in any chat
-            let chatFetch = Chat.fetchRequestForCurrentUser()
-            // Combine with additional predicate
-            let ownerPredicate = chatFetch.predicate!
-            let otherUserPredicate = NSPredicate(format: "otherUser.id == %@", data.userId)
-            chatFetch.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, otherUserPredicate])
-            
-            if let existingChat = try? context.fetch(chatFetch).first,
-               let user = existingChat.otherUser {
-                let oldUsername = user.username
-                user.username = data.username
-                user.displayName = data.username
-                do {
-                    try context.save()
-                    Log.info("🔄 Updated username from '\(oldUsername)' to '\(data.username)' for existing user \(data.userId)", category: "ChatsViewModel")
-                    // Force UI refresh by posting notification
-                    NotificationCenter.default.post(name: .NSManagedObjectContextDidSave, object: context)
-                } catch {
-                    Log.error("❌ Failed to save username update: \(error)", category: "ChatsViewModel")
-                }
-            } else {
-                // Try to find user directly
-                let userFetch = User.fetchRequestForCurrentUser()
-                // Combine with additional predicate
-                let userOwnerPredicate = userFetch.predicate!
-                let userIdPredicate = NSPredicate(format: "id == %@", data.userId)
-                userFetch.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [userOwnerPredicate, userIdPredicate])
-                
-                if let existingUser = try? context.fetch(userFetch).first {
-                    let oldUsername = existingUser.username
-                    existingUser.username = data.username
-                    existingUser.displayName = data.username
-                    do {
-                        try context.save()
-                        Log.info("🔄 Updated username from '\(oldUsername)' to '\(data.username)' for user \(data.userId)", category: "ChatsViewModel")
-                        // Force UI refresh by posting notification
-                        NotificationCenter.default.post(name: .NSManagedObjectContextDidSave, object: context)
-                    } catch {
-                        Log.error("❌ Failed to save username update: \(error)", category: "ChatsViewModel")
-                    }
-                } else {
-                    Log.debug("⚠️ User \(data.userId) not found in database for username update", category: "ChatsViewModel")
-                }
-            }
-            return
-        }
-
-        Log.info("🔑 Received public key bundle for \(data.userId) - initializing receiving session", category: "ChatsViewModel")
-
-        guard let context = viewContext else { return }
-        guard SessionManager.shared.currentUserId != nil else { return }
-        
-        // 🆕 Track prekey ID and detect reinstall
-        // Use signedPrekeyPublic as the prekey identifier
-        let prekeyChanged = CryptoManager.shared.trackPreKeyId(data.signedPrekeyPublic, for: data.userId)
-        if prekeyChanged {
-            Log.info("⚠️ Prekey changed for \(data.userId) - potential reinstall detected!", category: "ChatsViewModel")
-            // Session was already archived by trackPreKeyId()
-        }
-
-        // Create bundle tuple
-        let bundleWithSuite = (
-            identityPublic: data.identityPublic,
-            signedPrekeyPublic: data.signedPrekeyPublic,
-            signature: data.signature,
-            verifyingKey: data.verifyingKey,
-            suiteId: "1"
-        )
-
-        do {
-            // ✅ NEW API: Initialize receiving session returns decrypted first message
-            // No need to call decryptMessage again!
-            let decryptedContent = try CryptoManager.shared.initReceivingSession(
-                for: data.userId,
-                recipientBundle: bundleWithSuite,
-                firstMessage: firstMessage
-            )
-
-            Log.info("✅ Receiving session initialized for \(data.userId), first message decrypted", category: "ChatsViewModel")
-
-            // Find or create chat (chat was already created in handleIncomingMessage)
-            let fetchRequest = Chat.fetchRequestForCurrentUser()
-            // Combine with additional predicate
-            let ownerPredicate = fetchRequest.predicate!
-            let otherUserPredicate = NSPredicate(format: "otherUser.id == %@", data.userId)
-            fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, otherUserPredicate])
-
-            let chat: Chat
-            if let existingChat = try? context.fetch(fetchRequest).first {
-                // Update username for existing user (it was set to GUID in handleIncomingMessage)
-                if let user = existingChat.otherUser {
-                    let oldUsername = user.username
-                    user.username = data.username
-                    user.displayName = data.username
-                    Log.info("🔄 Updating username from '\(oldUsername)' to '\(data.username)' for user \(data.userId)", category: "ChatsViewModel")
-                    do {
-                        try context.save()  // ✅ FIX: Save updated username
-                        Log.info("✅ Updated username to: \(data.username), displayName: \(user.displayName)", category: "ChatsViewModel")
-                        // Force UI refresh by posting notification
-                        NotificationCenter.default.post(name: .NSManagedObjectContextDidSave, object: context)
-                    } catch {
-                        Log.error("❌ Failed to save username update: \(error)", category: "ChatsViewModel")
-                    }
-                } else {
-                    Log.error("❌ Chat found but otherUser is nil for userId: \(data.userId)", category: "ChatsViewModel")
-                }
-                chat = existingChat
-            } else {
-                // This shouldn't happen since handleIncomingMessage creates the chat
-                // But if it does, create it with correct username from the start
-
-                // ✅ FIX: Check if User already exists before creating
-                let userFetchRequest = User.fetchRequestForCurrentUser()
-                // Combine with additional predicate
-                let userOwnerPredicate = userFetchRequest.predicate!
-                let userIdPredicate = NSPredicate(format: "id == %@", data.userId)
-                userFetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [userOwnerPredicate, userIdPredicate])
-
-                let dbUser: User
-                if let existingUser = try? context.fetch(userFetchRequest).first {
-                    existingUser.username = data.username
-                    existingUser.displayName = data.username
-                    dbUser = existingUser
-                    Log.debug("Using existing user in fallback: id=\(data.userId), username=\(data.username)", category: "ChatsViewModel")
-                } else {
-                    let newUser = User(context: context)
-                    newUser.id = data.userId
-                    newUser.username = data.username
-                    newUser.displayName = data.username
-                    newUser.isSharingWithMe = false
-                    newUser.isBlocked = false
-                    newUser.amISharingWith = false
-                    newUser.setOwnerToCurrentUser()  // ✅ MULTI-ACCOUNT: Set owner
-                    dbUser = newUser
-                    Log.debug("Created new user in fallback: id=\(data.userId), username=\(data.username)", category: "ChatsViewModel")
-                }
-
-                let newChat = Chat(context: context)
-                newChat.id = UUID().uuidString
-                newChat.setOwnerToCurrentUser()
-                newChat.otherUser = dbUser
-                chat = newChat
-                Log.debug("⚠️ Chat didn't exist, created new one with username: \(data.username) (this shouldn't happen)", category: "ChatsViewModel")
-            }
-
-            // Save the message
-            saveMessage(for: chat, with: firstMessage, decryptedContent: decryptedContent)
-
-            chat.lastMessageText = Chat.formatPreviewText(decryptedContent)
-            chat.lastMessageTime = Date(timeIntervalSince1970: TimeInterval(firstMessage.timestamp))
-
-            // Remove from pending
-            pendingFirstMessages.removeValue(forKey: data.userId)
-
-            Log.info("✅ First message from \(data.userId) decrypted and saved", category: "ChatsViewModel")
-
-        } catch {
-            Log.error("❌ Failed to initialize receiving session: \(error)", category: "ChatsViewModel")
-            pendingFirstMessages.removeValue(forKey: data.userId)
-        }
-    }
-
     private func handleIncomingMessage(_ message: ChatMessage) {
         guard let context = viewContext else { return }
         
@@ -567,136 +392,6 @@ class ChatsViewModel: ObservableObject {
         message.chat = chat
         
         try? context.save()
-    }
-    
-    // MARK: - Public Key Bundle Handling
-    
-    /// Handle public key bundle received via REST API for incoming message
-    private func handlePublicKeyBundleForIncomingMessage(_ data: PublicKeyBundleData, message: ChatMessage, otherUserId: String) {
-        guard let context = viewContext else { return }
-        
-        Log.info("📦 Received publicKeyBundle for incoming message from userId: \(data.userId)", category: "ChatsViewModel")
-        
-        // Update username if we have the user in Core Data
-        let userFetchRequest = User.fetchRequestForCurrentUser()
-        // Combine with additional predicate
-        let userOwnerPredicate = userFetchRequest.predicate!
-        let userIdPredicate = NSPredicate(format: "id == %@", data.userId)
-        userFetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [userOwnerPredicate, userIdPredicate])
-        
-        if let user = try? context.fetch(userFetchRequest).first {
-            user.username = data.username
-            user.displayName = data.username
-            try? context.save()
-            Log.info("Updated username for user: \(data.username)", category: "ChatsViewModel")
-        }
-        
-        // 🆕 Track prekey ID and detect reinstall
-        // Use signedPrekeyPublic as the prekey identifier
-        let prekeyChanged = CryptoManager.shared.trackPreKeyId(data.signedPrekeyPublic, for: data.userId)
-        if prekeyChanged {
-            Log.info("⚠️ Prekey changed for \(data.userId) - potential reinstall detected!", category: "ChatsViewModel")
-            // Session was already archived by trackPreKeyId()
-        }
-        
-        // Initialize receiving session (we are the recipient)
-        let initStartTime = Date()
-        Log.info("🔐 SESSION_STATE[init_receiving_start]: userId=\(data.userId.prefix(8))..., prekeyChanged=\(prekeyChanged)", category: "SessionInit")
-        
-        do {
-            let bundleWithSuite = (
-                identityPublic: data.identityPublic,
-                signedPrekeyPublic: data.signedPrekeyPublic,
-                signature: data.signature,
-                verifyingKey: data.verifyingKey,
-                suiteId: "1"
-            )
-            
-            // ✅ FIX: For incoming messages, we are the RECIPIENT
-            // Use initReceivingSession which takes the first message and returns decrypted content
-            let decryptedContent = try CryptoManager.shared.initReceivingSession(
-                for: data.userId,
-                recipientBundle: bundleWithSuite,
-                firstMessage: message
-            )
-            
-            let initDuration = Date().timeIntervalSince(initStartTime)
-            Log.info("✅ Receiving session initialized for \(data.userId), message decrypted", category: "ChatsViewModel")
-            Log.info("🔐 SESSION_STATE[init_receiving_success]: userId=\(data.userId.prefix(8))..., duration=\(String(format: "%.2f", initDuration))s", category: "SessionInit")
-            
-            // Process the decrypted message
-            // Find or create chat
-            let chatFetchRequest = Chat.fetchRequestForCurrentUser()
-            // Combine with additional predicate
-            let chatOwnerPredicate = chatFetchRequest.predicate!
-            let otherUserPredicate = NSPredicate(format: "otherUser.id == %@", data.userId)
-            chatFetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [chatOwnerPredicate, otherUserPredicate])
-            
-            if let chat = try? context.fetch(chatFetchRequest).first {
-                saveMessage(for: chat, with: message, decryptedContent: decryptedContent)
-                chat.lastMessageText = Chat.formatPreviewText(decryptedContent)
-                chat.lastMessageTime = Date(timeIntervalSince1970: TimeInterval(message.timestamp))
-                try? context.save()
-                Log.info("✅ Successfully saved decrypted pending message", category: "ChatsViewModel")
-            }
-            
-            // Remove from pending messages - success!
-            pendingFirstMessages.removeValue(forKey: data.userId)
-            
-        } catch CryptoError.SessionInitializationFailed(let message) {
-            // Log detailed error from Rust core
-            let initDuration = Date().timeIntervalSince(initStartTime)
-            Log.error("❌ Session initialization failed: \(message)", category: "ChatsViewModel")
-            Log.error("🔐 SESSION_STATE[init_receiving_failed]: userId=\(data.userId.prefix(8))..., duration=\(String(format: "%.2f", initDuration))s, error=SessionInitializationFailed", category: "SessionInit")
-            Log.info("🔄 Keeping message in pending for retry", category: "ChatsViewModel")
-            // KEEP in pending for retry - don't remove!
-            
-        } catch {
-            let initDuration = Date().timeIntervalSince(initStartTime)
-            Log.error("❌ Failed to initialize receiving session: \(error.localizedDescription)", category: "ChatsViewModel")
-            Log.error("🔐 SESSION_STATE[init_receiving_failed]: userId=\(data.userId.prefix(8))..., duration=\(String(format: "%.2f", initDuration))s, error=\(error.localizedDescription)", category: "SessionInit")
-            Log.info("🔄 Keeping message in pending for retry", category: "ChatsViewModel")
-            // Other errors: keep in pending for retry
-        }
-    }
-    
-    // MARK: - Session Initialization Utilities
-    
-    /// Fetch public key bundle with retry and exponential backoff
-    /// - Parameters:
-    ///   - userId: Target user ID
-    ///   - maxAttempts: Maximum retry attempts (default: 3)
-    ///   - initialDelay: Initial retry delay in seconds (default: 1.0)
-    /// - Returns: Public key bundle data
-    /// - Throws: Last error if all attempts fail
-    private func fetchPublicKeyWithRetry(
-        userId: String,
-        maxAttempts: Int = 3,
-        initialDelay: TimeInterval = 1.0
-    ) async throws -> PublicKeyBundleData {
-        var lastError: Error?
-        var delay = initialDelay
-        
-        for attempt in 1...maxAttempts {
-            do {
-                Log.info("🔑 SESSION_STATE[fetch_bundle_attempt_\(attempt)]: userId=\(userId.prefix(8))..., maxAttempts=\(maxAttempts)", category: "SessionInit")
-                let bundle = try await CryptoAPI.shared.getPublicKey(userId: userId)
-                Log.info("✅ SESSION_STATE[fetch_bundle_success]: userId=\(userId.prefix(8))..., attempt=\(attempt)", category: "SessionInit")
-                return bundle
-            } catch {
-                lastError = error
-                Log.info("⚠️ SESSION_STATE[fetch_bundle_failed]: attempt=\(attempt)/\(maxAttempts), error=\(error.localizedDescription)", category: "SessionInit")
-                
-                if attempt < maxAttempts {
-                    Log.info("⏳ Retrying public key fetch in \(delay)s...", category: "SessionInit")
-                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                    delay *= 2  // Exponential backoff: 1s, 2s, 4s
-                }
-            }
-        }
-        
-        Log.error("❌ SESSION_STATE[fetch_bundle_exhausted]: userId=\(userId.prefix(8))..., allAttemptsFailed", category: "SessionInit")
-        throw lastError ?? NetworkError.connectionFailed
     }
     
     // MARK: - Message Persistence

@@ -14,6 +14,14 @@ import CoreData
 @MainActor
 class MessageRouter {
     
+    // MARK: - Core Data
+    
+    private var viewContext: NSManagedObjectContext?
+    
+    func setContext(_ context: NSManagedObjectContext) {
+        self.viewContext = context
+    }
+    
     // MARK: - Callbacks
     
     /// Called when a new chat is created
