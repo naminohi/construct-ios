@@ -45,34 +45,8 @@ struct ChatView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        // ✅ NEW: Load more messages indicator at the top
-                        if viewModel.hasMoreMessages && !filteredMessages.isEmpty {
-                            HStack {
-                                Spacer()
-                                if viewModel.isLoadingMore {
-                                    ProgressView()
-                                        .padding()
-                                } else {
-                                    Button {
-                                        viewModel.loadMoreMessages()
-                                    } label: {
-                                        Text(NSLocalizedString("load_older_messages", comment: "Load older messages button"))
-                                            .font(FontStyle.caption)
-                                            .foregroundColor(Color.AppText.accent)
-                                            .padding(.vertical, Spacing.small)
-                                    }
-                                }
-                                Spacer()
-                            }
-                            .id("loadMoreIndicator")
-                            .onAppear {
-                                // Auto-load when scrolling near the top
-                                if !viewModel.isLoadingMore && !isSearchActive {
-                                    viewModel.loadMoreMessages()
-                                }
-                            }
-                        }
-                        
+                        // ✅ Messages already in correct order from filteredMessages (oldest-first)
+                        // Combined with 180° rotation, newest will be at bottom visually
                         ForEach(Array(filteredMessages.enumerated()), id: \.element.id) { index, message in
                             VStack(spacing: 0) {
                                 MessageBubble(
@@ -120,8 +94,38 @@ struct ChatView: View {
                                 }
                             }
                         }
+                        
+                        // ✅ Load more indicator at END (visually at TOP after rotation)
+                        if viewModel.hasMoreMessages && !filteredMessages.isEmpty {
+                            HStack {
+                                Spacer()
+                                if viewModel.isLoadingMore {
+                                    ProgressView()
+                                        .padding()
+                                } else {
+                                    Button {
+                                        viewModel.loadMoreMessages()
+                                    } label: {
+                                        Text(NSLocalizedString("load_older_messages", comment: "Load older messages button"))
+                                            .font(FontStyle.caption)
+                                            .foregroundColor(Color.AppText.accent)
+                                            .padding(.vertical, Spacing.small)
+                                    }
+                                }
+                                Spacer()
+                            }
+                            .rotationEffect(.degrees(180)) // Rotate load more indicator back
+                            .id("loadMoreIndicator")
+                            .onAppear {
+                                // Auto-load when scrolling to older messages
+                                if !viewModel.isLoadingMore && !isSearchActive {
+                                    viewModel.loadMoreMessages()
+                                }
+                            }
+                        }
                     }
                     .padding()
+                    .rotationEffect(.degrees(180)) // ✅ Rotate content back to normal
                     .background(
                         GeometryReader { geometry in
                             Color.clear.preference(key: ScrollOffsetPreferenceKey.self, value: geometry.frame(in: .named("scroll")).minY)
@@ -132,6 +136,7 @@ struct ChatView: View {
                         }
                     )
                 }
+                .rotationEffect(.degrees(180)) // ✅ Rotate entire ScrollView 180°
                 .coordinateSpace(name: "scroll")
                 .onTapGesture {
                     // ✅ FIX: Dismiss keyboard when tapping chat area
@@ -150,11 +155,9 @@ struct ChatView: View {
                     // ✅ Clear badge when user opens a chat
                     LocalNotificationManager.shared.clearBadge()
                     
-                    // ✅ Scroll to bottom instantly (no animation) on initial load
-                    if !viewModel.messages.isEmpty, let lastMessage = filteredMessages.last {
-                        scrollManager.scrollToBottom(messageId: lastMessage.id)
-                        scrollManager.hasScrolledToBottom = true
-                    }
+                    // ✅ With rotation approach, scroll starts at bottom automatically
+                    // No need to scroll manually - rotation makes top=bottom visually
+                    scrollManager.hasScrolledToBottom = true
                 }
                 .onChange(of: viewModel.messages.count) { count in
                     if AppConstants.enableDebugLogging {
@@ -484,8 +487,8 @@ struct ChatView: View {
     
     private var filteredMessages: [Message] {
         if searchText.isEmpty {
-            // ✅ FIX: Reverse for display (messages are stored newest-first, display oldest-first)
-            // This prevents loading old messages first and scrolling
+            // ✅ Messages stored newest-first, reversed to oldest-first for display
+            // With 180° rotation: oldest-first in data = newest-first visually (at bottom)
             return viewModel.messages.reversed()
         }
         return viewModel.messages.filter { message in
