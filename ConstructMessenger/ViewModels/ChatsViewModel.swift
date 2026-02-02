@@ -30,6 +30,9 @@ class ChatsViewModel: ObservableObject {
     // ✅ Public key bundle handler
     private let publicKeyBundleHandler = PublicKeyBundleHandler()
     
+    // ✅ Chat management service
+    private let chatManagementService = ChatManagementService()
+    
     // ✅ Persistent lastMessageId (survives app restart)
     private var lastMessageId: String? {
         didSet {
@@ -67,6 +70,7 @@ class ChatsViewModel: ObservableObject {
         self.viewContext = context
         messageRouter.setContext(context)
         publicKeyBundleHandler.setContext(context)
+        chatManagementService.setContext(context)
     }
 
     private func setupSubscribers() {
@@ -174,61 +178,7 @@ class ChatsViewModel: ObservableObject {
 
     // MARK: - Start Chat
     func startChat(with user: PublicUserInfo) -> Chat? {
-        guard let context = viewContext else { return nil }
-
-        let fetchRequest = Chat.fetchRequestForCurrentUser()
-        // Combine predicates
-        let chatOwnerPredicate = fetchRequest.predicate!
-        let otherUserPredicate = NSPredicate(format: "otherUser.id == %@", user.id)
-        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [chatOwnerPredicate, otherUserPredicate])
-
-        if let existingChat = try? context.fetch(fetchRequest).first {
-            return existingChat
-        }
-
-        // ✅ FIX: Check if User already exists before creating a new one
-        let userFetchRequest = User.fetchRequestForCurrentUser()
-        // Combine with additional predicate
-        let userOwnerPredicate = userFetchRequest.predicate!
-        let idPredicate = NSPredicate(format: "id == %@", user.id)
-        userFetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [userOwnerPredicate, idPredicate])
-
-        let dbUser: User
-        if let existingUser = try? context.fetch(userFetchRequest).first {
-            // Use existing user - update username and displayName if they changed
-            existingUser.username = user.username
-            existingUser.displayName = user.username
-            dbUser = existingUser
-            Log.debug("Using existing user: id=\(user.id), username=\(user.username), displayName=\(existingUser.displayName)", category: "ChatsViewModel")
-        } else {
-            // Create new user
-            dbUser = User(context: context)
-            dbUser.id = user.id
-            dbUser.username = user.username
-            dbUser.displayName = user.username
-            dbUser.isSharingWithMe = false
-            dbUser.isBlocked = false
-            dbUser.amISharingWith = false
-            dbUser.setOwnerToCurrentUser()  // ✅ MULTI-ACCOUNT: Set owner
-            Log.debug("Created new user: id=\(user.id), username=\(user.username), displayName=\(user.username)", category: "ChatsViewModel")
-        }
-
-        let chat = Chat(context: context)
-        chat.id = UUID().uuidString
-        chat.otherUser = dbUser
-        chat.setOwnerToCurrentUser()  // ✅ MULTI-ACCOUNT: Set owner
-
-        do {
-            try context.save()
-            Log.debug("✅ Chat saved successfully", category: "ChatsViewModel")
-            Log.debug("   chat.id = \(chat.id)", category: "ChatsViewModel")
-            Log.debug("   chat.otherUser?.id = \(chat.otherUser?.id ?? "nil")", category: "ChatsViewModel")
-            Log.debug("   chat.otherUser?.username = \(chat.otherUser?.username ?? "nil")", category: "ChatsViewModel")
-            Log.debug("   chat.otherUser?.displayName = \(chat.otherUser?.displayName ?? "nil")", category: "ChatsViewModel")
-        } catch {
-            Log.error("❌ Failed to save chat: \(error)", category: "ChatsViewModel")
-        }
-        return chat
+        return chatManagementService.startChat(with: user)
     }
 
     // MARK: - END_SESSION Protocol
@@ -284,16 +234,7 @@ class ChatsViewModel: ObservableObject {
 
     // MARK: - Delete Chat
     func deleteChat(chat: Chat) {
-        guard let context = viewContext else { return }
-
-        // ✅ CRITICAL FIX: Archive crypto session when deleting chat
-        if let userId = chat.otherUser?.id {
-            CryptoManager.shared.archiveSession(for: userId, reason: .manualReset)
-            Log.info("🗑️ Archived crypto session for user: \(userId)", category: "ChatsViewModel")
-        }
-
-        context.delete(chat)
-        try? context.save()
+        chatManagementService.deleteChat(chat)
     }
     
     // MARK: - Message Router Setup
