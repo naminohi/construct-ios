@@ -88,6 +88,18 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         Log.info("AppDelegate: Deep link handling result: \(result)", category: "DeepLink")
         return result
     }
+    
+    // MARK: - Custom URL Scheme (konstruct://)
+    func application(
+        _ app: UIApplication,
+        open url: URL,
+        options: [UIApplication.OpenURLOptionsKey : Any] = [:]
+    ) -> Bool {
+        Log.info("AppDelegate: Received URL Scheme: \(url.absoluteString)", category: "DeepLink")
+        let result = deepLinkHandler.handleURL(url)
+        Log.info("AppDelegate: URL Scheme handling result: \(result)", category: "DeepLink")
+        return result
+    }
 
     // MARK: - Scene Lifecycle (iOS 13+)
 
