@@ -15,6 +15,11 @@ struct NetworkSettingsView: View {
     @ObservedObject private var reachabilityManager = NetworkReachabilityManager.shared
     @ObservedObject private var connectionManager = ConnectionStatusManager.shared
     @State private var lastConnectionError: String?
+    
+    // Computed: Is using custom server?
+    private var isUsingCustomServer: Bool {
+        storedServerURL != nil && !storedServerURL!.isEmpty
+    }
 
     var body: some View {
         List {
@@ -57,23 +62,6 @@ struct NetworkSettingsView: View {
                             .fontWeight(.medium)
                     }
                 }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("active_server")
-                        .foregroundColor(.secondary)
-                    Text(APIConstants.activeServerURL)
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(.blue)
-                }
-                
-                // Default Server URL
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("default_server")
-                        .foregroundColor(.secondary)
-                    Text(APIConstants.websocketURL)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(.secondary)
-                }
                 
                 // Last Connection Error (if any)
                 if let error = lastConnectionError {
@@ -93,6 +81,17 @@ struct NetworkSettingsView: View {
 
             // MARK: - Server Configuration Section
             Section {
+                // Show current server URL
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(isUsingCustomServer ? "custom_server" : "default_server")
+                        .foregroundColor(.secondary)
+                        .font(.caption)
+                    Text(APIConstants.activeServerURL)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(.blue)
+                        .textSelection(.enabled)
+                }
+                
                 Toggle("use_custom_server", isOn: $useCustomServer)
                     .onChange(of: useCustomServer) { newValue in
                         if !newValue {
@@ -130,7 +129,12 @@ struct NetworkSettingsView: View {
                 Text("server_configuration")
             } footer: {
                 VStack(alignment: .leading, spacing: 8) {
-
+                    if !isUsingCustomServer {
+                        Text("Default server from configuration: \(APIConstants.websocketURL)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
                     if useCustomServer {
                         Text("custom_server_prefix_warning")
                             .font(.caption)
@@ -139,22 +143,15 @@ struct NetworkSettingsView: View {
                 }
             }
 
-            // MARK: - Server Info Section
+            // MARK: - Build Info Section
             Section {
-                HStack {
-                    Text("environment")
-                        .foregroundColor(.secondary)
-                    Spacer()
-//                    Text(ServerEnvironment.current.displayName)
-//                        .fontWeight(.medium)
-                }
-
                 HStack {
                     Text("build_configuration")
                         .foregroundColor(.secondary)
                     Spacer()
                     Text(BuildConfiguration.current == .debug ? "debug" : "release")
                         .fontWeight(.medium)
+                        .foregroundColor(BuildConfiguration.current == .debug ? .orange : .green)
                 }
             } header: {
                 Text("server_information")

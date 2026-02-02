@@ -20,53 +20,17 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
-                // MARK: - Account Section
+                // MARK: - Profile Section
                 Section {
                     NavigationLink(destination: AccountSettingsView().environmentObject(authViewModel)) {
                         Label {
                             Text("account")
                         } icon: {
-                            Image(systemName: "person.circle")
+                            Image(systemName: "person.circle.fill")
                                 .foregroundColor(.blue)
                         }
                     }
-                } header: {
-                    Text("user")
-                } footer: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("@\(viewModel.username)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-
-                // MARK: - Security Section
-                Section {
-                    Button(role: .destructive) {
-                        viewModel.showResetAllSessionsConfirm = true
-                    } label: {
-                        Label {
-                            Text("Reset All Sessions")
-                                .foregroundColor(.red)
-                        } icon: {
-                            Image(systemName: "arrow.triangle.2.circlepath.circle")
-                                .foregroundColor(.red)
-                        }
-                    }
-                } header: {
-                    Text("Security")
-                } footer: {
-                    Text("This will reset all encrypted sessions with your contacts. Use if you suspect your encryption keys are compromised.")
-                }
-
-                // TODO: Add more Security options:
-                // - PIN code protection (6-10 digits)
-                // - Biometric authentication (Face ID / Touch ID)
-                // - Auto-lock timeout settings
-                // See: TODO.md for detailed requirements
-
-                // MARK: - Share Contact Section
-                Section {
+                    
                     Button {
                         showingQRCode = true
                     } label: {
@@ -87,15 +51,62 @@ struct SettingsView: View {
                                 .foregroundColor(.primary)
                         } icon: {
                             Image(systemName: linkCopied ? "checkmark.circle.fill" : "link")
-                                .foregroundColor(linkCopied ? .green : .green)
+                                .foregroundColor(linkCopied ? .green : .blue)
                         }
                     }
                     .disabled(linkCopied)
                 } header: {
-                    Text("share_contact")
+                    Text("profile")
+                } footer: {
+                    Text("@\(viewModel.username)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
 
-                // MARK: - Preferences Section
+                // MARK: - Privacy & Security Section
+                Section {
+                    Button(role: .destructive) {
+                        viewModel.showResetAllSessionsConfirm = true
+                    } label: {
+                        Label {
+                            Text("Reset All Sessions")
+                                .foregroundColor(.red)
+                        } icon: {
+                            Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+                                .foregroundColor(.red)
+                        }
+                    }
+                } header: {
+                    Text("privacy_security")
+                } footer: {
+                    Text("Reset all encrypted sessions with your contacts. Use if you suspect your encryption keys are compromised.")
+                        .font(.caption)
+                }
+
+                // MARK: - App Settings Section
+                Section {
+                    NavigationLink(destination: AppearanceSettingsView()) {
+                        Label {
+                            Text("appearance")
+                        } icon: {
+                            Image(systemName: "paintbrush.fill")
+                                .foregroundColor(.purple)
+                        }
+                    }
+                    
+                    NavigationLink(destination: NotificationsSettingsView()) {
+                        Label {
+                            Text("notifications")
+                        } icon: {
+                            Image(systemName: "bell.fill")
+                                .foregroundColor(.red)
+                        }
+                    }
+                } header: {
+                    Text("app_settings")
+                }
+
+                // MARK: - Advanced Section
                 Section {
                     NavigationLink(destination: NetworkSettingsView()) {
                         Label {
@@ -115,23 +126,7 @@ struct SettingsView: View {
                                 .foregroundColor(.green)
                         }
                     }
-
-                    NavigationLink(destination: AppearanceSettingsView()) {
-                        Label {
-                            Text("appearance")
-                        } icon: {
-                            Image(systemName: "paintbrush.fill")
-                                .foregroundColor(.purple)
-                        }
-                    }
-                    NavigationLink(destination: NotificationsSettingsView()) {
-                        Label {
-                            Text("notifications")
-                        } icon: {
-                            Image(systemName: "bell")
-                                .foregroundColor(.blue)
-                        }
-                    }
+                    
                     NavigationLink(destination: BackgroundFetchSettingsView()) {
                         Label {
                             VStack(alignment: .leading, spacing: 2) {
@@ -140,18 +135,18 @@ struct SettingsView: View {
                                     Circle()
                                         .fill(BackgroundFetchConfig.shouldBeEnabled ? Color.green : Color.gray)
                                         .frame(width: 6, height: 6)
-                                    Text(BackgroundFetchConfig.shouldBeEnabled ? "background_fetch_enabled" : "background_fetch_disabled")
+                                    Text(BackgroundFetchConfig.shouldBeEnabled ? "enabled" : "disabled")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }
                             }
                         } icon: {
-                            Image(systemName: "arrow.clockwise.circle")
+                            Image(systemName: "arrow.clockwise.circle.fill")
                                 .foregroundColor(.orange)
                         }
                     }
                 } header: {
-                    Text("preferences")
+                    Text("advanced")
                 }
 
                 // MARK: - Debug Section (Developer Mode Only)
@@ -170,6 +165,7 @@ struct SettingsView: View {
                         Text("Developer")
                     } footer: {
                         Text("Debug build only - Export logs for troubleshooting")
+                            .font(.caption)
                     }
                 }
                 #endif
@@ -180,7 +176,7 @@ struct SettingsView: View {
                         Label {
                             Text("version")
                         } icon: {
-                            Image(systemName: "info.circle")
+                            Image(systemName: "info.circle.fill")
                                 .foregroundColor(.orange)
                         }
                         Spacer()
