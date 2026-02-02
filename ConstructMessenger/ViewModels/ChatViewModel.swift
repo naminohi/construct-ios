@@ -65,14 +65,13 @@ class ChatViewModel: NSObject, ObservableObject {
         
         Log.debug("🔧 ChatViewModel init: chat.id=\(chat.id), chat.otherUser?.id=\(chat.otherUser?.id ?? "nil"), chat.otherUser?.username=\(chat.otherUser?.username ?? "nil")", category: "ChatViewModel")
 
-        setupFetchedResultsController()  // ✅ Setup FRC first
+        setupFetchedResultsController()  // ✅ Setup FRC - loads initial messages automatically
         setupSubscribers()
         checkExistingSession()  // ✅ FIXED: Check if session already exists
         fetchRecipientPublicKey()
 
-        // Load messages immediately since we have context
+        // ❌ REMOVED: loadMessages() - FRC already loaded messages in setupFetchedResultsController()
         Log.debug("🔧 ChatViewModel initialized with viewContext", category: "ChatViewModel")
-        loadMessages()
         
         // Listen for queued messages processing
         setupMessageQueueListener()
@@ -91,8 +90,9 @@ class ChatViewModel: NSObject, ObservableObject {
         let chatPredicate = NSPredicate(format: "chat == %@", chat)
         fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, chatPredicate])
         
-        // ✅ FIX: Sort descending (newest first) and limit to recent messages
-        // This prevents loading ALL messages into memory (would crash with 100k+ messages)
+        // ✅ OPTIMIZATION: Fetch newest 30 messages, then reverse to oldest-first
+        // This ensures we get RECENT messages, not ancient history
+        // Reversal happens ONCE on fetch, not on every SwiftUI render
         fetchRequest.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: false)]
         fetchRequest.fetchLimit = initialMessageLimit  // Only load recent 30 messages
 
@@ -108,12 +108,13 @@ class ChatViewModel: NSObject, ObservableObject {
         
         do {
             try fetchedResultsController?.performFetch()
-            // ✅ FIX: Store in descending order (newest first), will reverse in UI
-            messages = fetchedResultsController?.fetchedObjects ?? []
-            oldestLoadedTimestamp = messages.last?.timestamp  // Last = oldest in desc order
+            // ✅ Reverse ONCE: FRC gives newest-first, we store oldest-first for UI
+            let fetchedMessages = fetchedResultsController?.fetchedObjects ?? []
+            messages = Array(fetchedMessages.reversed())
+            oldestLoadedTimestamp = messages.first?.timestamp  // First = oldest after reversal
             allLoadedMessageIds = Set(messages.map { $0.id })
             
-            Log.debug("✅ FRC initial fetch: \(messages.count) messages (newest first)", category: "ChatViewModel")
+            Log.debug("✅ FRC initial fetch: \(messages.count) messages (reversed to oldest-first)", category: "ChatViewModel")
         } catch {
             Log.error("❌ FRC fetch failed: \(error)", category: "ChatViewModel")
         }
@@ -280,33 +281,6 @@ class ChatViewModel: NSObject, ObservableObject {
     }
 
     // ✅ NEW: Load initial messages (last N messages)
-    private func loadMessages() {
-        Log.debug("📥 Loading initial messages for chat \(chat.id)", category: "ChatViewModel")
-
-        let fetchRequest = Message.fetchRequestForCurrentUser()
-        // Combine with additional predicate
-        let ownerPredicate = fetchRequest.predicate!
-        let chatPredicate = NSPredicate(format: "chat == %@", chat)
-        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, chatPredicate])
-        
-        // ✅ FIX: Sort descending to get newest messages first
-        fetchRequest.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: false)]
-        fetchRequest.fetchLimit = initialMessageLimit
-
-        if let fetchedMessages = try? viewContext.fetch(fetchRequest) {
-            // ✅ FIX: Store as-is (newest first), will reverse in ChatView for display
-            messages = fetchedMessages
-            oldestLoadedTimestamp = messages.last?.timestamp  // Last = oldest
-            allLoadedMessageIds = Set(messages.map { $0.id })
-            
-            // Check if there are more messages to load
-            checkIfHasMoreMessages()
-            
-            Log.debug("📬 Loaded \(messages.count) messages (newest first in array)", category: "ChatViewModel")
-        } else {
-            Log.error("❌ Failed to fetch messages", category: "ChatViewModel")
-        }
-    }
     
     // ✅ NEW: Load more messages (older messages)
     func loadMoreMessages() {
@@ -322,7 +296,8 @@ class ChatViewModel: NSObject, ObservableObject {
         let ownerPredicate = fetchRequest.predicate!
         let chatPredicate = NSPredicate(format: "chat == %@ AND timestamp < %@", chat, oldestTimestamp as NSDate)
         fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, chatPredicate])
-        fetchRequest.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: false)]
+        // ✅ Sort ascending (oldest first) to match main array order
+        fetchRequest.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: true)]
         fetchRequest.fetchLimit = loadMoreBatchSize  // ✅ Use batch size for pagination
         
         if let fetchedMessages = try? viewContext.fetch(fetchRequest) {
@@ -335,12 +310,9 @@ class ChatViewModel: NSObject, ObservableObject {
                 return
             }
             
-            // Reverse to get chronological order
-            let reversedNewMessages = Array(newMessages.reversed())
-            
-            // Prepend older messages to the beginning
-            messages = reversedNewMessages + messages
-            oldestLoadedTimestamp = messages.first?.timestamp
+            // Already in chronological order (oldest first), prepend to beginning
+            messages = newMessages + messages
+            oldestLoadedTimestamp = messages.first?.timestamp  // First = oldest
             allLoadedMessageIds.formUnion(Set(newMessages.map { $0.id }))
             
             // Check if there are more messages
@@ -482,13 +454,7 @@ class ChatViewModel: NSObject, ObservableObject {
     }
     
     // ✅ REFACTOR: Simplified - FRC now handles all updates automatically
-    // This method kept for backward compatibility but may be removed in future
-    private func reloadMessages() {
-        // FRC delegate (controllerDidChangeContent) handles all Core Data changes
-        // No manual array manipulation needed!
-        Log.debug("🔄 reloadMessages called - FRC handles this automatically now", category: "ChatViewModel")
-    }
-
+    
     // MARK: - Session Initialization Utilities
     
     /// Fetch public key bundle with retry and exponential backoff
@@ -1063,13 +1029,16 @@ class ChatViewModel: NSObject, ObservableObject {
         )
 
         let encoder = JSONEncoder()
-        encoder.keyEncodingStrategy = .convertToSnakeCase
+        // ✅ Use camelCase for consistency with messaging-service API
 
         guard let jsonData = try? encoder.encode(content),
               let jsonString = String(data: jsonData, encoding: .utf8) else {
             Log.error("❌ Failed to encode media message content", category: "ChatViewModel")
             return caption
         }
+        
+        // Debug: Log the actual JSON we're creating
+        Log.debug("📋 Created media JSON (\(jsonString.count) chars): \(jsonString.prefix(200))...", category: "MediaUpload")
         
         // ✅ Check JSON size before sending
         let jsonSize = jsonString.utf8.count
@@ -1286,11 +1255,12 @@ extension ChatViewModel: NSFetchedResultsControllerDelegate {
         // ✅ FIX: Synchronous update to prevent UI rendering deleted objects
         // MainActor.assumeIsolated is safe here because FRC calls this on main thread
         MainActor.assumeIsolated {
-            // ✅ REFACTOR: Automatic sync from Core Data - no manual array management!
-            self.messages = controller.fetchedObjects as? [Message] ?? []
-            Log.debug("🔄 FRC updated messages: \(self.messages.count) total", category: "ChatViewModel")
+            // ✅ REFACTOR: Automatic sync from Core Data - reverse to oldest-first
+            let fetchedMessages = controller.fetchedObjects as? [Message] ?? []
+            self.messages = Array(fetchedMessages.reversed())
+            Log.debug("🔄 FRC updated messages: \(self.messages.count) total (reversed to oldest-first)", category: "ChatViewModel")
             
-            // Update pagination tracking
+            // Update pagination tracking (first = oldest after reversal)
             if let first = self.messages.first {
                 self.oldestLoadedTimestamp = first.timestamp
             }

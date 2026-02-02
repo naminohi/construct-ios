@@ -75,17 +75,14 @@ class MediaUploadService {
         )
         Log.info("✅ Media uploaded: \(uploadResult.mediaId)", category: "MediaUpload")
         
-        // Encrypt media key for recipient using Double Ratchet
-        let encryptedMediaKey = try CryptoManager.shared.encryptMediaKey(
-            mediaKey: uploadResult.encryptionKey,
-            for: recipientId
-        )
+        // Use raw base64 key - entire message will be encrypted via Double Ratchet
+        let mediaKeyBase64 = uploadResult.encryptionKey.base64EncodedString()
         
         // Build media message data
         return MediaMessageData(
             mediaId: uploadResult.mediaId,
             mediaUrl: uploadResult.mediaUrl,
-            mediaKey: encryptedMediaKey,
+            mediaKey: mediaKeyBase64,
             mediaType: uploadResult.mimeType,
             size: optimizedMedia.metadata.originalSize,
             width: optimizedMedia.metadata.width,
@@ -102,11 +99,8 @@ class MediaUploadService {
         let uploadResult = try await MediaAPI.shared.uploadImage(image, quality: 0.8)
         Log.info("✅ Image uploaded: \(uploadResult.mediaId)", category: "MediaUpload")
         
-        // Encrypt media key for recipient
-        let encryptedMediaKey = try CryptoManager.shared.encryptMediaKey(
-            mediaKey: uploadResult.encryptionKey,
-            for: recipientId
-        )
+        // Use raw base64 key - entire message will be encrypted via Double Ratchet
+        let mediaKeyBase64 = uploadResult.encryptionKey.base64EncodedString()
         
         // Extract image dimensions
         let width = Int(image.size.width)
@@ -115,7 +109,7 @@ class MediaUploadService {
         return MediaMessageData(
             mediaId: uploadResult.mediaId,
             mediaUrl: uploadResult.mediaUrl,
-            mediaKey: encryptedMediaKey,
+            mediaKey: mediaKeyBase64,
             mediaType: uploadResult.mimeType,
             size: uploadResult.encryptedData.count,
             width: width,
@@ -170,24 +164,14 @@ struct MediaMessageData: Codable {
 // MARK: - CryptoManager Extension
 extension CryptoManager {
     
-    /// Encrypt media key for recipient
-    /// Uses existing Double Ratchet session
-    func encryptMediaKey(mediaKey: Data, for userId: String) throws -> String {
-        // Convert key to base64 for encryption
-        let keyBase64 = mediaKey.base64EncodedString()
-        
-        // Encrypt using Double Ratchet
-        let encrypted = try encryptMessage(keyBase64, for: userId)
-        
-        // Return the encrypted content
-        return encrypted.content
-    }
-    
-    /// Decrypt media key from sender
-    /// The encryptedKey should be decrypted as part of the message content
+    /// Decrypt media data using symmetric key
+    /// The key should be raw AES key (32 bytes) extracted from decrypted message content
     /// This method decrypts media using the symmetric key
     func decryptMediaData(_ encryptedData: Data, with keyData: Data) throws -> Data {
+        Log.debug("🔓 Decrypting media: encryptedSize=\(encryptedData.count), keySize=\(keyData.count)", category: "MediaUpload")
+        
         guard keyData.count == 32 else {
+            Log.error("❌ Invalid key size: \(keyData.count) (expected 32)", category: "MediaUpload")
             throw MediaUploadError.encryptionFailed
         }
         
@@ -195,9 +179,17 @@ extension CryptoManager {
         
         // ✅ Use AES-GCM (matches MediaAPI encryption)
         // Format: [12 bytes nonce][N bytes ciphertext][16 bytes tag]
-        let sealedBox = try AES.GCM.SealedBox(combined: encryptedData)
-        let decryptedData = try AES.GCM.open(sealedBox, using: key)
-        
-        return decryptedData
+        do {
+            let sealedBox = try AES.GCM.SealedBox(combined: encryptedData)
+            Log.debug("   SealedBox created: nonce=\(sealedBox.nonce.withUnsafeBytes { Data($0).count }) bytes", category: "MediaUpload")
+            
+            let decryptedData = try AES.GCM.open(sealedBox, using: key)
+            Log.debug("✅ Media decrypted successfully: \(decryptedData.count) bytes", category: "MediaUpload")
+            
+            return decryptedData
+        } catch {
+            Log.error("❌ AES-GCM decryption failed: \(error)", category: "MediaUpload")
+            throw MediaUploadError.encryptionFailed
+        }
     }
 }

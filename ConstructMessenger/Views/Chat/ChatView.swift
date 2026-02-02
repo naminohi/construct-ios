@@ -150,6 +150,12 @@ struct ChatView: View {
                     scrollManager.registerProxy(proxy)
                     if AppConstants.enableDebugLogging {
                         print("ChatView appeared with \(viewModel.messages.count) messages")
+                        if let first = viewModel.messages.first, let last = viewModel.messages.last {
+                            let firstTime = first.timestamp.timeIntervalSince1970
+                            let lastTime = last.timestamp.timeIntervalSince1970
+                            print("  viewModel.messages order: first=\(firstTime), last=\(lastTime)")
+                            print("  Expected: first < last (oldest-first)")
+                        }
                     }
 
                     // ✅ Clear badge when user opens a chat
@@ -525,13 +531,13 @@ struct ChatView: View {
     
     private var filteredMessages: [Message] {
         if searchText.isEmpty {
-            // ✅ Messages stored newest-first, reversed to oldest-first for display
+            // ✅ Messages already sorted oldest-first from FRC
             // With 180° rotation: oldest-first in data = newest-first visually (at bottom)
-            return viewModel.messages.reversed()
+            return viewModel.messages
         }
         return viewModel.messages.filter { message in
             message.decryptedContent?.localizedCaseInsensitiveContains(searchText) ?? false
-        }.reversed()  // ✅ Also reverse search results
+        }  // ✅ Search results also oldest-first
     }
 
     // MARK: - Actions

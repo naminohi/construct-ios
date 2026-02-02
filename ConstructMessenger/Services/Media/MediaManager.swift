@@ -35,11 +35,9 @@ class MediaManager {
         let uploadResult = try await MediaAPI.shared.uploadImage(image, quality: 0.8)
         Log.info("✅ Image uploaded: \(uploadResult.mediaId)", category: "MediaManager")
         
-        // Encrypt media key for recipient using Double Ratchet
-        let encryptedMediaKey = try CryptoManager.shared.encryptMediaKey(
-            mediaKey: uploadResult.encryptionKey,
-            for: recipientId
-        )
+        // ✅ Use raw base64 key - entire message will be encrypted via Double Ratchet
+        // No need for double encryption of the media key
+        let mediaKeyBase64 = uploadResult.encryptionKey.base64EncodedString()
         
         // Extract image dimensions
         let width = Int(image.size.width)
@@ -48,7 +46,7 @@ class MediaManager {
         return MediaMessageData(
             mediaId: uploadResult.mediaId,
             mediaUrl: uploadResult.mediaUrl,
-            mediaKey: encryptedMediaKey,
+            mediaKey: mediaKeyBase64,
             mediaType: uploadResult.mimeType,
             size: uploadResult.encryptedData.count,
             width: width,
@@ -83,23 +81,34 @@ class MediaManager {
     
     // MARK: - Download Operations
     
-    /// Download and decrypt media (generic)
+    /// Download and decrypt media from message
     /// - Parameters:
     ///   - mediaUrl: URL to download encrypted media from
-    ///   - mediaKeyBase64: Base64-encoded encryption key (raw AES key)
+    ///   - mediaKeyBase64: Raw AES key in base64 (already decrypted as part of message)
     /// - Returns: Decrypted media data
     func downloadAndDecryptMedia(mediaUrl: String, mediaKeyBase64: String) async throws -> Data {
         Log.info("📥 Downloading media from: \(mediaUrl)", category: "MediaManager")
+        Log.debug("   Media key (base64, first 20 chars): \(mediaKeyBase64.prefix(20))...", category: "MediaManager")
         
-        // Decode media key
+        // Decode raw AES key from base64
         guard let keyData = Data(base64Encoded: mediaKeyBase64) else {
+            Log.error("❌ Invalid base64 media key", category: "MediaManager")
             throw MediaManagerError.invalidMediaKey
         }
         
+        guard keyData.count == 32 else {
+            Log.error("❌ Invalid media key size: \(keyData.count) (expected 32)", category: "MediaManager")
+            throw MediaManagerError.invalidMediaKey
+        }
+        
+        Log.debug("   Decoded media key: \(keyData.count) bytes", category: "MediaManager")
+        
         // Download encrypted data via MediaAPI
         let encryptedData = try await MediaAPI.shared.downloadEncryptedFile(from: mediaUrl)
+        Log.debug("   Downloaded encrypted data: \(encryptedData.count) bytes", category: "MediaManager")
         
-        // Decrypt using CryptoManager
+        // Decrypt media using symmetric AES key
+        Log.debug("   Calling CryptoManager.decryptMediaData...", category: "MediaManager")
         let decryptedData = try CryptoManager.shared.decryptMediaData(encryptedData, with: keyData)
         
         Log.info("✅ Media decrypted: \(decryptedData.count) bytes", category: "MediaManager")

@@ -449,21 +449,28 @@ struct MediaMessageView: View {
     private func loadThumbnail() {
         // For sender: try to load from local storage via MediaManager
         if message.isSentByMe {
+            Log.debug("📱 Loading local media for sent message", category: "MediaMessage")
             if let thumbnailData = MediaManager.shared.retrieveThumbnail(for: message.id),
                let image = UIImage(data: thumbnailData) {
                 thumbnailImage = image
+                Log.debug("✅ Loaded local thumbnail", category: "MediaMessage")
                 return
             }
+            Log.debug("⚠️ No local thumbnail found", category: "MediaMessage")
         }
         
-        // For receiver: download and decrypt media
+        // For receiver: download and decrypt media (using camelCase format)
+        Log.debug("📋 Media dict keys: \(Array(mediaContent.media.keys).sorted())", category: "MediaMessage")
+        
         guard let mediaId = mediaContent.media["mediaId"] as? String,
               let mediaUrl = mediaContent.media["mediaUrl"] as? String,
               let mediaKeyBase64 = mediaContent.media["mediaKey"] as? String else {
-            Log.error("❌ Missing media info in message", category: "MediaMessage")
+            Log.error("❌ Missing media info in message. Available keys: \(mediaContent.media.keys)", category: "MediaMessage")
             isLoading = false
             return
         }
+        
+        Log.debug("📥 Media info - ID: \(mediaId.prefix(8))..., URL: \(mediaUrl), Key length: \(mediaKeyBase64.count)", category: "MediaMessage")
         
         isLoading = true
         
@@ -495,7 +502,11 @@ struct MediaMessageView: View {
                 }
                 
             } catch {
-                Log.error("❌ Failed to load media: \(error.localizedDescription)", category: "MediaMessage")
+                Log.error("❌ Failed to load media: \(error)", category: "MediaMessage")
+                Log.error("   Error type: \(type(of: error))", category: "MediaMessage")
+                if let mediaError = error as? MediaManagerError {
+                    Log.error("   MediaManagerError: \(mediaError)", category: "MediaMessage")
+                }
                 await MainActor.run {
                     isLoading = false
                 }
