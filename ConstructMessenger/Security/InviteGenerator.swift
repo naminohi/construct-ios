@@ -182,6 +182,8 @@ class InviteGenerator {
             throw InviteGenerationError.keyDecodingFailed
         }
         
+        Log.debug("🔐 Using identity secret key for invite signing (\(identitySecretData.count) bytes)", category: "InviteGenerator")
+        
         return [UInt8](identitySecretData)
     }
     

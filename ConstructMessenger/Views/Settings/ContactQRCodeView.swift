@@ -140,8 +140,20 @@ struct ContactQRCodeView: View {
     
     private func generateInitialQRCode() {
         do {
-            // ✅ FIX: Use generateDeepLink to get full URL, not just payload
-            let deepLink = try generator.generateDeepLink(userId: userId, useHTTPS: false)
+            // ✅ Extract server hostname from APIBaseURL
+            let serverURL = ServerConfig.defaultWebsocketURL
+            let serverHostname: String
+            
+            if let url = URL(string: serverURL), let host = url.host {
+                serverHostname = host
+                Log.debug("🔐 Using server hostname for QR: \(serverHostname)", category: "ContactQRCodeView")
+            } else {
+                serverHostname = "konstruct.cc" // Fallback
+                Log.info("⚠️ Could not extract hostname from \(serverURL), using fallback", category: "ContactQRCodeView")
+            }
+            
+            // ✅ FIX: Use generateDeepLink with correct server hostname
+            let deepLink = try generator.generateDeepLink(userId: userId, server: serverHostname, useHTTPS: false)
             qrPayload = deepLink
             timeRemaining = 180 // Reset to 3 minutes
             generationError = nil

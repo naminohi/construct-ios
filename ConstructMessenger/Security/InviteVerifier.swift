@@ -87,8 +87,12 @@ class InviteVerifier {
         
         // Step 4: Extract verifying key (Ed25519 public key)
         guard let verifyingKeyData = Data(base64Encoded: publicKeyBundle.verifyingKey) else {
+            Log.error("❌ Invalid verifyingKey base64 format", category: "InviteVerifier")
             throw InviteVerificationError.invalidVerifyingKey
         }
+        
+        Log.debug("🔐 Verifying key from server (first 16 bytes): \(verifyingKeyData.prefix(16).base64EncodedString())", category: "InviteVerifier")
+        Log.debug("🔐 Full verifying key base64: \(publicKeyBundle.verifyingKey)", category: "InviteVerifier")
         
         // Step 5: Extract signature
         guard let signatureData = Data(base64Encoded: invite.sig) else {
@@ -97,6 +101,9 @@ class InviteVerifier {
         
         // Step 6: Get canonical string (same as used for signing)
         let dataToVerify = invite.canonicalString()
+        
+        Log.debug("🔐 Data to verify: \(dataToVerify)", category: "InviteVerifier")
+        Log.debug("🔐 Signature base64: \(invite.sig)", category: "InviteVerifier")
         
         // Step 7: Verify signature using Rust core
         let isValid = try verifyInviteSignature(
