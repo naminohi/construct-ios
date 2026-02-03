@@ -91,6 +91,7 @@ class InviteVerifier {
             throw InviteVerificationError.invalidVerifyingKey
         }
         
+        print("🔐 VERIFY: Server verifying key: \(publicKeyBundle.verifyingKey)")
         Log.debug("🔐 Verifying key from server (first 16 bytes): \(verifyingKeyData.prefix(16).base64EncodedString())", category: "InviteVerifier")
         Log.debug("🔐 Full verifying key base64: \(publicKeyBundle.verifyingKey)", category: "InviteVerifier")
         
@@ -101,6 +102,9 @@ class InviteVerifier {
         
         // Step 6: Get canonical string (same as used for signing)
         let dataToVerify = invite.canonicalString()
+        
+        print("🔐 VERIFY: Data to verify: \(dataToVerify)")
+        print("🔐 VERIFY: Signature: \(invite.sig)")
         
         Log.debug("🔐 Data to verify: \(dataToVerify)", category: "InviteVerifier")
         Log.debug("🔐 Signature base64: \(invite.sig)", category: "InviteVerifier")

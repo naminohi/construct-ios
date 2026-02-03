@@ -150,7 +150,7 @@ struct SettingsView: View {
                 }
 
                 // MARK: - Debug Section (Developer Mode Only)
-                #if DEBUG
+//                #if DEBUG
                 if DeveloperMode.shared.showDebugLogsSection {
                     Section {
                         NavigationLink(destination: DebugLogsView()) {
@@ -168,7 +168,7 @@ struct SettingsView: View {
                             .font(.caption)
                     }
                 }
-                #endif
+//                #endif
 
                 // MARK: - About Section
                 Section {
@@ -242,14 +242,24 @@ struct SettingsView: View {
             return ""
         }
         
+        // ✅ Extract server hostname from APIBaseURL (same as QR code)
+        let serverURL = ServerConfig.defaultWebsocketURL
+        let serverHostname: String
+        
+        if let url = URL(string: serverURL), let host = url.host {
+            serverHostname = host
+        } else {
+            serverHostname = "konstruct.cc" // Fallback
+        }
+        
         // ✅ Generate Dynamic Invite deep link (HTTPS format for sharing)
         do {
-            return try inviteGenerator.generateDeepLink(userId: userId, useHTTPS: true)
+            return try inviteGenerator.generateDeepLink(userId: userId, server: serverHostname, useHTTPS: true)
         } catch {
             // ❌ Fallback to legacy format if generation fails
             let username = authViewModel.currentUsername
             let encodedUsername = username.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? username
-            return "https://konstruct.cc/c/\(userId)?username=\(encodedUsername)"
+            return "https://\(serverHostname)/c/\(userId)?username=\(encodedUsername)"
         }
     }
 

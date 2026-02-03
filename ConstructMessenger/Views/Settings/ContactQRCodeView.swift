@@ -152,6 +152,16 @@ struct ContactQRCodeView: View {
                 Log.info("⚠️ Could not extract hostname from \(serverURL), using fallback", category: "ContactQRCodeView")
             }
             
+            // ✅ DEBUG: Print our own verifying key for comparison
+            Task {
+                do {
+                    let bundle = try await CryptoAPI.shared.getPublicKey(userId: userId)
+                    print("🔐 SIGN: Our verifying key (from server): \(bundle.verifyingKey)")
+                } catch {
+                    print("⚠️ SIGN: Could not fetch our own public key: \(error)")
+                }
+            }
+            
             // ✅ FIX: Use generateDeepLink with correct server hostname
             let deepLink = try generator.generateDeepLink(userId: userId, server: serverHostname, useHTTPS: false)
             qrPayload = deepLink

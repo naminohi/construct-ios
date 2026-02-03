@@ -29,8 +29,8 @@ struct ContentView: View {
         }
         .preferredColorScheme(appTheme.colorScheme)
         .onAppear {
-            // This will run once when ContentView first appears
-            authViewModel.restoreSession()
+            // ✅ Session is now restored in AuthViewModel.init()
+            // Just set the context for ChatsViewModel
             chatsViewModel.setContext(viewContext)
         }
         .onChange(of: scenePhase) { newPhase in

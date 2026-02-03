@@ -30,8 +30,10 @@ class DeveloperMode: ObservableObject {
     private let tapTimeout: TimeInterval = 5.0 // Increased to 5 seconds
     
     private init() {
-        // ✅ Allow enabling in both DEBUG and RELEASE (TestFlight) builds
-        self.isEnabled = UserDefaults.standard.bool(forKey: "developerModeEnabled")
+        // ✅ TEMPORARY: Always enable for QR debugging
+        self.isEnabled = true
+        UserDefaults.standard.set(true, forKey: "developerModeEnabled")
+        Log.info("🔧 Developer Mode: FORCE ENABLED for debugging")
     }
     
     // MARK: - Public API

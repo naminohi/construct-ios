@@ -42,6 +42,9 @@ class AuthViewModel: ObservableObject {
         setupSubscribers()
         startTokenRefreshMonitoring()  // ✅ FIXED: Monitor token expiration
         setupSessionExpiredListener()  // ✅ NEW: Listen for session expiration from REST API
+        
+        // ✅ UX FIX: Restore session immediately to avoid showing login screen
+        restoreSession()
     }
     
     // ✅ NEW: Listen for session expiration notifications from REST API
