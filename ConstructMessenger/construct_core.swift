@@ -1797,6 +1797,13 @@ public func createCryptoCoreFromKeysJson(keysJson: String)throws  -> ClassicCryp
     )
 })
 }
+public func deriveVerifyingKeyFromSecret(identitySecretKey: [UInt8])throws  -> [UInt8]  {
+    return try  FfiConverterSequenceUInt8.lift(try rustCallWithError(FfiConverterTypeCryptoError_lift) {
+    uniffi_construct_core_fn_func_derive_verifying_key_from_secret(
+        FfiConverterSequenceUInt8.lower(identitySecretKey),$0
+    )
+})
+}
 public func generateDummyMessage(size: UInt64) -> [UInt8]  {
     return try!  FfiConverterSequenceUInt8.lift(try! rustCall() {
     uniffi_construct_core_fn_func_generate_dummy_message(
@@ -1887,6 +1894,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_construct_core_checksum_func_create_crypto_core_from_keys_json() != 4455) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_construct_core_checksum_func_derive_verifying_key_from_secret() != 31516) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_construct_core_checksum_func_generate_dummy_message() != 52724) {

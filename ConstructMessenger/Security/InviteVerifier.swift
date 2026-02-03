@@ -110,11 +110,20 @@ class InviteVerifier {
         Log.debug("🔐 Signature base64: \(invite.sig)", category: "InviteVerifier")
         
         // Step 7: Verify signature using Rust core
+        print("🔐 VERIFY: Calling Rust verifyInviteSignature")
+        print("   Data bytes: \(dataToVerify.utf8.count)")
+        print("   Signature bytes: \(signatureData.count)")
+        print("   Verifying key bytes: \(verifyingKeyData.count)")
+        print("   Signature hex: \(signatureData.map { String(format: "%02x", $0) }.joined())")
+        print("   Verifying key hex: \(verifyingKeyData.map { String(format: "%02x", $0) }.joined())")
+        
         let isValid = try verifyInviteSignature(
             data: dataToVerify,
             signature: [UInt8](signatureData),
             verifyingKey: [UInt8](verifyingKeyData)
         )
+        
+        print("🔐 VERIFY: Rust returned: \(isValid)")
         
         if isValid {
             Log.info("✅ Invite signature valid: jti=\(invite.jti.prefix(8))...", category: "InviteVerifier")

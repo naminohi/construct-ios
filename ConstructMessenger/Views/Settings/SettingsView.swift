@@ -149,27 +149,6 @@ struct SettingsView: View {
                     Text("advanced")
                 }
 
-                // MARK: - Debug Section (Developer Mode Only)
-//                #if DEBUG
-                if DeveloperMode.shared.showDebugLogsSection {
-                    Section {
-                        NavigationLink(destination: DebugLogsView()) {
-                            Label {
-                                Text("Debug Logs")
-                            } icon: {
-                                Image(systemName: "doc.text.magnifyingglass")
-                                    .foregroundColor(.gray)
-                            }
-                        }
-                    } header: {
-                        Text("Developer")
-                    } footer: {
-                        Text("Debug build only - Export logs for troubleshooting")
-                            .font(.caption)
-                    }
-                }
-//                #endif
-
                 // MARK: - About Section
                 Section {
                     HStack {

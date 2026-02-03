@@ -90,10 +90,24 @@ class InviteGenerator {
         Log.debug("🔐 Canonical string for signing: \(dataToSign)", category: "InviteGenerator")
         
         // Step 8: Sign with identity key
+        print("🔐 SIGN: Calling Rust signInviteData")
+        print("   Data to sign: \(dataToSign)")
+        print("   Data bytes: \(dataToSign.utf8.count)")
+        print("   Identity secret key bytes: \(identitySecretKey.count)")
+        print("   Secret key hex (first 16): \(identitySecretKey.prefix(16).map { String(format: "%02x", $0) }.joined())")
+        
+        // ✅ DEBUG: Derive public key from this secret key to verify it matches server
+        let expectedVerifyingKey = try deriveVerifyingKeyFromSecret(identitySecretKey: identitySecretKey)
+        let expectedVerifyingKeyBase64 = Data(expectedVerifyingKey).base64EncodedString()
+        print("🔐 SIGN: Expected verifying key from our secret: \(expectedVerifyingKeyBase64)")
+        
         let signature = try signInviteData(
             data: dataToSign,
             identitySecretKey: identitySecretKey
         )
+        
+        print("🔐 SIGN: Rust returned signature bytes: \(signature.signature.count)")
+        print("   Signature hex (first 32): \(signature.signature.prefix(32).map { String(format: "%02x", $0) }.joined())")
         
         // Step 9: Encode signature to Base64
         let signatureBase64 = Data(signature.signature).base64EncodedString()
