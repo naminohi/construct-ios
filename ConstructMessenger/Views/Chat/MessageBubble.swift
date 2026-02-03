@@ -7,6 +7,91 @@
 
 import SwiftUI
 
+// MARK: - Full Screen Image Viewer
+struct FullScreenImageViewer: View {
+    let image: UIImage
+    @Binding var isPresented: Bool
+    
+    @State private var scale: CGFloat = 1.0
+    @State private var lastScale: CGFloat = 1.0
+    @State private var offset: CGSize = .zero
+    @State private var lastOffset: CGSize = .zero
+    
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            
+            VStack {
+                // Close button
+                HStack {
+                    Spacer()
+                    Button {
+                        isPresented = false
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 28))
+                            .foregroundColor(.white.opacity(0.8))
+                            .padding()
+                    }
+                }
+                
+                Spacer()
+                
+                // Zoomable image
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .scaleEffect(scale)
+                    .offset(offset)
+                    .gesture(
+                        MagnificationGesture()
+                            .onChanged { value in
+                                let delta = value / lastScale
+                                lastScale = value
+                                scale = min(max(scale * delta, 1), 5) // Limit zoom 1x-5x
+                            }
+                            .onEnded { _ in
+                                lastScale = 1.0
+                                if scale < 1 {
+                                    withAnimation(.spring()) {
+                                        scale = 1
+                                        offset = .zero
+                                    }
+                                }
+                            }
+                    )
+                    .gesture(
+                        DragGesture()
+                            .onChanged { value in
+                                if scale > 1 {
+                                    offset = CGSize(
+                                        width: lastOffset.width + value.translation.width,
+                                        height: lastOffset.height + value.translation.height
+                                    )
+                                }
+                            }
+                            .onEnded { _ in
+                                lastOffset = offset
+                            }
+                    )
+                    .onTapGesture(count: 2) {
+                        withAnimation(.spring()) {
+                            if scale > 1 {
+                                scale = 1
+                                offset = .zero
+                                lastOffset = .zero
+                            } else {
+                                scale = 2.5
+                            }
+                        }
+                    }
+                
+                Spacer()
+            }
+        }
+    }
+}
+
 struct MessageBubble: View {
     let message: Message
     let isLastInGroup: Bool
@@ -394,7 +479,11 @@ struct MediaMessageView: View {
     let isSelected: Bool
     
     @State private var thumbnailImage: UIImage?
+    @State private var fullImage: UIImage?
     @State private var isLoading = false
+    @State private var loadError: String?
+    @State private var showFullScreen = false
+    @State private var downloadProgress: Double = 0
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -410,15 +499,68 @@ struct MediaMessageView: View {
                         RoundedRectangle(cornerRadius: 12)
                             .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 2)
                     )
+                    .onTapGesture {
+                        showFullScreen = true
+                    }
             } else if isLoading {
+                // ✅ Loading state with progress indicator
                 RoundedRectangle(cornerRadius: 12)
                     .fill(Color.gray.opacity(0.2))
                     .frame(width: 200, height: 200)
                     .overlay {
-                        ProgressView()
+                        VStack(spacing: 12) {
+                            ProgressView()
+                                .scaleEffect(1.5)
+                                .tint(.blue)
+                            
+                            if downloadProgress > 0 && downloadProgress < 1 {
+                                Text("\(Int(downloadProgress * 100))%")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            } else {
+                                Text("Loading...")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
                     }
+            } else if let error = loadError {
+                // ✅ Error state with retry button
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.gray.opacity(0.2))
+                    .frame(width: 200, height: 200)
+                    .overlay {
+                        VStack(spacing: 12) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 40))
+                                .foregroundColor(.orange)
+                            
+                            Text("Failed to load")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            
+                            Button {
+                                loadThumbnail()
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "arrow.clockwise")
+                                    Text("Retry")
+                                }
+                                .font(.caption)
+                                .foregroundColor(.blue)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(Color.blue.opacity(0.1))
+                                .cornerRadius(8)
+                            }
+                        }
+                    }
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 2)
+                    )
             } else {
-                // Placeholder
+                // Placeholder - initial state
                 RoundedRectangle(cornerRadius: 12)
                     .fill(Color.gray.opacity(0.2))
                     .frame(width: 200, height: 200)
@@ -444,15 +586,24 @@ struct MediaMessageView: View {
         .onAppear {
             loadThumbnail()
         }
+        .fullScreenCover(isPresented: $showFullScreen) {
+            if let image = fullImage ?? thumbnailImage {
+                FullScreenImageViewer(image: image, isPresented: $showFullScreen)
+            }
+        }
     }
     
     private func loadThumbnail() {
+        // Reset error state
+        loadError = nil
+        
         // For sender: try to load from local storage via MediaManager
         if message.isSentByMe {
             Log.debug("📱 Loading local media for sent message", category: "MediaMessage")
             if let thumbnailData = MediaManager.shared.retrieveThumbnail(for: message.id),
                let image = UIImage(data: thumbnailData) {
                 thumbnailImage = image
+                fullImage = image
                 Log.debug("✅ Loaded local thumbnail", category: "MediaMessage")
                 return
             }
@@ -466,6 +617,7 @@ struct MediaMessageView: View {
               let mediaUrl = mediaContent.media["mediaUrl"] as? String,
               let mediaKeyBase64 = mediaContent.media["mediaKey"] as? String else {
             Log.error("❌ Missing media info in message. Available keys: \(mediaContent.media.keys)", category: "MediaMessage")
+            loadError = "Missing media info"
             isLoading = false
             return
         }
@@ -473,6 +625,7 @@ struct MediaMessageView: View {
         Log.debug("📥 Media info - ID: \(mediaId.prefix(8))..., URL: \(mediaUrl), Key length: \(mediaKeyBase64.count)", category: "MediaMessage")
         
         isLoading = true
+        downloadProgress = 0.1
         
         Task {
             do {
@@ -484,10 +637,16 @@ struct MediaMessageView: View {
                     mediaKeyBase64: mediaKeyBase64
                 )
                 
+                await MainActor.run {
+                    downloadProgress = 0.9
+                }
+                
                 guard let image = UIImage(data: imageData) else {
                     Log.error("❌ Failed to decode image data", category: "MediaMessage")
                     await MainActor.run {
                         isLoading = false
+                        loadError = "Invalid image data"
+                        downloadProgress = 0
                     }
                     return
                 }
@@ -496,8 +655,10 @@ struct MediaMessageView: View {
                 let thumbnail = MediaManager.shared.generateThumbnailImage(from: image, maxSize: 250)
                 
                 await MainActor.run {
+                    fullImage = image  // Store full-res for viewer
                     thumbnailImage = thumbnail
                     isLoading = false
+                    downloadProgress = 1.0
                     Log.info("✅ Media loaded successfully", category: "MediaMessage")
                 }
                 
@@ -509,6 +670,8 @@ struct MediaMessageView: View {
                 }
                 await MainActor.run {
                     isLoading = false
+                    loadError = error.localizedDescription
+                    downloadProgress = 0
                 }
             }
         }

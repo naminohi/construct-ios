@@ -19,6 +19,13 @@ class MediaManager {
     
     static let shared = MediaManager()
     
+    // MARK: - In-Memory Cache
+    
+    /// Cache for downloaded/decrypted media to avoid re-downloading
+    private var mediaCache: [String: Data] = [:]
+    private let maxCacheSize = 50 * 1024 * 1024  // 50 MB
+    private var currentCacheSize = 0
+    
     private init() {}
     
     // MARK: - Upload Operations
@@ -87,6 +94,13 @@ class MediaManager {
     ///   - mediaKeyBase64: Raw AES key in base64 (already decrypted as part of message)
     /// - Returns: Decrypted media data
     func downloadAndDecryptMedia(mediaUrl: String, mediaKeyBase64: String) async throws -> Data {
+        // Check cache first
+        let cacheKey = mediaUrl
+        if let cachedData = mediaCache[cacheKey] {
+            Log.debug("✅ Media cache hit for: \(mediaUrl.suffix(20))", category: "MediaManager")
+            return cachedData
+        }
+        
         Log.info("📥 Downloading media from: \(mediaUrl)", category: "MediaManager")
         Log.debug("   Media key (base64, first 20 chars): \(mediaKeyBase64.prefix(20))...", category: "MediaManager")
         
@@ -112,7 +126,24 @@ class MediaManager {
         let decryptedData = try CryptoManager.shared.decryptMediaData(encryptedData, with: keyData)
         
         Log.info("✅ Media decrypted: \(decryptedData.count) bytes", category: "MediaManager")
+        
+        // Store in cache if space available
+        if currentCacheSize + decryptedData.count < maxCacheSize {
+            mediaCache[cacheKey] = decryptedData
+            currentCacheSize += decryptedData.count
+            Log.debug("💾 Cached media (\(currentCacheSize / 1024)KB / \(maxCacheSize / 1024)KB)", category: "MediaManager")
+        } else {
+            Log.debug("⚠️ Cache full, not caching this media", category: "MediaManager")
+        }
+        
         return decryptedData
+    }
+    
+    /// Clear media cache to free memory
+    func clearCache() {
+        mediaCache.removeAll()
+        currentCacheSize = 0
+        Log.info("🗑️ Media cache cleared", category: "MediaManager")
     }
     
     /// Download and decrypt avatar (profile sharing)

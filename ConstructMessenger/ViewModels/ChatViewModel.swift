@@ -59,6 +59,8 @@ class ChatViewModel: NSObject, ObservableObject {
     
     // ✅ REFACTOR: Extracted services
     private let sessionInitService = SessionInitializationService()
+    private let persistenceService = MessagePersistenceService()
+    private let mediaUploadManager = MediaUploadManager()
 
     init(chat: Chat, context: NSManagedObjectContext) {
         self.chat = chat
@@ -362,22 +364,8 @@ class ChatViewModel: NSObject, ObservableObject {
                 }
             }
             
-            // ✅ Update chat metadata
-            let fetchRequest: NSFetchRequest<Message> = Message.fetchRequest()
-            fetchRequest.predicate = NSPredicate(format: "chat == %@", chat)
-            fetchRequest.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: false)]
-            fetchRequest.fetchLimit = 1
-            
-            if let lastMessage = try? viewContext.fetch(fetchRequest).first {
-                chat.lastMessageText = Chat.formatPreviewText(lastMessage.decryptedContent)
-                chat.lastMessageTime = lastMessage.timestamp
-                try? viewContext.save()
-            } else {
-                // No messages left, clear chat metadata
-                chat.lastMessageText = nil
-                chat.lastMessageTime = nil
-                try? viewContext.save()
-            }
+            // ✅ REFACTOR: Use MessagePersistenceService to update chat metadata
+            try persistenceService.updateChatMetadataAfterDeletion(chat: chat, in: viewContext)
             
         } catch {
             Log.error("❌ Failed to delete message: \(error)", category: "ChatViewModel")
@@ -420,22 +408,8 @@ class ChatViewModel: NSObject, ObservableObject {
                 }
             }
             
-            // ✅ Update chat metadata
-            let lastMessageFetch: NSFetchRequest<Message> = Message.fetchRequest()
-            lastMessageFetch.predicate = NSPredicate(format: "chat == %@", chat)
-            lastMessageFetch.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: false)]
-            lastMessageFetch.fetchLimit = 1
-            
-            if let lastMessage = try? viewContext.fetch(lastMessageFetch).first {
-                chat.lastMessageText = Chat.formatPreviewText(lastMessage.decryptedContent)
-                chat.lastMessageTime = lastMessage.timestamp
-                try? viewContext.save()
-            } else {
-                // No messages left, clear chat metadata
-                chat.lastMessageText = nil
-                chat.lastMessageTime = nil
-                try? viewContext.save()
-            }
+            // ✅ REFACTOR: Use MessagePersistenceService to update chat metadata
+            try persistenceService.updateChatMetadataAfterDeletion(chat: chat, in: viewContext)
             
         } catch {
             Log.error("❌ Failed to delete messages: \(error)", category: "ChatViewModel")
@@ -860,6 +834,7 @@ class ChatViewModel: NSObject, ObservableObject {
     // MARK: - Media Messages
 
     private func sendMediaMessage(images: [UIImage], caption: String, replyTo: Message?) {
+        // ✅ REFACTOR: Use MediaUploadManager
         guard let recipientId = chat.otherUser?.id else {
             Log.error("❌ No recipient ID for media message", category: "ChatViewModel")
             errorMessage = "Cannot send media: no recipient"
@@ -877,38 +852,15 @@ class ChatViewModel: NSObject, ObservableObject {
 
         Task {
             do {
-                var mediaDataList: [MediaMessageData] = []
-                var thumbnails: [Data] = []  // Store thumbnails locally for sender
-
-                // Upload each image using MediaManager
-                for (index, image) in images.enumerated() {
-                    Log.info("📤 Uploading image \(index + 1)/\(images.count)", category: "ChatViewModel")
-
-                    // Generate thumbnail before upload (for local storage on sender side)
-                    if let thumbnail = MediaManager.shared.generateThumbnail(from: image) {
-                        thumbnails.append(thumbnail)
-                        Log.debug("📸 Generated thumbnail: \(thumbnail.count) bytes", category: "ChatViewModel")
-                    }
-
-                    // Upload via MediaManager
-                    let mediaData = try await MediaManager.shared.uploadImage(image, for: recipientId)
-                    mediaDataList.append(mediaData)
-
-                    Log.info("✅ Image \(index + 1) uploaded: \(mediaData.mediaId)", category: "ChatViewModel")
-                }
-
-                // Build message content with media references
-                let messageContent = buildMediaMessageContent(
+                let result = try await mediaUploadManager.uploadMediaAndBuildContent(
+                    images: images,
                     caption: caption,
-                    mediaList: mediaDataList
+                    recipientId: recipientId
                 )
-
-                // Send as regular encrypted message
+                
                 await MainActor.run {
-                    // Store thumbnails locally before sending
-                    sendTextMessage(text: messageContent, replyTo: replyTo, localThumbnails: thumbnails)
+                    sendTextMessage(text: result.messageContent, replyTo: replyTo, localThumbnails: result.thumbnails)
                 }
-
             } catch {
                 await MainActor.run {
                     Log.error("❌ Media upload failed: \(error.localizedDescription)", category: "ChatViewModel")
@@ -917,104 +869,6 @@ class ChatViewModel: NSObject, ObservableObject {
                 }
             }
         }
-    }
-
-    private func buildMediaMessageContent(caption: String, mediaList: [MediaMessageData]) -> String {
-        // Build JSON content for media message
-        // Format: {"type":"media","caption":"...","media":[...]}
-        // ✅ FIX: Remove thumbnails from JSON to avoid exceeding 64KB limit
-        // Thumbnails can be generated client-side from downloaded media
-        struct MediaContent: Codable {
-            let type: String
-            let caption: String
-            let media: [MediaMessageDataWithoutThumbnail]
-        }
-        
-        // MediaMessageData without thumbnail to reduce JSON size
-        struct MediaMessageDataWithoutThumbnail: Codable {
-            let mediaId: String
-            let mediaUrl: String
-            let mediaKey: String
-            let mediaType: String
-            let size: Int
-            let width: Int?
-            let height: Int?
-            let duration: TimeInterval?
-            let hash: String
-            // thumbnail excluded to keep JSON under 64KB
-        }
-        
-        let mediaWithoutThumbnails = mediaList.map { media in
-            MediaMessageDataWithoutThumbnail(
-                mediaId: media.mediaId,
-                mediaUrl: media.mediaUrl,
-                mediaKey: media.mediaKey,
-                mediaType: media.mediaType,
-                size: media.size,
-                width: media.width,
-                height: media.height,
-                duration: media.duration,
-                hash: media.hash
-            )
-        }
-
-        let content = MediaContent(
-            type: "media",
-            caption: caption,
-            media: mediaWithoutThumbnails
-        )
-
-        let encoder = JSONEncoder()
-        // ✅ Use camelCase for consistency with messaging-service API
-
-        guard let jsonData = try? encoder.encode(content),
-              let jsonString = String(data: jsonData, encoding: .utf8) else {
-            Log.error("❌ Failed to encode media message content", category: "ChatViewModel")
-            return caption
-        }
-        
-        // Debug: Log the actual JSON we're creating
-        Log.debug("📋 Created media JSON (\(jsonString.count) chars): \(jsonString.prefix(200))...", category: "MediaUpload")
-        
-        // ✅ Check JSON size before sending
-        let jsonSize = jsonString.utf8.count
-        let maxSize = 64 * 1024 // 64KB limit
-        if jsonSize > maxSize {
-            Log.error("❌ Media message JSON too large: \(jsonSize) bytes (max \(maxSize))", category: "ChatViewModel")
-            // Try without some optional fields
-            let minimalMedia = mediaWithoutThumbnails.map { media in
-                MediaMessageDataWithoutThumbnail(
-                    mediaId: media.mediaId,
-                    mediaUrl: media.mediaUrl,
-                    mediaKey: media.mediaKey,
-                    mediaType: media.mediaType,
-                    size: media.size,
-                    width: nil,  // Remove optional fields
-                    height: nil,
-                    duration: nil,
-                    hash: media.hash
-                )
-            }
-            
-            let minimalContent = MediaContent(
-                type: "media",
-                caption: caption,
-                media: minimalMedia
-            )
-            
-            if let minimalJsonData = try? encoder.encode(minimalContent),
-               let minimalJsonString = String(data: minimalJsonData, encoding: .utf8),
-               minimalJsonString.utf8.count <= maxSize {
-                Log.info("✅ Using minimal media message format", category: "ChatViewModel")
-                return minimalJsonString
-            } else {
-                Log.error("❌ Even minimal format exceeds size limit", category: "ChatViewModel")
-                return caption
-            }
-        }
-        
-        Log.debug("📤 Media message JSON size: \(jsonSize) bytes", category: "ChatViewModel")
-        return jsonString
     }
 
     private func sendTextMessage(text: String, replyTo: Message?, localThumbnails: [Data] = []) {
@@ -1082,103 +936,35 @@ class ChatViewModel: NSObject, ObservableObject {
     }
 
     private func saveMessage(_ message: ChatMessage, decryptedContent: String, isSentByMe: Bool, status: DeliveryStatus, replyTo: Message? = nil, localThumbnails: [Data] = [], suiteId: UInt16) {
-        Log.debug("💾 Saving message \(message.id), isSentByMe: \(isSentByMe), status: \(status)", category: "ChatViewModel")
-
-        let fetchRequest = Message.fetchRequestForCurrentUser()
-        // Combine with additional predicate
-        let ownerPredicate = fetchRequest.predicate!
-        let messagePredicate = NSPredicate(format: "id == %@", message.id)
-        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, messagePredicate])
-
-        let messageTimestamp = Date(timeIntervalSince1970: TimeInterval(message.timestamp))
-        let isNewMessage: Bool
-        
-
-        if let existing = try? viewContext.fetch(fetchRequest).first {
-            Log.debug("📝 Updating existing message \(message.id)", category: "ChatViewModel")
-            existing.deliveryStatus = status
-            isNewMessage = false
-        } else {
-            Log.debug("✨ Creating new message \(message.id)", category: "ChatViewModel")
-            let newMessage = Message(context: viewContext)
-            newMessage.id = message.id
-            newMessage.setOwnerToCurrentUser()  // ✅ MULTI-ACCOUNT: Set owner
-            newMessage.fromUserId = message.from
-            newMessage.toUserId = message.to
-            newMessage.encryptedContent = message.content
-            newMessage.decryptedContent = decryptedContent
-            newMessage.timestamp = messageTimestamp
-            newMessage.isSentByMe = isSentByMe
-            newMessage.deliveryStatus = status
-            newMessage.retryCount = 0  // ✅ FIX: Initialize required field
-            newMessage.chat = chat
-            newMessage.suiteId = suiteId
-            
-            // Set reply information
-            if let replyMessage = replyTo {
-                newMessage.replyToMessageId = replyMessage.id
-                newMessage.replyToContent = replyMessage.decryptedContent
-            }
-            
-            // Store thumbnails locally for media messages (sender side)
-            if !localThumbnails.isEmpty {
-                // Store first thumbnail using MediaManager
-                if let firstThumbnail = localThumbnails.first {
-                    MediaManager.shared.storeThumbnail(firstThumbnail, for: message.id)
-                }
-            }
-            
-            isNewMessage = true
-        }
-
+        // ✅ REFACTOR: Use MessagePersistenceService
         do {
-            try viewContext.save()
+            let isNewMessage = try persistenceService.saveMessage(
+                message,
+                decryptedContent: decryptedContent,
+                isSentByMe: isSentByMe,
+                status: status,
+                chat: chat,
+                replyTo: replyTo,
+                localThumbnails: localThumbnails,
+                suiteId: suiteId,
+                in: viewContext
+            )
             
-            // ✅ FIX: Update chat's lastMessageText and lastMessageTime when a new message is saved
-            // Compare timestamps to ensure we update with the most recent message
-            if isNewMessage {
-                if let lastTime = chat.lastMessageTime {
-                    if messageTimestamp > lastTime {
-                        chat.lastMessageText = Chat.formatPreviewText(decryptedContent)
-                        chat.lastMessageTime = messageTimestamp
-                        try viewContext.save()
-                        Log.debug("✅ Updated chat.lastMessageText and lastMessageTime", category: "ChatViewModel")
-                    }
-                } else {
-                    // No previous message, always update
-                    chat.lastMessageText = Chat.formatPreviewText(decryptedContent)
-                    chat.lastMessageTime = messageTimestamp
-                    try viewContext.save()
-                    Log.debug("✅ Updated chat.lastMessageText and lastMessageTime (first message)", category: "ChatViewModel")
-                }
-            }
-            
-            Log.debug("✅ Message saved to Core Data", category: "ChatViewModel")
             // ✅ REFACTOR: FRC will automatically update messages array via delegate
-            Log.debug("📊 Messages will be updated by FRC. Current count: \(messages.count)", category: "ChatViewModel")
+            Log.debug("📊 Messages will be updated by FRC. Current count: \(messages.count), isNew: \(isNewMessage)", category: "ChatViewModel")
         } catch {
-            Log.error("Failed to save or update message: \(error.localizedDescription)", category: "ChatViewModel")
+            Log.error("Failed to save message: \(error.localizedDescription)", category: "ChatViewModel")
         }
     }
 
     private func updateMessageStatus(messageId: String, status: DeliveryStatus) {
-        let fetchRequest = Message.fetchRequestForCurrentUser()
-        // Combine with additional predicate
-        let ownerPredicate = fetchRequest.predicate!
-        let messagePredicate = NSPredicate(format: "id == %@", messageId)
-        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, messagePredicate])
-
-        if let message = try? viewContext.fetch(fetchRequest).first {
-            message.deliveryStatus = status
-            
-            do {
-                try viewContext.save()
-                // ✅ Force UI update immediately
-                objectWillChange.send()
-                Log.debug("✅ Updated message status to \(status) for \(messageId)", category: "ChatViewModel")
-            } catch {
-                Log.error("❌ Failed to save message status: \(error)", category: "ChatViewModel")
-            }
+        // ✅ REFACTOR: Use MessagePersistenceService
+        do {
+            try persistenceService.updateMessageStatus(messageId: messageId, status: status, in: viewContext)
+            // ✅ Force UI update immediately
+            objectWillChange.send()
+        } catch {
+            Log.error("❌ Failed to save message status: \(error)", category: "ChatViewModel")
         }
     }
 }
