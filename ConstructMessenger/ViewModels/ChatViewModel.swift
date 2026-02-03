@@ -61,6 +61,7 @@ class ChatViewModel: NSObject, ObservableObject {
     private let sessionInitService = SessionInitializationService()
     private let persistenceService = MessagePersistenceService()
     private let mediaUploadManager = MediaUploadManager()
+    private let retryManager = MessageRetryManager()
 
     init(chat: Chat, context: NSManagedObjectContext) {
         self.chat = chat
@@ -338,79 +339,18 @@ class ChatViewModel: NSObject, ObservableObject {
     // MARK: - Delete Messages
     
     func deleteMessage(_ message: Message) {
-        // ✅ REFACTOR: Check if message is valid
-        guard !message.isDeleted,
-              message.managedObjectContext == viewContext else {
-            Log.error("❌ Message is deleted or not in the correct context", category: "ChatViewModel")
-            return
-        }
-        
-        let messageId = message.id
-        
-        Log.debug("🗑️ Deleting message: \(messageId)", category: "ChatViewModel")
-        
-        // ✅ REFACTOR: Only Core Data operations - FRC will update messages array automatically
-        viewContext.delete(message)
-        
+        // ✅ REFACTOR: Use MessagePersistenceService
         do {
-            viewContext.processPendingChanges()
-            try viewContext.save()
-            Log.info("✅ Message deleted from Core Data: \(messageId)", category: "ChatViewModel")
-            
-            // Sync parent context if needed
-            if let parent = viewContext.parent {
-                parent.performAndWait {
-                    try? parent.save()
-                }
-            }
-            
-            // ✅ REFACTOR: Use MessagePersistenceService to update chat metadata
-            try persistenceService.updateChatMetadataAfterDeletion(chat: chat, in: viewContext)
-            
+            try persistenceService.deleteMessage(message, chat: chat, in: viewContext)
         } catch {
             Log.error("❌ Failed to delete message: \(error)", category: "ChatViewModel")
-            // FRC will handle consistency automatically
         }
     }
     
     func deleteMessages(withIds messageIds: Set<String>) {
-        guard !messageIds.isEmpty else { return }
-        
-        Log.debug("🗑️ Deleting \(messageIds.count) messages", category: "ChatViewModel")
-        
-        let fetchRequest = Message.fetchRequestForCurrentUser()
-        // Combine with additional predicate
-        let ownerPredicate = fetchRequest.predicate!
-        let idsPredicate = NSPredicate(format: "id IN %@", messageIds)
-        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, idsPredicate])
-        
-        guard let messagesToDelete = try? viewContext.fetch(fetchRequest) else {
-            Log.error("❌ Failed to fetch messages for deletion", category: "ChatViewModel")
-            return
-        }
-        
-        Log.debug("🗑️ Found \(messagesToDelete.count) messages to delete", category: "ChatViewModel")
-        
-        // ✅ REFACTOR: Only Core Data operations - FRC will update messages array automatically
-        for message in messagesToDelete {
-            viewContext.delete(message)
-        }
-        
+        // ✅ REFACTOR: Use MessagePersistenceService
         do {
-            viewContext.processPendingChanges()
-            try viewContext.save()
-            Log.info("✅ \(messagesToDelete.count) messages deleted from Core Data", category: "ChatViewModel")
-            
-            // Sync parent context if needed
-            if let parent = viewContext.parent {
-                parent.performAndWait {
-                    try? parent.save()
-                }
-            }
-            
-            // ✅ REFACTOR: Use MessagePersistenceService to update chat metadata
-            try persistenceService.updateChatMetadataAfterDeletion(chat: chat, in: viewContext)
-            
+            try persistenceService.deleteMessages(withIds: messageIds, chat: chat, in: viewContext)
         } catch {
             Log.error("❌ Failed to delete messages: \(error)", category: "ChatViewModel")
         }
@@ -665,164 +605,37 @@ class ChatViewModel: NSObject, ObservableObject {
         Log.debug("processPendingMessages called - deprecated, use sendQueuedMessages()", category: "ChatViewModel")
     }
 
-    // ✅ FIX: Send all queued messages when connection is restored
+    // ✅ Send all queued messages when connection is restored
     private func sendQueuedMessages() {
-        let fetchRequest = Message.fetchRequestForCurrentUser()
-        // Combine with additional predicate
-        let ownerPredicate = fetchRequest.predicate!
-        let chatPredicate = NSPredicate(format: "chat == %@ AND deliveryStatusRaw == %d", chat, DeliveryStatus.queued.rawValue)
-        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, chatPredicate])
-        fetchRequest.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: true)]
-
-        guard let queuedMessages = try? viewContext.fetch(fetchRequest) else {
+        // ✅ REFACTOR: Use MessageRetryManager
+        guard let recipientId = chat.otherUser?.id,
+              let currentUserId = SessionManager.shared.currentUserId else {
             return
         }
-
-        Log.info("📤 Sending \(queuedMessages.count) queued messages", category: "ChatViewModel")
-
-        for message in queuedMessages {
-            // Re-encrypt and send
-            guard let decryptedText = message.decryptedContent,
-                  let recipientId = chat.otherUser?.id,
-                  let currentUserId = SessionManager.shared.currentUserId else {
-                continue
-            }
-
-            do {
-                let components = try CryptoManager.shared.encryptMessage(decryptedText, for: recipientId)
-
-                let chatMessage = ChatMessage(
-                    id: message.id,
-                    from: currentUserId,
-                    to: recipientId,
-                    messageType: nil,  // Will be set by server
-                    ephemeralPublicKey: components.ephemeralPublicKey,
-                    messageNumber: components.messageNumber,
-                    content: components.content,
-                    suiteId: components.suiteId,
-                    timestamp: UInt64(message.timestamp.timeIntervalSince1970)
-                    
-                )
-
-                message.deliveryStatus = .sending
-                message.retryCount += 1
-                try? viewContext.save()
-
-                // ✅ FIXED: Send via REST API instead of WebSocket
-                Task {
-                    do {
-                        let response = try await MessagingAPI.shared.sendMessage(
-                            recipientId: recipientId,
-                            ephemeralPublicKey: components.ephemeralPublicKey,
-                            messageNumber: components.messageNumber,
-                            content: components.content,
-                            timestamp: UInt64(message.timestamp.timeIntervalSince1970),
-                            suiteId: components.suiteId
-                        )
-                        
-                        await MainActor.run {
-                            message.deliveryStatus = .sent
-                            try? self.viewContext.save()
-                            Log.debug("📮 Re-sent queued message via REST: \(message.id) (attempt \(message.retryCount))", category: "ChatViewModel")
-                        }
-                    } catch {
-                        await MainActor.run {
-                            if let networkError = error as? NetworkError,
-                               case .serverError(let message, let responseBody) = networkError {
-                                Log.error("❌ Failed to re-send queued message via REST: \(message)\nResponse: \(responseBody ?? "empty")", category: "ChatViewModel")
-                            } else {
-                                Log.error("Failed to re-send queued message via REST: \(error)", category: "ChatViewModel")
-                            }
-                            message.deliveryStatus = .failed
-                            try? self.viewContext.save()
-                        }
-                    }
-                }
-                messageQueueManager.markMessageAsSending(message.id)
-                Log.debug("📮 Re-sent queued message: \(message.id) (attempt \(message.retryCount))", category: "ChatViewModel")
-
-            } catch {
-                Log.error("Failed to re-encrypt queued message: \(error)", category: "ChatViewModel")
-                message.deliveryStatus = .failed
-                try? viewContext.save()
-            }
-        }
-
-        // Messages will be reloaded via NotificationCenter observer
+        
+        retryManager.sendQueuedMessages(
+            for: chat,
+            recipientId: recipientId,
+            currentUserId: currentUserId,
+            context: viewContext
+        )
     }
 
     func retryMessage(_ message: Message) {
-        // ✅ Retry for failed or queued messages
-        guard message.canRetry || message.deliveryStatus == .queued else {
-            Log.info("Message cannot be retried", category: "ChatViewModel")
-            return
-        }
-
-        guard let decryptedText = message.decryptedContent else {
-            Log.error("Cannot retry - no decrypted content", category: "ChatViewModel")
-            return
-        }
-
+        // ✅ REFACTOR: Use MessageRetryManager
         guard let recipientId = chat.otherUser?.id else {
             Log.error("❌ No recipient ID for retry", category: "ChatViewModel")
             return
         }
-
-        // ✅ Increment retry count
-        message.retryCount += 1
-        try? viewContext.save()
-
-        Log.info("🔄 Retrying message \(message.id.prefix(8))... (attempt \(message.retryCount))", category: "ChatViewModel")
-
-        // ✅ FIXED: Update existing message status instead of creating new one
-        message.deliveryStatus = .sending
-        try? viewContext.save()
-
-        // ✅ Re-encrypt and resend using SAME message ID
-        do {
-            let components = try CryptoManager.shared.encryptMessage(decryptedText, for: recipientId)
-
-            Task {
-                do {
-                    let response = try await MessagingAPI.shared.sendMessage(
-                        recipientId: recipientId,
-                        ephemeralPublicKey: components.ephemeralPublicKey,
-                        messageNumber: components.messageNumber,
-                        content: components.content,
-                        timestamp: UInt64(Date().timeIntervalSince1970),
-                        suiteId: components.suiteId
-                    )
-                    
-                    await MainActor.run {
-                        // ✅ Use server-provided status
-                        let deliveryStatus: DeliveryStatus
-                        switch response.status.lowercased() {
-                        case "delivered": deliveryStatus = .delivered
-                        case "queued": deliveryStatus = .queued
-                        default: deliveryStatus = .sent
-                        }
-                        
-                        message.deliveryStatus = deliveryStatus
-                        try? self.viewContext.save()
-                        Log.info("✅ Message retry successful: \(response.messageId), status: \(deliveryStatus)", category: "ChatViewModel")
-                    }
-                } catch {
-                    await MainActor.run {
-                        // ✅ Keep existing message as failed
-                        message.deliveryStatus = .failed
-                        try? self.viewContext.save()
-                        Log.error("❌ Message retry failed: \(error.localizedDescription)", category: "ChatViewModel")
-                        self.errorMessage = "Failed to send message: \(error.localizedDescription)"
-                    }
-                }
+        
+        retryManager.retryMessage(
+            message,
+            recipientId: recipientId,
+            context: viewContext,
+            onError: { [weak self] error in
+                self?.errorMessage = error
             }
-        } catch {
-            // ✅ Encryption failed - mark as failed
-            message.deliveryStatus = .failed
-            try? viewContext.save()
-            errorMessage = "Failed to encrypt message: \(error.localizedDescription)"
-            Log.error("❌ Retry encryption failed: \(error.localizedDescription)", category: "ChatViewModel")
-        }
+        )
     }
 
     // ✅ NOTE: WebSocket removed - using REST API only

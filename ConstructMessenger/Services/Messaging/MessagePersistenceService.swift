@@ -148,6 +148,85 @@ class MessagePersistenceService {
         Log.debug("✅ Updated chat.lastMessageText and lastMessageTime", category: "MessagePersistence")
     }
     
+    // MARK: - Message Deletion
+    
+    /// Delete a single message from Core Data
+    /// - Parameters:
+    ///   - message: Message to delete
+    ///   - chat: Chat containing the message
+    ///   - context: Core Data context
+    /// - Throws: Core Data error if save fails
+    func deleteMessage(_ message: Message, chat: Chat, in context: NSManagedObjectContext) throws {
+        guard !message.isDeleted,
+              message.managedObjectContext == context else {
+            Log.error("❌ Message is deleted or not in the correct context", category: "MessagePersistenceService")
+            throw NSError(domain: "MessagePersistence", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid message"])
+        }
+        
+        let messageId = message.id
+        Log.debug("🗑️ Deleting message: \(messageId)", category: "MessagePersistenceService")
+        
+        context.delete(message)
+        context.processPendingChanges()
+        try context.save()
+        
+        Log.info("✅ Message deleted from Core Data: \(messageId)", category: "MessagePersistenceService")
+        
+        // Sync parent context if needed
+        if let parent = context.parent {
+            parent.performAndWait {
+                try? parent.save()
+            }
+        }
+        
+        // Update chat metadata
+        try updateChatMetadataAfterDeletion(chat: chat, in: context)
+    }
+    
+    /// Delete multiple messages by IDs
+    /// - Parameters:
+    ///   - messageIds: Set of message IDs to delete
+    ///   - chat: Chat containing the messages
+    ///   - context: Core Data context
+    /// - Throws: Core Data error if save fails
+    func deleteMessages(withIds messageIds: Set<String>, chat: Chat, in context: NSManagedObjectContext) throws {
+        guard !messageIds.isEmpty else { return }
+        
+        Log.debug("🗑️ Deleting \(messageIds.count) messages", category: "MessagePersistenceService")
+        
+        let fetchRequest = Message.fetchRequestForCurrentUser()
+        let ownerPredicate = fetchRequest.predicate!
+        let idsPredicate = NSPredicate(format: "id IN %@", messageIds)
+        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, idsPredicate])
+        
+        guard let messagesToDelete = try? context.fetch(fetchRequest) else {
+            Log.error("❌ Failed to fetch messages for deletion", category: "MessagePersistenceService")
+            throw NSError(domain: "MessagePersistence", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to fetch messages"])
+        }
+        
+        Log.debug("🗑️ Found \(messagesToDelete.count) messages to delete", category: "MessagePersistenceService")
+        
+        for message in messagesToDelete {
+            context.delete(message)
+        }
+        
+        context.processPendingChanges()
+        try context.save()
+        
+        Log.info("✅ \(messagesToDelete.count) messages deleted from Core Data", category: "MessagePersistenceService")
+        
+        // Sync parent context if needed
+        if let parent = context.parent {
+            parent.performAndWait {
+                try? parent.save()
+            }
+        }
+        
+        // Update chat metadata
+        try updateChatMetadataAfterDeletion(chat: chat, in: context)
+    }
+    
+    // MARK: - Chat Metadata Update
     /// Update chat metadata after message deletion
     /// - Parameters:
     ///   - chat: Chat to update
