@@ -185,7 +185,20 @@ struct SettingsView: View {
                             .onTapGesture {
                                 // Secret: tap 10 times to enable developer mode
                                 DeveloperMode.shared.registerVersionTap()
+                                // Visual feedback
+                                let generator = UIImpactFeedbackGenerator(style: .light)
+                                generator.impactOccurred()
                             }
+                    }
+                    
+                    // Show tap count when actively tapping (for debugging)
+                    if DeveloperMode.shared.showTapCount {
+                        HStack {
+                            Text("Taps: \(DeveloperMode.shared.currentTapCount)/10")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                            Spacer()
+                        }
                     }
                 } header: {
                     Text("about")

@@ -87,6 +87,8 @@ class InviteGenerator {
         // Step 7: Get canonical string for signing
         let dataToSign = unsignedInvite.canonicalString()
         
+        Log.debug("🔐 Canonical string for signing: \(dataToSign)", category: "InviteGenerator")
+        
         // Step 8: Sign with identity key
         let signature = try signInviteData(
             data: dataToSign,
@@ -95,6 +97,8 @@ class InviteGenerator {
         
         // Step 9: Encode signature to Base64
         let signatureBase64 = Data(signature.signature).base64EncodedString()
+        
+        Log.debug("🔐 Generated signature: \(signatureBase64)", category: "InviteGenerator")
         
         // Step 10: Create final signed invite
         let signedInvite = InviteObject(

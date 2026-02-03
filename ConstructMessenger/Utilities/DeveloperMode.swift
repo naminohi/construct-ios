@@ -23,109 +23,90 @@ class DeveloperMode: ObservableObject {
     
     // MARK: - Activation Mechanism
     
-    private var tapCount: Int = 0
+    @Published private(set) var currentTapCount: Int = 0
+    @Published var showTapCount: Bool = false
     private var lastTapTime: Date = Date()
     private let requiredTaps: Int = 10
-    private let tapTimeout: TimeInterval = 3.0 // Reset if idle > 3 seconds
+    private let tapTimeout: TimeInterval = 5.0 // Increased to 5 seconds
     
     private init() {
-        #if DEBUG
-        // In DEBUG builds, developer mode can be enabled
+        // ✅ Allow enabling in both DEBUG and RELEASE (TestFlight) builds
         self.isEnabled = UserDefaults.standard.bool(forKey: "developerModeEnabled")
-        #else
-        // In PRODUCTION builds, ALWAYS disabled
-        // Even if UserDefaults has it enabled, force disable
-        self.isEnabled = false
-        UserDefaults.standard.set(false, forKey: "developerModeEnabled")
-        #endif
     }
     
     // MARK: - Public API
     
     /// Register a tap on version label (call from SettingsView)
     func registerVersionTap() {
-        #if DEBUG
         let now = Date()
         
         // Reset counter if too much time passed
         if now.timeIntervalSince(lastTapTime) > tapTimeout {
-            tapCount = 0
+            currentTapCount = 0
+            showTapCount = false
         }
         
-        tapCount += 1
+        currentTapCount += 1
         lastTapTime = now
+        showTapCount = true // Show counter while tapping
         
-        Log.debug("Version tap: \(tapCount)/\(requiredTaps)")
+        print("🔧 Version tap: \(currentTapCount)/\(requiredTaps)")
+        Log.debug("Version tap: \(currentTapCount)/\(requiredTaps)", category: "DeveloperMode")
         
-        if tapCount >= requiredTaps {
+        if currentTapCount >= requiredTaps {
             toggle()
-            tapCount = 0 // Reset counter
+            currentTapCount = 0
+            
+            // Hide counter after delay
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                self.showTapCount = false
+            }
         }
-        #else
-        // In production: do nothing, ignore taps
-        // This prevents accidental activation even if code is somehow called
-        #endif
     }
     
     /// Toggle developer mode
     private func toggle() {
-        #if DEBUG
         isEnabled.toggle()
+        
+        print("🔧 Developer Mode toggled: \(isEnabled ? "ENABLED ✅" : "DISABLED ❌")")
         
         // Haptic feedback
         let generator = UINotificationFeedbackGenerator()
         if isEnabled {
             generator.notificationOccurred(.success)
+            print("✅ Developer Mode ENABLED - Debug Logs now available!")
         } else {
             generator.notificationOccurred(.warning)
+            print("❌ Developer Mode DISABLED")
         }
-        #else
-        // Production: NEVER allow toggling
-        isEnabled = false
-        #endif
     }
     
     /// Force disable (for security)
     func forceDisable() {
         isEnabled = false
-        tapCount = 0
+        currentTapCount = 0
+        showTapCount = false
     }
     
     // MARK: - Feature Flags
     
     /// Can user enable log collection?
     var canEnableLogCollection: Bool {
-        #if DEBUG
         return isEnabled
-        #else
-        return false // NEVER in production
-        #endif
     }
     
     /// Can user view debug logs section?
     var showDebugLogsSection: Bool {
-        #if DEBUG
         return isEnabled
-        #else
-        return false
-        #endif
     }
     
     /// Can user export logs?
     var canExportLogs: Bool {
-        #if DEBUG
         return isEnabled
-        #else
-        return false
-        #endif
     }
     
     /// Show advanced session debugging?
     var showSessionDebugInfo: Bool {
-        #if DEBUG
         return isEnabled
-        #else
-        return false
-        #endif
     }
 }
