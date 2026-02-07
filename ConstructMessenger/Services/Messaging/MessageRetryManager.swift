@@ -104,11 +104,9 @@ class MessageRetryManager {
         currentUserId: String,
         context: NSManagedObjectContext
     ) {
-        let fetchRequest = Message.fetchRequestForCurrentUser()
-        // Combine with additional predicate
-        let ownerPredicate = fetchRequest.predicate!
+        let fetchRequest = Message.fetchRequest()
         let chatPredicate = NSPredicate(format: "chat == %@ AND deliveryStatusRaw == %d", chat, DeliveryStatus.queued.rawValue)
-        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, chatPredicate])
+        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [chatPredicate])
         fetchRequest.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: true)]
 
         guard let queuedMessages = try? context.fetch(fetchRequest) else {
@@ -123,63 +121,35 @@ class MessageRetryManager {
                 continue
             }
 
-            do {
-                let components = try CryptoManager.shared.encryptMessage(decryptedText, for: recipientId)
+            let plan = ChunkedMessageSender.shared.buildPlan(plaintext: decryptedText, messageId: UUID(uuidString: message.id) ?? UUID())
 
-                let chatMessage = ChatMessage(
-                    id: message.id,
-                    from: currentUserId,
-                    to: recipientId,
-                    messageType: nil,  // Will be set by server
-                    ephemeralPublicKey: components.ephemeralPublicKey,
-                    messageNumber: components.messageNumber,
-                    content: components.content,
-                    suiteId: components.suiteId,
-                    timestamp: UInt64(message.timestamp.timeIntervalSince1970)
-                )
+            message.deliveryStatus = .sending
+            message.retryCount += 1
+            try? context.save()
 
-                message.deliveryStatus = .sending
-                message.retryCount += 1
-                try? context.save()
-
-                // ✅ Send via REST API
-                Task {
-                    do {
-                        let response = try await MessagingAPI.shared.sendMessage(
-                            recipientId: recipientId,
-                            ephemeralPublicKey: components.ephemeralPublicKey,
-                            messageNumber: components.messageNumber,
-                            content: components.content,
-                            timestamp: UInt64(message.timestamp.timeIntervalSince1970),
-                            suiteId: components.suiteId
-                        )
-                        
-                        await MainActor.run {
-                            message.deliveryStatus = .sent
-                            try? context.save()
-                            Log.debug("📮 Re-sent queued message via REST: \(message.id) (attempt \(message.retryCount))", category: "MessageRetryManager")
-                        }
-                    } catch {
-                        await MainActor.run {
-                            if let networkError = error as? NetworkError,
-                               case .serverError(let errorMessage, let responseBody) = networkError {
-                                Log.error("❌ Failed to re-send queued message via REST: \(errorMessage)\nResponse: \(responseBody ?? "empty")", category: "MessageRetryManager")
-                            } else {
-                                Log.error("Failed to re-send queued message via REST: \(error)", category: "MessageRetryManager")
-                            }
-                            message.deliveryStatus = .failed
-                            try? context.save()
-                        }
+            // ✅ Send via REST API
+            Task {
+                do {
+                    let _ = try await ChunkedMessageSender.shared.sendChunks(
+                        plan: plan,
+                        recipientId: recipientId,
+                        timestamp: UInt64(Date().timeIntervalSince1970)
+                    )
+                    await MainActor.run {
+                        message.deliveryStatus = .sent
+                        try? context.save()
+                        Log.debug("📮 Re-sent queued message via REST: \(message.id) (attempt \(message.retryCount))", category: "MessageRetryManager")
+                    }
+                } catch {
+                    await MainActor.run {
+                        Log.error("Failed to re-send queued message: \(error)", category: "MessageRetryManager")
+                        message.deliveryStatus = .failed
+                        try? context.save()
                     }
                 }
-                messageQueueManager.markMessageAsSending(message.id)
-                Log.debug("📮 Re-sent queued message: \(message.id) (attempt \(message.retryCount))", category: "MessageRetryManager")
-
-            } catch {
-                Log.error("Failed to re-encrypt queued message: \(error)", category: "MessageRetryManager")
-                message.deliveryStatus = .failed
-                try? context.save()
             }
+            messageQueueManager.markMessageAsSending(message.id)
+            Log.debug("📮 Re-sent queued message: \(message.id) (attempt \(message.retryCount))", category: "MessageRetryManager")
         }
     }
 }

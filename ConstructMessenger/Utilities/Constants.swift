@@ -23,44 +23,17 @@ enum BuildConfiguration {
 
 // MARK: - Server Configuration
 struct ServerConfig {
-    // Primary server URL (from config)
-    static var defaultWebsocketURL: String {
-        do {
-            var value: String = try ConfigurationManager.value(for: "APIBaseURL")
-            // убрать кавычки и пробелы
-            value = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            value = value.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-            print("🔍 normalized APIBaseURL =", value)
-            guard !value.isEmpty else { throw ConfigurationManager.Error.invalidValue }
-            
-            // Validate URL format
-            if let url = URL(string: value) {
-                print("✅ Valid URL: \(url.absoluteString)")
-                print("   Scheme: \(url.scheme ?? "none")")
-                print("   Host: \(url.host ?? "none")")
-                print("   Port: \(url.port?.description ?? "default")")
-            } else {
-                print("⚠️ Invalid URL format: \(value)")
-            }
-            
-            return value
-        } catch {
-            print("⚠️ Using fallback server URL due to config error:", error)
-            return "https://ams.konstruct.cc"
-        }
+    // Primary server URL - API Gateway (routes to all services)
+    static var defaultRestAPIURL: String {
+        return "https://construct-api-gateway.fly.dev"
     }
+
+    // Public invite host (must have .well-known)
+    static let inviteHost: String = "konstruct.cc"
     
-    // Fallback server URL (Fly.io public domain)
-    static let fallbackServerURL = "https://construct-api-gateway.fly.dev"
-    
-    // List of server URLs to try (primary first, then fallback)
+    // Single URL - API Gateway handles routing
     static var serverURLs: [String] {
-        let primary = defaultWebsocketURL
-        // Only add fallback if it's different from primary
-        if primary != fallbackServerURL {
-            return [primary, fallbackServerURL]
-        }
-        return [primary]
+        return [defaultRestAPIURL]
     }
 }
 
@@ -70,7 +43,7 @@ struct ServerConfig {
 struct APIConstants {
     // WebSocket Server URL (managed by .xcconfig)
     static var websocketURL: String {
-        ServerConfig.defaultWebsocketURL
+        ServerConfig.defaultRestAPIURL
     }
 
     // Default server URL key for AppStorage and Keychain
@@ -243,12 +216,48 @@ struct TrafficProtectionConfig {
     static let lowPriorityMaxJitterMs: UInt64 = 100    // Other messages: 0-100ms
     static let batteryJitterReductionFactor: Float = 0.5  // 50% reduction at low battery
 
+    // Send Smoothing
+    static let minSendIntervalMs: UInt64 = 200  // Minimum spacing between outgoing messages
+    static let lowBatterySendIntervalMultiplier: Double = 2.0  // Increase interval when battery is low
+    static let sendJitterMinMs: UInt64 = 50
+    static let sendJitterMaxMs: UInt64 = 500
+
     // Feature Flags
     #if DEBUG
     static let allowUserToggle = true              // Allow users to disable in debug
     #else
     static let allowUserToggle = false             // Always enabled in release
     #endif
+}
+
+// MARK: - Message Padding Configuration
+struct MessagePaddingConfig {
+    // Buckets are raw ciphertext sizes (after encryption, before Base64)
+    static let buckets: [Int] = [1024, 4096, 16384]
+    static let enabled: Bool = true
+}
+
+// MARK: - Chunked Delivery Configuration
+struct ChunkedDeliveryConfig {
+    static let magic: [UInt8] = [0x4B, 0x4E, 0x53, 0x54] // "KNST"
+    static let version: UInt8 = 0x01
+    static let flags: UInt8 = 0x00
+
+    static let headerSize = 30
+    static let maxPlaintextSize = 16 * 1024
+    static let chunkPayloadSize = 3770
+    static let maxChunks: UInt16 = 256
+    static let reassemblyTimeout: TimeInterval = 60
+
+    static let chunkSendJitterMinMs: UInt64 = 50
+    static let chunkSendJitterMaxMs: UInt64 = 200
+}
+
+// MARK: - Long Polling Configuration
+struct LongPollingConfig {
+    // Add light jitter after successful polls to reduce timing correlation
+    static let successJitterMinMs: UInt64 = 100
+    static let successJitterMaxMs: UInt64 = 900
 }
 
 // MARK: - WebSocket Configuration

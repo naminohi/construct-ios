@@ -9,6 +9,7 @@
 
 import Foundation
 import Combine
+import UIKit
 
 /// Manages long polling for incoming messages with exponential backoff
 @MainActor
@@ -154,6 +155,14 @@ class LongPollingManager: ObservableObject {
                 if response.hasMore == true {
                     Log.info("🔄 hasMore=true, polling again immediately", category: "LongPollingManager")
                     continue
+                }
+
+                // Add light jitter after successful poll to reduce timing correlation
+                if UIApplication.shared.applicationState == .active {
+                    let jitterMs = UInt64.random(in: LongPollingConfig.successJitterMinMs...LongPollingConfig.successJitterMaxMs)
+                    if jitterMs > 0 {
+                        try? await Task.sleep(nanoseconds: jitterMs * 1_000_000)
+                    }
                 }
                 
             } catch {

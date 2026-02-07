@@ -90,11 +90,10 @@ class ChatViewModel: NSObject, ObservableObject {
     }
 
     private func setupFetchedResultsController() {
-        let fetchRequest = Message.fetchRequestForCurrentUser()
+        let fetchRequest = Message.fetchRequest()
         // Combine with additional predicate
-        let ownerPredicate = fetchRequest.predicate!
         let chatPredicate = NSPredicate(format: "chat == %@", chat)
-        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, chatPredicate])
+        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [chatPredicate])
         
         // ✅ OPTIMIZATION: Fetch newest 30 messages, then reverse to oldest-first
         // This ensures we get RECENT messages, not ancient history
@@ -155,18 +154,11 @@ class ChatViewModel: NSObject, ObservableObject {
     private func checkExistingSession() {
         guard let userId = chat.otherUser?.id else { return }
         
-        // Safely check session (might fail in Preview/tests)
-        do {
-            isSessionReady = CryptoManager.shared.hasSession(for: userId)
-            if isSessionReady {
-                Log.info("✅ Session already exists for user: \(userId)", category: "ChatViewModel")
-            } else {
-                Log.debug("No session yet for user: \(userId)", category: "ChatViewModel")
-            }
-        } catch {
-            // Preview/test mode - assume session ready to avoid initialization banner
-            Log.debug("⚠️ Could not check session (likely Preview mode): \(error)", category: "ChatViewModel")
-            isSessionReady = true
+        isSessionReady = CryptoManager.shared.hasSession(for: userId)
+        if isSessionReady {
+            Log.info("✅ Session already exists for user: \(userId)", category: "ChatViewModel")
+        } else {
+            Log.debug("No session yet for user: \(userId)", category: "ChatViewModel")
         }
     }
 
@@ -198,11 +190,13 @@ class ChatViewModel: NSObject, ObservableObject {
         
         // ✅ NEW: Set timeout timer
         publicKeyFetchTimer = Timer.scheduledTimer(withTimeInterval: publicKeyFetchTimeout, repeats: false) { [weak self] _ in
-            guard let self = self else { return }
-            if !self.isSessionReady {
-                Log.error("⏱️ Timeout waiting for public key bundle from server", category: "ChatViewModel")
-                self.errorMessage = "Failed to establish secure connection: server did not respond"
-                self.isSessionReady = false
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                if !self.isSessionReady {
+                    Log.error("⏱️ Timeout waiting for public key bundle from server", category: "ChatViewModel")
+                    self.errorMessage = "Failed to establish secure connection: server did not respond"
+                    self.isSessionReady = false
+                }
             }
         }
 
@@ -283,11 +277,10 @@ class ChatViewModel: NSObject, ObservableObject {
         isLoadingMore = true
         Log.debug("📥 Loading more messages before \(oldestTimestamp)", category: "ChatViewModel")
         
-        let fetchRequest = Message.fetchRequestForCurrentUser()
+        let fetchRequest = Message.fetchRequest()
         // Combine with additional predicate
-        let ownerPredicate = fetchRequest.predicate!
         let chatPredicate = NSPredicate(format: "chat == %@ AND timestamp < %@", chat, oldestTimestamp as NSDate)
-        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, chatPredicate])
+        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [chatPredicate])
         // ✅ Sort ascending (oldest first) to match main array order
         fetchRequest.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: true)]
         fetchRequest.fetchLimit = loadMoreBatchSize  // ✅ Use batch size for pagination
@@ -325,11 +318,10 @@ class ChatViewModel: NSObject, ObservableObject {
             return
         }
         
-        let fetchRequest = Message.fetchRequestForCurrentUser()
+        let fetchRequest = Message.fetchRequest()
         // Combine with additional predicate
-        let ownerPredicate = fetchRequest.predicate!
         let chatPredicate = NSPredicate(format: "chat == %@ AND timestamp < %@", chat, oldestTimestamp as NSDate)
-        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, chatPredicate])
+        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [chatPredicate])
         fetchRequest.fetchLimit = 1
         
         hasMoreMessages = (try? viewContext.fetch(fetchRequest).first) != nil
@@ -487,26 +479,26 @@ class ChatViewModel: NSObject, ObservableObject {
         errorMessage = nil
 
         do {
-            // Encrypt message and get components
-            let components = try CryptoManager.shared.encryptMessage(text, for: recipientId)
-
             // Create ChatMessage with proper format per server spec
             let messageId = UUID().uuidString
+            let plan = ChunkedMessageSender.shared.buildPlan(plaintext: text, messageId: UUID(uuidString: messageId) ?? UUID())
+            let firstPayload = plan.payloads.first ?? text
+            let firstComponents = try CryptoManager.shared.encryptMessage(firstPayload, for: recipientId)
             let message = ChatMessage(
                 id: messageId,
                 from: currentUserId,
                 to: recipientId,
                 messageType: nil,  // Will be set by server as "DIRECT_MESSAGE"
-                ephemeralPublicKey: components.ephemeralPublicKey,  // Binary 32 bytes
-                messageNumber: components.messageNumber,
-                content: components.content,  // Base64(nonce || ciphertext_with_tag)
-                suiteId: components.suiteId,
+                ephemeralPublicKey: firstComponents.ephemeralPublicKey,  // Binary 32 bytes
+                messageNumber: firstComponents.messageNumber,
+                content: firstComponents.content,  // Base64(nonce || ciphertext_with_tag)
+                suiteId: firstComponents.suiteId,
                 timestamp: UInt64(Date().timeIntervalSince1970)
                 
             )
 
             Log.debug("📤 Sending message with ID: \(messageId)", category: "ChatViewModel")
-            Log.debug("   Message number: \(components.messageNumber)", category: "ChatViewModel")
+            Log.debug("   Message number: \(firstComponents.messageNumber)", category: "ChatViewModel")
             Log.debug("   Content length: \(message.content.count) bytes", category: "ChatViewModel")
 
             // Save with .sending status
@@ -516,21 +508,20 @@ class ChatViewModel: NSObject, ObservableObject {
                 isSentByMe: true,
                 status: .sending,
                 replyTo: replyTo,
-                suiteId: components.suiteId
+                suiteId: firstComponents.suiteId
             )
 
             // ✅ Send through REST API (no WebSocket dependency)
             Log.info("📮 Sending message via REST API: \(messageId)", category: "ChatViewModel")
             Task {
                 do {
-                    let response = try await MessagingAPI.shared.sendMessage(
+                    let responses = try await ChunkedMessageSender.shared.sendChunks(
+                        plan: plan,
                         recipientId: recipientId,
-                        ephemeralPublicKey: components.ephemeralPublicKey,
-                        messageNumber: components.messageNumber,
-                        content: components.content,
                         timestamp: message.timestamp,
-                        suiteId: components.suiteId
+                        preEncryptedFirst: firstComponents
                     )
+                    let response = responses.first ?? SendMessageResponse(messageId: messageId, status: "sent")
                     
                     await MainActor.run {
                         // ✅ IMPROVED: Use server-provided status if available
@@ -693,33 +684,33 @@ class ChatViewModel: NSObject, ObservableObject {
         }
 
         do {
-            let components = try CryptoManager.shared.encryptMessage(text, for: recipientId)
             let messageId = UUID().uuidString
+            let plan = ChunkedMessageSender.shared.buildPlan(plaintext: text, messageId: UUID(uuidString: messageId) ?? UUID())
+            let firstPayload = plan.payloads.first ?? text
+            let firstComponents = try CryptoManager.shared.encryptMessage(firstPayload, for: recipientId)
             let message = ChatMessage(
                 id: messageId,
                 from: currentUserId,
                 to: recipientId,
                 messageType: nil,  // Will be set by server
-                ephemeralPublicKey: components.ephemeralPublicKey,
-                messageNumber: components.messageNumber,
-                content: components.content,
-                suiteId: components.suiteId,
+                ephemeralPublicKey: firstComponents.ephemeralPublicKey,
+                messageNumber: firstComponents.messageNumber,
+                content: firstComponents.content,
+                suiteId: firstComponents.suiteId,
                 timestamp: UInt64(Date().timeIntervalSince1970)
                 
             )
 
-            saveMessage(message, decryptedContent: text, isSentByMe: true, status: .sending, replyTo: replyTo, localThumbnails: localThumbnails, suiteId: components.suiteId)
+            saveMessage(message, decryptedContent: text, isSentByMe: true, status: .sending, replyTo: replyTo, localThumbnails: localThumbnails, suiteId: firstComponents.suiteId)
 
             // ✅ Send via REST API (no WebSocket dependency)
             Task {
                 do {
-                    let response = try await MessagingAPI.shared.sendMessage(
+                    let _ = try await ChunkedMessageSender.shared.sendChunks(
+                        plan: plan,
                         recipientId: recipientId,
-                        ephemeralPublicKey: components.ephemeralPublicKey,
-                        messageNumber: components.messageNumber,
-                        content: components.content,
                         timestamp: message.timestamp,
-                        suiteId: components.suiteId
+                        preEncryptedFirst: firstComponents
                     )
                     
                     await MainActor.run {

@@ -7,12 +7,14 @@
 //
 
 import Foundation
+import UIKit
 
 /// Messaging endpoints for sending and receiving messages
 class MessagingAPI {
     static let shared = MessagingAPI()
     
     private let client = RestAPIClient.shared
+    private let sendThrottler = MessageSendThrottler()
     
     private init() {}
     
@@ -28,6 +30,7 @@ class MessagingAPI {
         timestamp: UInt64,
         suiteId: UInt16
     ) async throws -> SendMessageResponse {
+        await sendThrottler.waitForTurn(minIntervalMs: TrafficProtectionConfig.minSendIntervalMs)
         let endpoint = "/api/v1/messages"
 
         let requestBody: [String: Any] = [
@@ -124,5 +127,38 @@ class MessagingAPI {
         Log.info("✅ END_SESSION sent successfully, messageId: \(response.messageId)", category: "Network")
         
         return response
+    }
+}
+
+// MARK: - Send Throttling
+private actor MessageSendThrottler {
+    private var lastSendNs: UInt64?
+
+    func waitForTurn(minIntervalMs: UInt64) async {
+        if !UIDevice.current.isBatteryMonitoringEnabled {
+            UIDevice.current.isBatteryMonitoringEnabled = true
+        }
+        let batteryLevel = UIDevice.current.batteryLevel
+        let adjustedMinIntervalMs: UInt64
+        if batteryLevel >= 0, batteryLevel < TrafficProtectionConfig.batteryLevelThreshold {
+            adjustedMinIntervalMs = UInt64(Double(minIntervalMs) * TrafficProtectionConfig.lowBatterySendIntervalMultiplier)
+        } else {
+            adjustedMinIntervalMs = minIntervalMs
+        }
+
+        let now = DispatchTime.now().uptimeNanoseconds
+        if let last = lastSendNs {
+            let minNs = adjustedMinIntervalMs * 1_000_000
+            let earliest = last + minNs
+            if now < earliest {
+                try? await Task.sleep(nanoseconds: earliest - now)
+            }
+        }
+        lastSendNs = DispatchTime.now().uptimeNanoseconds
+
+        let jitterMs = UInt64.random(in: TrafficProtectionConfig.sendJitterMinMs...TrafficProtectionConfig.sendJitterMaxMs)
+        if jitterMs > 0 {
+            try? await Task.sleep(nanoseconds: jitterMs * 1_000_000)
+        }
     }
 }

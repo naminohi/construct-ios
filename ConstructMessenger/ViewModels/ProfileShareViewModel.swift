@@ -102,34 +102,36 @@ class ProfileShareViewModel: ObservableObject {
             // Encrypt and send via E2E message
             do {
                 Log.debug("🔐 Encrypting profile message for user \(userId), JSON size: \(jsonSize) bytes", category: "ProfileShare")
-                let encryptedComponents = try CryptoManager.shared.encryptMessage(jsonString, for: userId)
-                
-                Log.debug("✅ Profile message encrypted successfully, messageNumber: \(encryptedComponents.messageNumber)", category: "ProfileShare")
-                
+                let messageId = UUID().uuidString
+                let plan = ChunkedMessageSender.shared.buildPlan(plaintext: jsonString, messageId: UUID(uuidString: messageId) ?? UUID())
+                let firstPayload = plan.payloads.first ?? jsonString
+                let firstComponents = try CryptoManager.shared.encryptMessage(firstPayload, for: userId)
+
+                Log.debug("✅ Profile message encrypted successfully, messageNumber: \(firstComponents.messageNumber)", category: "ProfileShare")
+
                 let message = ChatMessage(
-                    id: UUID().uuidString,
+                    id: messageId,
                     from: currentUserId,
                     to: userId,
                     messageType: nil,  // Will be set by server
-                    ephemeralPublicKey: encryptedComponents.ephemeralPublicKey,
-                    messageNumber: encryptedComponents.messageNumber,
-                    content: encryptedComponents.content,
-                    suiteId: encryptedComponents.suiteId,
+                    ephemeralPublicKey: firstComponents.ephemeralPublicKey,
+                    messageNumber: firstComponents.messageNumber,
+                    content: firstComponents.content,
+                    suiteId: firstComponents.suiteId,
                     timestamp: UInt64(Date().timeIntervalSince1970)
                     
                 )
-                
+
                 // ✅ FIXED: Send via REST API instead of WebSocket
                 Task {
                     do {
-                        let response = try await MessagingAPI.shared.sendMessage(
+                        let responses = try await ChunkedMessageSender.shared.sendChunks(
+                            plan: plan,
                             recipientId: userId,
-                            ephemeralPublicKey: encryptedComponents.ephemeralPublicKey,
-                            messageNumber: encryptedComponents.messageNumber,
-                            content: encryptedComponents.content,
                             timestamp: message.timestamp,
-                            suiteId: message.suiteId
+                            preEncryptedFirst: firstComponents
                         )
+                        let response = responses.first ?? SendMessageResponse(messageId: message.id, status: "sent")
                         Log.info("✅ Profile shared with user \(userId) via REST API: \(response.messageId)", category: "ProfileShare")
                     } catch {
                         Log.error("❌ Failed to send profile message via REST: \(error.localizedDescription)", category: "ProfileShare")

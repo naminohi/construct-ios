@@ -32,6 +32,8 @@ class MessageRouter {
     
     /// Called when public key bundle is needed for session initialization
     var onPublicKeyBundleNeeded: ((String, ChatMessage) -> Void)?
+
+    private let chunkReassembler = ChunkedMessageReassembler()
     
     // MARK: - Message Routing
     
@@ -90,7 +92,33 @@ class MessageRouter {
                 return
             }
         }
-        
+
+        switch chunkReassembler.process(decryptedText: decryptedContent) {
+        case .legacy(let text), .complete(let text):
+            // Continue with resolved plaintext
+            return handleResolvedMessage(
+                text,
+                for: message,
+                from: otherUserId,
+                chat: chat,
+                in: context
+            )
+        case .incomplete:
+            Log.debug("🧩 Chunked message incomplete, waiting for more chunks", category: "MessageRouter")
+            return
+        case .invalid(let reason):
+            Log.error("❌ Invalid chunked message: \(reason)", category: "MessageRouter")
+            return
+        }
+    }
+
+    private func handleResolvedMessage(
+        _ decryptedContent: String,
+        for message: ChatMessage,
+        from otherUserId: String,
+        chat: Chat,
+        in context: NSManagedObjectContext
+    ) {
         // 4. Check for special message types (profile sharing, etc.)
         if let specialMessageHandled = handleSpecialMessage(
             decryptedContent,
@@ -99,14 +127,14 @@ class MessageRouter {
         ), specialMessageHandled {
             return  // Special message handled, don't save as regular message
         }
-        
+
         // 5. Save regular message
         saveMessage(for: chat, with: message, decryptedContent: decryptedContent, in: context)
-        
+
         // 6. Update chat metadata
         chat.lastMessageText = Chat.formatPreviewText(decryptedContent)
         chat.lastMessageTime = Date(timeIntervalSince1970: TimeInterval(message.timestamp))
-        
+
         Log.info("📬 Message received and saved: \(message.id)", category: "MessageRouter")
     }
     
@@ -121,10 +149,9 @@ class MessageRouter {
         for userId: String,
         in context: NSManagedObjectContext
     ) -> (Chat, Bool) {
-        let fetchRequest = Chat.fetchRequestForCurrentUser()
-        let ownerPredicate = fetchRequest.predicate!
+        let fetchRequest = Chat.fetchRequest()
         let otherUserPredicate = NSPredicate(format: "otherUser.id == %@", userId)
-        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, otherUserPredicate])
+        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [otherUserPredicate])
         
         if let existingChat = try? context.fetch(fetchRequest).first {
             return (existingChat, false)
@@ -135,7 +162,6 @@ class MessageRouter {
         
         let newChat = Chat(context: context)
         newChat.id = UUID().uuidString
-        newChat.setOwnerToCurrentUser()
         newChat.otherUser = user
         
         return (newChat, true)
@@ -150,7 +176,7 @@ class MessageRouter {
         for userId: String,
         in context: NSManagedObjectContext
     ) -> User {
-        let userFetchRequest = User.fetchRequestForCurrentUser()
+        let userFetchRequest = User.fetchRequest()
         let userOwnerPredicate = userFetchRequest.predicate!
         let userIdPredicate = NSPredicate(format: "id == %@", userId)
         userFetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [userOwnerPredicate, userIdPredicate])
@@ -163,7 +189,6 @@ class MessageRouter {
         // Create new user with temporary username (will be updated from publicKeyBundle)
         let newUser = User(context: context)
         newUser.id = userId
-        newUser.setOwnerToCurrentUser()
         newUser.username = userId  // Temporary
         newUser.displayName = userId
         newUser.isSharingWithMe = false
@@ -324,10 +349,9 @@ class MessageRouter {
         guard let currentUserId = SessionManager.shared.currentUserId else { return }
         
         // Find chat
-        let fetchRequest = Chat.fetchRequestForCurrentUser()
-        let ownerPredicate = fetchRequest.predicate!
+        let fetchRequest = Chat.fetchRequest()
         let otherUserPredicate = NSPredicate(format: "otherUser.id == %@", userId)
-        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, otherUserPredicate])
+        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [otherUserPredicate])
         
         guard let chat = try? context.fetch(fetchRequest).first else {
             Log.error("❌ Cannot add system message: chat not found for \(userId)", category: "MessageRouter")
@@ -336,7 +360,6 @@ class MessageRouter {
         
         let message = Message(context: context)
         message.id = UUID().uuidString
-        message.setOwnerToCurrentUser()
         message.chat = chat
         message.fromUserId = "SYSTEM"
         message.toUserId = currentUserId
@@ -368,10 +391,9 @@ class MessageRouter {
         decryptedContent: String,
         in context: NSManagedObjectContext
     ) {
-        let fetchRequest = Message.fetchRequestForCurrentUser()
-        let ownerPredicate = fetchRequest.predicate!
+        let fetchRequest = Message.fetchRequest()
         let messagePredicate = NSPredicate(format: "id == %@", messageData.id)
-        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, messagePredicate])
+        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [messagePredicate])
         
         // Check if message already exists (from background fetch)
         if let existingMessage = try? context.fetch(fetchRequest).first {
@@ -393,7 +415,6 @@ class MessageRouter {
         // Create new message
         let message = Message(context: context)
         message.id = messageData.id
-        message.setOwnerToCurrentUser()
         message.fromUserId = messageData.from
         message.toUserId = messageData.to
         message.encryptedContent = messageData.content
