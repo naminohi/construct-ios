@@ -46,7 +46,7 @@ class SessionInitializationService {
     ) throws {
         // Proactively delete stale session if requested
         if deleteExisting {
-            CryptoManager.shared.deleteSession(for: userId)
+            CryptoManager.shared.archiveSession(for: userId, reason: .manualReset)
             Log.info("🗑️ Proactively deleted any existing session for \(userId) before initialization.", category: "SessionInit")
         }
         
