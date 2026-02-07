@@ -2,50 +2,39 @@
 //  SessionManager.swift
 //  Construct Messenger
 //
-//  Created by Maxim Eliseyev on 13.12.2025.
+//  Device-based session management (single device, no multi-account)
 //
 
 import Foundation
 import Combine
 
-// TODO: Phase 3 Architecture Refactoring - State Machine
-// ============================================================================
-// Current approach uses reactive publishers for auth state synchronization.
-// For better scalability and maintainability, consider migrating to explicit
-// State Machine pattern:
-//
-// enum AuthState {
-//     case unauthenticated
-//     case authenticating
-//     case authenticated(token: String, userId: String, expires: Date)
-// }
-//
-// Benefits:
-// - Impossible states become impossible (can't have token without userId)
-// - Explicit state transitions with validation
-// - Easier to add offline mode, reconnection logic
-// - Better testability and debugging
-// - Clear separation of concerns
-//
-// See: docs/architecture/state-machine-migration.md (to be created)
-// ============================================================================
-
 class SessionManager: ObservableObject {
     static let shared = SessionManager()
     private init() {}
 
-    // ✅ REACTIVE: Published property for session token
-    // This allows downstream components to react to token changes automatically
+    // ✅ Session token for API authentication
     @Published private(set) var sessionToken: String?
     
-    // ✅ NEW: Refresh token for automatic token renewal
+    // ✅ Refresh token for automatic token renewal
     @Published private(set) var refreshToken: String?
     
+    // ✅ User ID from server (UUID)
+    @Published private(set) var userId: String?
+    
+    // ✅ Get userId (prefer stored userId, fallback to deviceId for compatibility)
     var currentUserId: String? {
-        KeychainManager.shared.loadUserId()
+        if let userId = userId, !userId.isEmpty {
+            return userId
+        }
+        // Fallback to userId from Keychain
+        if let savedUserId = KeychainManager.shared.loadUserID(), !savedUserId.isEmpty {
+            return savedUserId
+        }
+        // Legacy fallback: deviceId
+        return KeychainManager.shared.loadDeviceID()
     }
 
-    // ✅ FIXED: Get session expiration timestamp
+    // ✅ Get session expiration timestamp
     var sessionExpires: Date? {
         guard let timestamp = UserDefaults.standard.object(forKey: UserDefaultsKey.sessionExpires.key) as? TimeInterval else {
             return nil
@@ -53,9 +42,9 @@ class SessionManager: ObservableObject {
         return Date(timeIntervalSince1970: timestamp)
     }
 
-    // ✅ FIXED: Check if session is valid (not expired)
+    // ✅ Check if session is valid (not expired)
     var isSessionValid: Bool {
-        guard sessionToken != nil, currentUserId != nil else { return false }
+        guard sessionToken != nil else { return false }
 
         // Check expiration (with 5-minute buffer)
         guard let expires = sessionExpires else { return false }
@@ -67,18 +56,29 @@ class SessionManager: ObservableObject {
     func loadSessionToken() {
         sessionToken = KeychainManager.shared.loadSessionToken()
         refreshToken = KeychainManager.shared.loadRefreshToken()
+        userId = KeychainManager.shared.loadUserID()
+
+        if let token = sessionToken,
+           let alg = JWTUtils.headerAlgorithm(from: token),
+           alg != "RS256" {
+            Log.error("❌ Unsupported JWT alg in cached token: \(alg). Clearing session.", category: "SessionManager")
+            clearSession()
+            NotificationCenter.default.post(name: NSNotification.Name("SessionInvalidated"), object: nil)
+        }
     }
     
-    // ✅ NEW: Save both access and refresh tokens with expiration
-    func saveTokens(accessToken: String, refreshToken: String, expiresIn: Int) {
-        guard let userId = currentUserId else {
-            print("❌ Cannot save tokens: no userId")
-            return
-        }
-        
+    // ✅ Save both access and refresh tokens with expiration and userId
+    func saveTokens(accessToken: String, refreshToken: String, expiresIn: Int, userId: String? = nil) {
         // Save tokens to keychain
         KeychainManager.shared.saveSessionToken(accessToken)
         KeychainManager.shared.saveRefreshToken(refreshToken)
+        
+        // Save userId if provided
+        if let userId = userId {
+            KeychainManager.shared.saveUserID(userId)
+            self.userId = userId
+            Log.info("✅ User ID saved: \(userId.prefix(8))...", category: "SessionManager")
+        }
         
         // Calculate expiration (expiresIn is in seconds)
         let expiresAt = Date().addingTimeInterval(TimeInterval(expiresIn))
@@ -91,44 +91,15 @@ class SessionManager: ObservableObject {
         Log.info("✅ Tokens saved - expires in: \(expiresIn / 60) minutes", category: "SessionManager")
     }
 
-    // ✅ FIXED: Save session with expiration timestamp (DEPRECATED - use saveTokens)
-    func saveSession(userId: String, token: String, expires: Int64) {
-        KeychainManager.shared.saveUserId(userId)
-        KeychainManager.shared.saveSessionToken(token)
-        
-        // ✅ FIX: Check if expires is in seconds or milliseconds
-        // Unix timestamp can be in seconds (10 digits) or milliseconds (13 digits)
-        let expiresTimeInterval: TimeInterval
-        if expires > 1_000_000_000_000 {
-            // Timestamp is in milliseconds (13+ digits)
-            expiresTimeInterval = TimeInterval(expires) / 1000.0
-            print("⚠️ Expires timestamp appears to be in milliseconds, converting to seconds")
-        } else {
-            // Timestamp is in seconds (10 digits)
-            expiresTimeInterval = TimeInterval(expires)
-        }
-        
-        // Save expiration timestamp
-        UserDefaults.standard.set(expiresTimeInterval, forKey: UserDefaultsKey.sessionExpires.key)
-        
-        let expiresDate = Date(timeIntervalSince1970: expiresTimeInterval)
-        print("✅ Session saved - expires at: \(expiresDate)")
-        print("   Raw expires value: \(expires)")
-        print("   Expires in: \(Int(expiresDate.timeIntervalSinceNow / 60)) minutes")
-        
-        // ✅ REACTIVE: Update published property to trigger subscribers
-        self.sessionToken = token
-    }
-
     func clearSession() {
         KeychainManager.shared.deleteSessionToken()
         KeychainManager.shared.deleteRefreshToken()
-        // Clear expiration timestamp
+        KeychainManager.shared.deleteUserID()
         UserDefaults.standard.removeObject(forKey: UserDefaultsKey.sessionExpires.key)
         
-        // ✅ REACTIVE: Clear published properties to trigger subscribers
+        // Clear published properties
         self.sessionToken = nil
         self.refreshToken = nil
-        // Note: We keep currentUserId so user data persists in Core Data
+        self.userId = nil
     }
 }

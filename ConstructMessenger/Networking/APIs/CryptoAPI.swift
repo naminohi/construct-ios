@@ -70,9 +70,9 @@ class CryptoAPI {
         let endpoint = "/api/v1/keys/rotate"
         
         let requestBody: [String: Any] = [
-            "key_bundle": [
-                "master_identity_key": keyBundle.masterIdentityKey,
-                "bundle_data": keyBundle.bundleData,
+            "keyBundle": [
+                "masterIdentityKey": keyBundle.masterIdentityKey,
+                "bundleData": keyBundle.bundleData,
                 "signature": keyBundle.signature
             ]
         ]
@@ -83,5 +83,30 @@ class CryptoAPI {
             body: requestBody,
             requiresAuth: true
         )
+    }
+    
+    // MARK: - Public Key Update (Bug Fix)
+    
+    /// Update verifying key for current user
+    /// PATCH /api/v1/users/me/public-key
+    /// Used to fix registration bugs where wrong key was uploaded
+    func updatePublicKey(verifyingKey: String, reason: String = "registration_bug_fix") async throws {
+        let endpoint = "/api/v1/users/me/public-key"
+        
+        let requestBody: [String: String] = [
+            "verifyingKey": verifyingKey,
+            "reason": reason
+        ]
+        
+        Log.info("🔐 Updating public key on server (reason: \(reason))", category: "CryptoAPI")
+        
+        let _: EmptyResponse = try await client.performRequest(
+            endpoint: endpoint,
+            method: "PATCH",
+            body: requestBody,
+            requiresAuth: true
+        )
+        
+        Log.info("✅ Public key updated successfully on server", category: "CryptoAPI")
     }
 }

@@ -20,6 +20,8 @@ struct NewChatView: View {
     @ObservedObject var chatsViewModel: ChatsViewModel
 
     @State private var showingQRScanner = false
+    @State private var showingError = false
+    @State private var errorMessage = ""
     @State private var initialContactInfo: ContactInfo?
 
     init(chatsViewModel: ChatsViewModel, initialContactInfo: ContactInfo? = nil) {
@@ -45,6 +47,11 @@ struct NewChatView: View {
                 QRScannerView { contactURL in
                     handleScannedContact(contactURL)
                 }
+            }
+            .alert("error", isPresented: $showingError) {
+                Button("ok") {}
+            } message: {
+                Text(errorMessage)
             }
             .onAppear {
                 if let contactInfo = initialContactInfo {
@@ -78,6 +85,9 @@ struct NewChatView: View {
                 print("❌ Failed to parse contact link: \(error.localizedDescription)")
                 // TODO: Show alert to user with specific error message
                 await MainActor.run {
+                    errorMessage = error.localizedDescription
+                    showingError = true
+                    // Keep scanner closed but show error
                     showingQRScanner = false
                 }
             }

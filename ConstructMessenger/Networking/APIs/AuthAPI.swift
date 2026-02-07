@@ -17,6 +17,21 @@ class AuthAPI {
     private init() {}
     
     // MARK: - Authentication Endpoints
+
+    /// Check username availability
+    /// GET /api/v1/users/username/availability?username=<string>
+    func checkUsernameAvailability(username: String) async throws -> Bool {
+        let encoded = username.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? username
+        let endpoint = "/api/v1/users/username/availability?username=\(encoded)"
+
+        let response: UsernameAvailabilityResponse = try await client.performRequest(
+            endpoint: endpoint,
+            method: "GET",
+            requiresAuth: false
+        )
+
+        return response.available
+    }
     
     /// Register a new user
     /// POST /api/v1/auth/register
@@ -58,6 +73,26 @@ class AuthAPI {
             refreshToken: response.refreshToken,
             expires: expiresTimestamp
         )
+    }
+    
+    /// Authenticate with device keys (device-based auth)
+    /// POST /api/v1/auth/device
+    func authenticateDevice(deviceId: String, timestamp: Int64, signature: String) async throws -> AuthResponse {
+        let endpoint = "/api/v1/auth/device"
+        
+        let requestBody: [String: Any] = [
+            "deviceId": deviceId,
+            "timestamp": timestamp,
+            "signature": signature
+        ]
+        
+        let response: AuthResponse = try await client.performRequest(
+            endpoint: endpoint,
+            method: "POST",
+            body: requestBody
+        )
+        
+        return response
     }
     
     /// Login with username and password
@@ -127,7 +162,7 @@ class AuthAPI {
     func logout(sessionToken: String) async throws {
         let endpoint = "/api/v1/auth/logout"
         let requestBody: [String: Any] = [
-            "all_devices": false
+            "allDevices": false
         ]
         
         let _: EmptyResponse = try await client.performRequest(
@@ -174,5 +209,107 @@ class AuthAPI {
         
         Log.info("✅ Token refreshed successfully (expiresIn: \(response.expiresIn ?? 0)s)", category: "AuthAPI")
         return response
+    }
+    
+    // MARK: - Device-Based Authentication (v2)
+    
+    /// Get PoW challenge for registration
+    /// GET /api/v1/auth/challenge
+    func getRegistrationChallenge() async throws -> ChallengeResponse {
+        let endpoint = "/api/v1/auth/challenge"
+        
+        Log.info("🎲 Fetching PoW challenge", category: "AuthAPI")
+        
+        let response: ChallengeResponse = try await client.performRequest(
+            endpoint: endpoint,
+            method: "GET",
+            requiresAuth: false
+        )
+        
+        Log.info("✅ Challenge received: difficulty=\(response.difficulty)", category: "AuthAPI")
+        return response
+    }
+    
+    /// Register with device-based authentication (v2)
+    /// POST /api/v1/auth/register-device
+    func registerV2(
+        username: String?,
+        deviceId: String,
+        registrationBundle: String,
+        challenge: String,
+        powSolution: PowSolution
+    ) async throws -> RegisterSuccessData {
+        let endpoint = "/api/v1/auth/register-device"
+        
+        Log.info("📝 Registering device: \(deviceId), username: \(username ?? "nil")", category: "AuthAPI")
+        
+        // Parse registration bundle JSON
+        guard let bundleData = registrationBundle.data(using: .utf8),
+              let bundleDict = try? JSONSerialization.jsonObject(with: bundleData) as? [String: Any] else {
+            throw NetworkError.decodingFailed
+        }
+        
+        // ✅ Server expects publicKeys as nested object
+        var requestBody: [String: Any] = [
+            "deviceId": deviceId,
+            "publicKeys": [
+                "verifyingKey": bundleDict["verifying_key"] ?? "",
+                "identityPublic": bundleDict["identity_public"] ?? "",
+                "signedPrekeyPublic": bundleDict["signed_prekey_public"] ?? "",
+                "signature": bundleDict["signature"] ?? ""
+            ],
+            "cryptoSuites": ["Curve25519+Ed25519"],
+            "powSolution": [
+                "challenge": challenge,
+                "nonce": powSolution.nonce,
+                "hash": powSolution.hash
+            ]
+        ]
+        
+        // Username is optional
+        if let username = username, !username.isEmpty {
+            requestBody["username"] = username
+        }
+        
+        let response: AuthResponse = try await client.performRequest(
+            endpoint: endpoint,
+            method: "POST",
+            body: requestBody,
+            requiresAuth: false
+        )
+        
+        // Calculate expiration
+        let expiresTimestamp: Int64
+        if let expiresIn = response.expiresIn {
+            let expiresDate = Date().addingTimeInterval(TimeInterval(expiresIn))
+            expiresTimestamp = Int64(expiresDate.timeIntervalSince1970)
+        } else {
+            let expiresDate = Date().addingTimeInterval(3600)
+            expiresTimestamp = Int64(expiresDate.timeIntervalSince1970)
+        }
+        
+        Log.info("✅ Device registered successfully! userId=\(response.userId)", category: "AuthAPI")
+        
+        return RegisterSuccessData(
+            userId: response.userId,
+            username: username ?? "",
+            sessionToken: response.accessToken,
+            refreshToken: response.refreshToken,
+            expires: expiresTimestamp
+        )
+    }
+}
+
+// MARK: - Response Models
+
+struct ChallengeResponse: Codable {
+    let challenge: String
+    let difficulty: UInt32
+    let expiresAt: Int64
+    
+    enum CodingKeys: String, CodingKey {
+        case challenge
+        case difficulty
+        case expiresAt  // Server sends "expiresAt" in camelCase
     }
 }

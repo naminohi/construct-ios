@@ -68,11 +68,10 @@ class ProfileSharingManager {
         from userId: String,
         in context: NSManagedObjectContext
     ) {
-        let userFetchRequest = User.fetchRequestForCurrentUser()
+        let userFetchRequest = User.fetchRequest()
         // Combine with additional predicate
-        let ownerPredicate = userFetchRequest.predicate!
         let userIdPredicate = NSPredicate(format: "id == %@", userId)
-        userFetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, userIdPredicate])
+        userFetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [userIdPredicate])
         
         guard let user = try? context.fetch(userFetchRequest).first else {
             Log.error("❌ User not found for profile update: \(userId)", category: "ProfileSharingManager")
@@ -156,11 +155,10 @@ class ProfileSharingManager {
         in context: NSManagedObjectContext
     ) {
         // Find or create chat
-        let chatFetchRequest = Chat.fetchRequestForCurrentUser()
+        let chatFetchRequest = Chat.fetchRequest()
         // Combine with additional predicate
-        let ownerPredicate = chatFetchRequest.predicate!
         let otherUserPredicate = NSPredicate(format: "otherUser.id == %@", userId)
-        chatFetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, otherUserPredicate])
+        chatFetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [otherUserPredicate])
         
         guard let chat = try? context.fetch(chatFetchRequest).first else {
             Log.error("❌ Chat not found for user \(userId)", category: "ProfileSharingManager")
@@ -170,7 +168,6 @@ class ProfileSharingManager {
         // Create system message
         let message = Message(context: context)
         message.id = UUID().uuidString
-        message.setOwnerToCurrentUser()  // MULTI-ACCOUNT: Set owner
         message.timestamp = Date()
         message.chat = chat
         message.fromUserId = userId

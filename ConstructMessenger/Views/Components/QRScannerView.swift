@@ -225,14 +225,20 @@ struct QRScannerView: View {
         // Generate Dynamic Invite for testing
         let generator = InviteGenerator()
         let testUserId = UUID().uuidString
+        let testDeviceId = "a1b2c3d4e5f67890a1b2c3d4e5f67890"  // Mock deviceId
         
         do {
-            // ✅ FIX: Use generateDeepLink instead of generateQRPayload
-            let testCode = try generator.generateDeepLink(userId: testUserId, useHTTPS: false)
+            // ✅ Generate test invite with both userId and deviceId
+            let testCode = try generator.generateDeepLink(
+                userId: testUserId,
+                deviceId: testDeviceId,
+                useHTTPS: false
+            )
             
             print("🧪 QRScannerView: Simulating Dynamic Invite scan")
             print("   Generated URL: \(testCode.prefix(100))...")
             print("   UserId: \(testUserId)")
+            print("   DeviceId: \(testDeviceId)")
             handleScannedCode(testCode)
         } catch {
             print("❌ Failed to generate test invite: \(error)")
@@ -282,10 +288,20 @@ struct QRScannerView: View {
            code.hasPrefix("https://konstruct.cc/add") ||
            code.hasPrefix("konstruct://add") {
             onCodeScanned(code)
+        } else if isBase64Like(code) {
+            let wrapped = "konstruct://add?invite=\(code)"
+            onCodeScanned(wrapped)
         } else {
             errorMessage = NSLocalizedString("invalid_qr_code_construct", comment: "Error message for invalid QR code")
             showingError = true
         }
+    }
+
+    private func isBase64Like(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 40 else { return false }
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=_-")
+        return trimmed.rangeOfCharacter(from: allowed.inverted) == nil
     }
 }
 

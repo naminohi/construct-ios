@@ -43,6 +43,121 @@ class KeychainManager {
         delete(forKey: APIConstants.sessionTokenKey)
     }
     
+    // MARK: - Device-Based Auth Keys
+    
+    /// Save device ID (16 hex characters)
+    func saveDeviceID(_ deviceId: String) {
+        guard let data = deviceId.data(using: .utf8) else {
+            Log.error("Failed to convert deviceId to UTF-8", category: "Keychain")
+            return
+        }
+        let success = save(data, forKey: "deviceId", accessible: kSecAttrAccessibleAfterFirstUnlock)
+        if success {
+            Log.info("✅ Device ID saved to Keychain", category: "Keychain")
+        }
+    }
+    
+    /// Load device ID
+    func loadDeviceID() -> String? {
+        guard let data = load(forKey: "deviceId") else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+    
+    /// Save device signing key (Ed25519 private key, 32 bytes)
+    func saveDeviceSigningKey(_ key: Data) {
+        let success = save(key, forKey: "deviceSigningKey", accessible: kSecAttrAccessibleAfterFirstUnlock)
+        if success {
+            Log.info("✅ Device signing key saved to Keychain", category: "Keychain")
+        }
+    }
+    
+    /// Load device signing key
+    func loadDeviceSigningKey() -> Data? {
+        return load(forKey: "deviceSigningKey")
+    }
+    
+    /// Save device identity key (for E2EE)
+    func saveDeviceIdentityKey(_ key: Data) {
+        let success = save(key, forKey: "deviceIdentityKey", accessible: kSecAttrAccessibleAfterFirstUnlock)
+        if success {
+            Log.info("✅ Device identity key saved to Keychain", category: "Keychain")
+        }
+    }
+    
+    /// Load device identity key
+    func loadDeviceIdentityKey() -> Data? {
+        return load(forKey: "deviceIdentityKey")
+    }
+    
+    /// Check if device is registered (has device ID and keys)
+    func isDeviceRegistered() -> Bool {
+        let deviceId = loadDeviceID()
+        let signingKey = loadDeviceSigningKey()
+        let identityKey = loadDeviceIdentityKey()
+        
+        let hasKeys = deviceId != nil && signingKey != nil && identityKey != nil
+        
+        if hasKeys {
+            Log.debug("✅ Device keys found in Keychain", category: "Keychain")
+            Log.debug("   deviceId: \(deviceId!.prefix(16))...", category: "Keychain")
+            Log.debug("   signingKey: \(signingKey!.count) bytes", category: "Keychain")
+            Log.debug("   identityKey: \(identityKey!.count) bytes", category: "Keychain")
+        } else {
+            Log.debug("❌ No device keys in Keychain", category: "Keychain")
+            Log.debug("   deviceId: \(deviceId != nil ? "✓" : "✗")", category: "Keychain")
+            Log.debug("   signingKey: \(signingKey != nil ? "✓" : "✗")", category: "Keychain")
+            Log.debug("   identityKey: \(identityKey != nil ? "✓" : "✗")", category: "Keychain")
+        }
+        
+        return hasKeys
+    }
+    
+    /// Delete all device keys (for logout/reset)
+    func deleteDeviceKeys() {
+        delete(forKey: "deviceId")
+        delete(forKey: "deviceSigningKey")
+        delete(forKey: "deviceIdentityKey")
+        Log.info("🗑️ Device keys deleted from Keychain", category: "Keychain")
+    }
+    
+    // MARK: - User ID (from server)
+    
+    /// Save user ID from server (UUID)
+    func saveUserID(_ userId: String) {
+        guard let data = userId.data(using: .utf8) else {
+            Log.error("Failed to convert userId to UTF-8 data", category: "Keychain")
+            return
+        }
+        let success = save(data, forKey: "userId", accessible: kSecAttrAccessibleAfterFirstUnlock)
+        if !success {
+            Log.error("Failed to save userId to Keychain", category: "Keychain")
+        } else {
+            Log.info("✅ User ID saved to Keychain: \(userId.prefix(8))...", category: "Keychain")
+        }
+    }
+    
+    /// Load user ID from Keychain
+    func loadUserID() -> String? {
+        guard let data = load(forKey: "userId") else {
+            Log.debug("No userId found in Keychain", category: "Keychain")
+            return nil
+        }
+        guard let userId = String(data: data, encoding: .utf8) else {
+            Log.error("Failed to convert userId data to string", category: "Keychain")
+            return nil
+        }
+        Log.debug("✅ User ID loaded from Keychain: \(userId.prefix(8))...", category: "Keychain")
+        return userId
+    }
+    
+    /// Delete user ID from Keychain
+    func deleteUserID() {
+        delete(forKey: "userId")
+        Log.info("🗑️ User ID deleted from Keychain", category: "Keychain")
+    }
+    
     // MARK: - Refresh Token
     
     func saveRefreshToken(_ token: String) {
@@ -131,39 +246,6 @@ class KeychainManager {
     /// Delete private keys JSON
     func deletePrivateKeysJson() {
         delete(forKey: "crypto_private_keys_json")
-    }
-
-    // MARK: - User ID
-    func saveUserId(_ userId: String) {
-        guard let data = userId.data(using: .utf8) else { return }
-        let success = save(data, forKey: APIConstants.userIdKey, accessible: kSecAttrAccessibleAfterFirstUnlock)
-        if !success {
-            Log.error("Failed to save user ID to Keychain", category: "Keychain")
-        }
-    }
-
-    func loadUserId() -> String? {
-        guard let data = load(forKey: APIConstants.userIdKey) else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-    
-    // MARK: - Username (for autofill convenience)
-    // Note: We don't save passwords in Keychain - iOS Password AutoFill handles that securely
-    func saveLastUsername(_ username: String) {
-        guard let data = username.data(using: .utf8) else { return }
-        let success = save(data, forKey: APIConstants.lastUsernameKey, accessible: kSecAttrAccessibleAfterFirstUnlock)
-        if !success {
-            Log.error("Failed to save last username to Keychain", category: "Keychain")
-        }
-    }
-    
-    func loadLastUsername() -> String? {
-        guard let data = load(forKey: APIConstants.lastUsernameKey) else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-    
-    func deleteLastUsername() {
-        delete(forKey: APIConstants.lastUsernameKey)
     }
     
     // MARK: - Custom Server URL (persistent across app reinstalls)

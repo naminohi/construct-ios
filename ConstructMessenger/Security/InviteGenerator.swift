@@ -40,20 +40,25 @@ class InviteGenerator {
     /// 4. Sign with user's Ed25519 identity key
     ///
     /// - Parameters:
-    ///   - userId: Sender's user UUID
+    ///   - userId: Sender's user UUID (for chat creation)
+    ///   - deviceId: Sender's device ID (for fetching keys)
     ///   - serverFQDN: Server FQDN (optional, uses default if nil)
     /// - Returns: Signed InviteObject
     /// - Throws: InviteGenerationError
     func generate(
         userId: String,
+        deviceId: String,
         serverFQDN: String? = nil
     ) throws -> InviteObject {
         // Validate inputs
         guard UUID(uuidString: userId) != nil else {
             throw InviteGenerationError.invalidUserId
         }
+        guard deviceId.count == 32, deviceId.range(of: "^[a-f0-9]{32}$", options: .regularExpression) != nil else {
+            throw InviteGenerationError.invalidDeviceId
+        }
         
-        let server = serverFQDN ?? defaultServer
+        let server = normalizeServer(serverFQDN ?? defaultServer)
         
         // Step 1: Generate ephemeral keypair
         let ephemeralKeypair = try generateEphemeralKeypair()
@@ -69,7 +74,7 @@ class InviteGenerator {
         let ephKeyBase64 = Data(ephemeralKeypair.publicKey).base64EncodedString()
         
         // Step 5: Get user's identity secret key from CryptoManager
-        guard let identitySecretKey = try? getIdentitySecretKey() else {
+        guard let signingSecretKey = try? getSigningSecretKey() else {
             throw InviteGenerationError.missingIdentityKey
         }
         
@@ -78,6 +83,7 @@ class InviteGenerator {
             v: 1,
             jti: jti,
             uuid: userId,
+            deviceId: deviceId,
             server: server,
             ephKey: ephKeyBase64,
             ts: timestamp,
@@ -93,17 +99,17 @@ class InviteGenerator {
         print("🔐 SIGN: Calling Rust signInviteData")
         print("   Data to sign: \(dataToSign)")
         print("   Data bytes: \(dataToSign.utf8.count)")
-        print("   Identity secret key bytes: \(identitySecretKey.count)")
-        print("   Secret key hex (first 16): \(identitySecretKey.prefix(16).map { String(format: "%02x", $0) }.joined())")
+        print("   Signing secret key bytes: \(signingSecretKey.count)")
+        print("   Secret key hex (first 16): \(signingSecretKey.prefix(16).map { String(format: "%02x", $0) }.joined())")
         
         // ✅ DEBUG: Derive public key from this secret key to verify it matches server
-        let expectedVerifyingKey = try deriveVerifyingKeyFromSecret(identitySecretKey: identitySecretKey)
+        let expectedVerifyingKey = try deriveVerifyingKeyFromSecret(identitySecretKey: signingSecretKey)
         let expectedVerifyingKeyBase64 = Data(expectedVerifyingKey).base64EncodedString()
         print("🔐 SIGN: Expected verifying key from our secret: \(expectedVerifyingKeyBase64)")
         
         let signature = try signInviteData(
             data: dataToSign,
-            identitySecretKey: identitySecretKey
+            identitySecretKey: signingSecretKey
         )
         
         print("🔐 SIGN: Rust returned signature bytes: \(signature.signature.count)")
@@ -119,6 +125,7 @@ class InviteGenerator {
             v: 1,
             jti: jti,
             uuid: userId,
+            deviceId: deviceId,
             server: server,
             ephKey: ephKeyBase64,
             ts: timestamp,
@@ -144,11 +151,12 @@ class InviteGenerator {
     ///
     /// - Parameters:
     ///   - userId: Current user's UUID
+    ///   - deviceId: Current device ID
     ///   - server: Server FQDN (optional, uses default)
     /// - Returns: Base64 string ready for QR code
     /// - Throws: InviteGenerationError or EncodingError
-    func generateQRPayload(userId: String, server: String? = nil) throws -> String {
-        let invite = try generate(userId: userId, serverFQDN: server ?? defaultServer)
+    func generateQRPayload(userId: String, deviceId: String, server: String? = nil) throws -> String {
+        let invite = try generate(userId: userId, deviceId: deviceId, serverFQDN: normalizeServer(server ?? defaultServer))
         return try invite.toBase64()
     }
     
@@ -159,15 +167,17 @@ class InviteGenerator {
     ///
     /// - Parameters:
     ///   - userId: Current user's UUID
+    ///   - deviceId: Current device ID
     ///   - server: Server FQDN (optional, uses default)
     ///   - useHTTPS: Use HTTPS URL instead of custom scheme (default: false)
     /// - Returns: Deep link URL string
     /// - Throws: InviteGenerationError or EncodingError
-    func generateDeepLink(userId: String, server: String? = nil, useHTTPS: Bool = false) throws -> String {
-        let payload = try generateQRPayload(userId: userId, server: server)
+    func generateDeepLink(userId: String, deviceId: String, server: String? = nil, useHTTPS: Bool = false) throws -> String {
+        let normalizedServer = normalizeServer(server ?? defaultServer)
+        let payload = try generateQRPayload(userId: userId, deviceId: deviceId, server: normalizedServer)
         
         if useHTTPS {
-            return "https://\(server ?? defaultServer)/add?invite=\(payload)"
+            return "https://\(normalizedServer)/add?invite=\(payload)"
         } else {
             return "konstruct://add?invite=\(payload)"
         }
@@ -175,10 +185,10 @@ class InviteGenerator {
     
     // MARK: - Helper Methods
     
-    /// Get identity secret key from CryptoManager
-    /// - Returns: 32-byte identity secret key
+    /// Get Ed25519 signing secret key from CryptoManager
+    /// - Returns: 32-byte signing secret key
     /// - Throws: InviteGenerationError if key not available
-    private func getIdentitySecretKey() throws -> [UInt8] {
+    private func getSigningSecretKey() throws -> [UInt8] {
         // Get CryptoManager core instance
         guard let core = CryptoManager.shared.core else {
             throw InviteGenerationError.missingIdentityKey
@@ -195,14 +205,30 @@ class InviteGenerator {
             throw InviteGenerationError.keyDecodingFailed
         }
         
-        // Decode Base64 identity secret
-        guard let identitySecretData = Data(base64Encoded: keys.identitySecret) else {
+        // Decode Base64 signing secret
+        guard let signingSecretData = Data(base64Encoded: keys.signingSecret) else {
             throw InviteGenerationError.keyDecodingFailed
         }
         
-        Log.debug("🔐 Using identity secret key for invite signing (\(identitySecretData.count) bytes)", category: "InviteGenerator")
+        Log.debug("🔐 Using signing secret key for invite signing (\(signingSecretData.count) bytes)", category: "InviteGenerator")
         
-        return [UInt8](identitySecretData)
+        return [UInt8](signingSecretData)
+    }
+
+    // MARK: - Server Normalization
+
+    /// Normalize server input to host-only (no scheme, no trailing slash)
+    private func normalizeServer(_ server: String) -> String {
+        var value = server.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.hasPrefix("http://") {
+            value = String(value.dropFirst("http://".count))
+        } else if value.hasPrefix("https://") {
+            value = String(value.dropFirst("https://".count))
+        }
+        if value.hasSuffix("/") {
+            value = String(value.dropLast())
+        }
+        return value
     }
     
     // MARK: - Private Keys JSON Structure
@@ -229,6 +255,7 @@ class InviteGenerator {
 
 enum InviteGenerationError: LocalizedError {
     case invalidUserId
+    case invalidDeviceId
     case missingIdentityKey
     case keyDecodingFailed
     case ephemeralKeyGenerationFailed
@@ -238,6 +265,8 @@ enum InviteGenerationError: LocalizedError {
         switch self {
         case .invalidUserId:
             return "Invalid user ID (must be UUIDv4)"
+        case .invalidDeviceId:
+            return "Invalid device ID (must be 32-char hex)"
         case .missingIdentityKey:
             return "Identity key not available. User may not be logged in."
         case .keyDecodingFailed:

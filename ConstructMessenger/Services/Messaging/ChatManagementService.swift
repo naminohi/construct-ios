@@ -41,7 +41,7 @@ class ChatManagementService {
         }
         
         // Check if chat already exists
-        let fetchRequest = Chat.fetchRequestForCurrentUser()
+        let fetchRequest = Chat.fetchRequest()
         let chatOwnerPredicate = fetchRequest.predicate!
         let otherUserPredicate = NSPredicate(format: "otherUser.id == %@", user.id)
         fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [chatOwnerPredicate, otherUserPredicate])
@@ -52,7 +52,7 @@ class ChatManagementService {
         }
         
         // Check if User already exists before creating a new one
-        let userFetchRequest = User.fetchRequestForCurrentUser()
+        let userFetchRequest = User.fetchRequest()
         let userOwnerPredicate = userFetchRequest.predicate!
         let idPredicate = NSPredicate(format: "id == %@", user.id)
         userFetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [userOwnerPredicate, idPredicate])
@@ -73,7 +73,6 @@ class ChatManagementService {
             dbUser.isSharingWithMe = false
             dbUser.isBlocked = false
             dbUser.amISharingWith = false
-            dbUser.setOwnerToCurrentUser()  // ✅ MULTI-ACCOUNT: Set owner
             Log.debug("Created new user: id=\(user.id), username=\(user.username), displayName=\(user.username)", category: "ChatManagementService")
         }
         
@@ -81,7 +80,6 @@ class ChatManagementService {
         let chat = Chat(context: context)
         chat.id = UUID().uuidString
         chat.otherUser = dbUser
-        chat.setOwnerToCurrentUser()  // ✅ MULTI-ACCOUNT: Set owner
         
         do {
             try context.save()

@@ -34,6 +34,7 @@ enum ContactLinkError: Error, LocalizedError {
 
 struct ContactInfo: Equatable {
     let userId: String
+    let deviceId: String?      // Device ID for fetching keys
     let username: String
     let ephemeralKey: String?  // For Dynamic Invites
     let isDynamic: Bool        // True if from Dynamic Invite
@@ -60,7 +61,15 @@ struct LinkParser {
         
         // Try Dynamic Invite format first
         if dynamicInvitePrefixes.contains(where: { urlString.hasPrefix($0) }) {
-            return try await parseDynamicInvite(url)
+            do {
+                return try await parseDynamicInvite(url)
+            } catch {
+                Log.info("⚠️ Dynamic invite parse failed, trying legacy parser: \(error.localizedDescription)", category: "LinkParser")
+                if legacyContactLinkPrefixes.contains(where: { urlString.hasPrefix($0) }) {
+                    return try parseLegacyContactLink(url)
+                }
+                throw error
+            }
         }
         
         // Fallback to legacy format
@@ -99,12 +108,13 @@ struct LinkParser {
             throw ContactLinkError.verificationFailed(error)
         }
         
-        Log.info("✅ Dynamic Invite verified: userId=\(invite.uuid.prefix(8))..., jti=\(invite.jti.prefix(8))...", category: "LinkParser")
+        Log.info("✅ Dynamic Invite verified: userId=\(invite.uuid.prefix(8))..., deviceId=\(invite.deviceId), jti=\(invite.jti.prefix(8))...", category: "LinkParser")
         
-        // Return contact info with ephemeral key
+        // Return contact info with both userId and deviceId
         // Note: username will be fetched from server using userId
         return ContactInfo(
             userId: invite.uuid,
+            deviceId: invite.deviceId,
             username: invite.uuid, // Placeholder, will be resolved by ChatsViewModel
             ephemeralKey: invite.ephKey,
             isDynamic: true
@@ -145,6 +155,7 @@ struct LinkParser {
 
         return ContactInfo(
             userId: userId,
+            deviceId: nil,  // Legacy format doesn't have deviceId
             username: finalUsername,
             ephemeralKey: nil,
             isDynamic: false

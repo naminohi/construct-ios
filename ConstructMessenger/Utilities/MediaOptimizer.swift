@@ -57,12 +57,15 @@ struct MediaOptimizer {
 
     /// Max image dimension (2048px for long side)
     private static let maxImageDimension: CGFloat = 2048
+    
+    /// Max image file size (5 MB)
+    private static let maxImageBytes: Int = 5 * 1024 * 1024
 
     /// Thumbnail size (200x200)
     private static let thumbnailSize = CGSize(width: 200, height: 200)
 
-    /// JPEG compression quality (0.8 = 80%)
-    private static let jpegQuality: CGFloat = 0.8
+    /// JPEG compression quality steps (highest to lowest)
+    private static let jpegQualitySteps: [CGFloat] = [0.9, 0.8, 0.7, 0.6, 0.5, 0.4]
 
     /// Thumbnail JPEG quality (0.7 = 70%, smaller for network)
     private static let thumbnailQuality: CGFloat = 0.7
@@ -77,23 +80,18 @@ struct MediaOptimizer {
         let originalData = image.pngData() ?? Data()
         let originalSize = originalData.count
 
-        // 1. Resize if needed (> 4K → 2048px)
-        let resizedImage = resizeImage(image, maxDimension: maxImageDimension)
+        // 1. Progressive resize + compression to fit size budget
+        let (optimizedImage, optimizedData) = try progressiveCompress(image)
 
-        // 2. Convert to JPEG (strips EXIF automatically on iOS)
-        guard let optimizedData = resizedImage.jpegData(compressionQuality: jpegQuality) else {
-            throw MediaOptimizationError.conversionFailed
-        }
+        // 2. Generate thumbnail
+        let thumbnail = try generateThumbnail(from: optimizedImage)
 
-        // 3. Generate thumbnail
-        let thumbnail = try generateThumbnail(from: resizedImage)
-
-        // 4. Extract metadata
+        // 3. Extract metadata
         let metadata = MediaMetadata(
             originalSize: originalSize,
             optimizedSize: optimizedData.count,
-            width: Int(resizedImage.size.width),
-            height: Int(resizedImage.size.height),
+            width: Int(optimizedImage.size.width),
+            height: Int(optimizedImage.size.height),
             duration: nil,
             mimeType: "image/jpeg"
         )
@@ -105,6 +103,36 @@ struct MediaOptimizer {
             thumbnail: thumbnail,
             metadata: metadata
         )
+    }
+
+    // MARK: - Progressive Compression
+
+    /// Progressive compression to fit max size without unnecessary quality loss
+    private static func progressiveCompress(_ image: UIImage) throws -> (UIImage, Data) {
+        var targetDimension = maxImageDimension
+        let minDimension: CGFloat = 1024
+
+        while true {
+            let resizedImage = resizeImage(image, maxDimension: targetDimension)
+
+            for quality in jpegQualitySteps {
+                if let data = resizedImage.jpegData(compressionQuality: quality),
+                   data.count <= maxImageBytes {
+                    return (resizedImage, data)
+                }
+            }
+
+            // If still too large, reduce dimension and retry
+            if targetDimension <= minDimension {
+                // Return best effort at lowest quality
+                guard let fallback = resizedImage.jpegData(compressionQuality: jpegQualitySteps.last ?? 0.4) else {
+                    throw MediaOptimizationError.conversionFailed
+                }
+                return (resizedImage, fallback)
+            }
+
+            targetDimension = max(minDimension, targetDimension * 0.8)
+        }
     }
 
     /// Optimizes an image from file URL

@@ -524,7 +524,7 @@ struct MediaMessageView: View {
                             }
                         }
                     }
-            } else if let error = loadError {
+            } else if loadError != nil {
                 // ✅ Error state with retry button
                 RoundedRectangle(cornerRadius: 12)
                     .fill(Color.gray.opacity(0.2))

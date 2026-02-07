@@ -21,7 +21,8 @@ import Foundation
 /// {
 ///   "v": 1,
 ///   "jti": "550e8400-e29b-41d4-a716-446655440000",
-///   "uuid": "user-uuid-here",
+///   "uuid": "550e8400-e29b-41d4-a716-446655440000",  // userId (UUID)
+///   "deviceId": "4e1f9dbe209c1bedb33ee32dda5a28f0",  // deviceId (hex)
 ///   "server": "konstruct.cc",
 ///   "ephKey": "base64-x25519-public-key",
 ///   "ts": 1738156800,
@@ -36,8 +37,12 @@ struct InviteObject: Codable, Equatable {
     /// UUIDv4 format, tracked by server to prevent reuse
     let jti: String
     
-    /// Sender's user UUID
+    /// Sender's user UUID (for chat creation)
     let uuid: String
+    
+    /// Sender's device ID (for fetching public keys)
+    /// 32-char hex string from SHA256(identity_public)[0..16]
+    let deviceId: String
     
     /// Server FQDN (e.g., "konstruct.cc")
     /// Enables federation support
@@ -74,6 +79,11 @@ struct InviteObject: Codable, Equatable {
         // User UUID format
         guard UUID(uuidString: uuid) != nil else {
             throw InviteValidationError.invalidUserUUID
+        }
+        
+        // Device ID format (32-char hex string)
+        guard deviceId.count == 32, deviceId.range(of: "^[a-f0-9]{32}$", options: .regularExpression) != nil else {
+            throw InviteValidationError.invalidDeviceID
         }
         
         // Server FQDN (basic check)
@@ -122,12 +132,12 @@ struct InviteObject: Codable, Equatable {
     
     /// Get canonical string representation for signing
     ///
-    /// Fields are concatenated in order: v,jti,uuid,server,ephKey,ts
+    /// Fields are concatenated in order: v,jti,uuid,deviceId,server,ephKey,ts
     /// This exact order must be used for both signing and verification.
     ///
     /// - Returns: String to sign/verify
     func canonicalString() -> String {
-        return "\(v)|\(jti)|\(uuid)|\(server)|\(ephKey)|\(ts)"
+        return "\(v)|\(jti)|\(uuid)|\(deviceId)|\(server)|\(ephKey)|\(ts)"
     }
 }
 
@@ -137,6 +147,7 @@ enum InviteValidationError: LocalizedError {
     case unsupportedVersion(Int)
     case invalidJTI
     case invalidUserUUID
+    case invalidDeviceID
     case invalidServer
     case invalidEphemeralKey
     case invalidTimestamp
@@ -150,6 +161,8 @@ enum InviteValidationError: LocalizedError {
             return "Invalid JTI format (must be UUIDv4)"
         case .invalidUserUUID:
             return "Invalid user UUID format"
+        case .invalidDeviceID:
+            return "Invalid device ID format (must be 32-char hex)"
         case .invalidServer:
             return "Invalid server FQDN"
         case .invalidEphemeralKey:

@@ -68,7 +68,7 @@ class RestAPIClient {
     ///   - timeout: Optional custom timeout (for long-polling)
     ///   - isLongPolling: Whether this is a long-polling request (uses separate session)
     /// - Returns: Decoded response of type T
-    func performRequest<T: Codable>(
+    func performRequest<T: Decodable>(
         endpoint: String,
         method: String,
         body: [String: Any]? = nil,
@@ -129,7 +129,7 @@ class RestAPIClient {
                     
                     let authHeader = "Bearer \(trimmedToken)"
                     request.setValue(authHeader, forHTTPHeaderField: "Authorization")
-                    Log.info("🔐 Added Authorization header (full length: \(authHeader.count))", category: "Network")
+                    Log.info("✅ Authorization header set", category: "Network")
                     
                     // Log token expiration status
                     if let expires = SessionManager.shared.sessionExpires {
@@ -146,13 +146,22 @@ class RestAPIClient {
                     Log.error("❌ No session token available for authenticated request", category: "Network")
                     throw NetworkError.notConnected
                 }
+            } else {
+                Log.info("ℹ️ Public endpoint - no Authorization header", category: "Network")
             }
             
             // Add request body if provided
             if let body = body {
                 do {
-                    request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
+                    let bodyData = try JSONSerialization.data(withJSONObject: body, options: .prettyPrinted)
+                    request.httpBody = bodyData
+                    
+                    // Log request body for debugging
+                    if let bodyString = String(data: bodyData, encoding: .utf8) {
+                        Log.info("📤 Request body:\n\(bodyString)", category: "Network")
+                    }
                 } catch {
+                    Log.error("❌ Failed to serialize request body: \(error)", category: "Network")
                     throw NetworkError.encodingFailed
                 }
             }
@@ -174,6 +183,14 @@ class RestAPIClient {
                     let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data)
                     let errorMessage = errorResponse?.message ?? errorResponse?.error ?? "Server error (status: \(httpResponse.statusCode))"
                     let responseBody = String(data: data, encoding: .utf8)
+                    
+                    // Log response body for debugging
+                    if httpResponse.statusCode == 422 {
+                        Log.error("❌ Validation error (422): \(errorMessage)", category: "Network")
+                        if let body = responseBody {
+                            Log.error("📥 Response body: \(body)", category: "Network")
+                        }
+                    }
                     
                     // Handle 401 Unauthorized - token expired or invalid
                     if httpResponse.statusCode == 401 {
@@ -259,7 +276,12 @@ class RestAPIClient {
                     Log.debug("⏱️ Long-polling timeout (normal behavior) - no new messages", category: "Network")
                     connectionStatusManager.markRequestSucceeded()
                     if T.self == PollMessagesResponse.self {
-                        return PollMessagesResponse(messages: [], nextSince: nil, hasMore: false) as! T
+                        guard let emptyResponse = PollMessagesResponse(messages: [], nextSince: nil, hasMore: false) as? T else {
+                            // This should never happen, but handle gracefully
+                            Log.error("Failed to cast PollMessagesResponse to generic type", category: "Network")
+                            throw urlError
+                        }
+                        return emptyResponse
                     }
                     throw urlError
                 }
@@ -330,6 +352,37 @@ struct ErrorResponse: Codable {
     let message: String?
 }
 
+/// Response from username availability endpoint
+struct UsernameAvailabilityResponse: Decodable {
+    let available: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case available
+        case isAvailable
+        case exists
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let value = try container.decodeIfPresent(Bool.self, forKey: .available) {
+            available = value
+            return
+        }
+        if let value = try container.decodeIfPresent(Bool.self, forKey: .isAvailable) {
+            available = value
+            return
+        }
+        if let exists = try container.decodeIfPresent(Bool.self, forKey: .exists) {
+            available = !exists
+            return
+        }
+        throw DecodingError.keyNotFound(
+            CodingKeys.available,
+            DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "No availability field found")
+        )
+    }
+}
+
 // MARK: - Messaging Response Types
 
 /// Response from sending a message
@@ -351,8 +404,8 @@ struct PollMessagesResponse: Codable {
     
     enum CodingKeys: String, CodingKey {
         case messages
-        case nextSince = "next_since"
-        case hasMore = "has_more"
+        case nextSince  // Server sends camelCase
+        case hasMore    // Server sends camelCase
     }
     
     func toChatMessages() throws -> [ChatMessage] {
@@ -423,7 +476,7 @@ struct EndSessionResponse: Codable {
     
     enum CodingKeys: String, CodingKey {
         case status
-        case messageId = "message_id"
+        case messageId  // Server sends camelCase
         case type
     }
 }

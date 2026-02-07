@@ -54,5 +54,6 @@ struct MainTabView: View {
         .environment(\.managedObjectContext, context)
         .environmentObject(authViewModel)
         .environmentObject(chatsViewModel)
+        .environmentObject(SecurityViewModel())
 }
 #endif

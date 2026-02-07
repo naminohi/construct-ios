@@ -49,13 +49,36 @@ class InviteVerifier {
     /// - Returns: Decoded InviteObject
     /// - Throws: InviteVerificationError
     func decodeFromURL(_ url: URL) throws -> InviteObject {
-        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: true),
-              let inviteParam = components.queryItems?.first(where: { $0.name == "invite" }),
-              let encoded = inviteParam.value else {
+        guard let encoded = extractInviteString(from: url) else {
             throw InviteVerificationError.invalidEncoding
         }
-        
         return try decode(encoded)
+    }
+
+    private func extractInviteString(from url: URL) -> String? {
+        if let components = URLComponents(url: url, resolvingAgainstBaseURL: true) {
+            if let inviteParam = components.queryItems?.first(where: { $0.name == "invite" }),
+               let value = inviteParam.value {
+                return value
+            }
+        }
+
+        // Fallback: /add/<invite>
+        let pathComponents = url.path.split(separator: "/").map(String.init)
+        if let addIndex = pathComponents.firstIndex(of: "add"),
+           pathComponents.count > addIndex + 1 {
+            return pathComponents[addIndex + 1]
+        }
+
+        // Fallback: fragment contains invite
+        if let fragment = url.fragment, !fragment.isEmpty {
+            if fragment.hasPrefix("invite=") {
+                return String(fragment.dropFirst("invite=".count))
+            }
+            return fragment
+        }
+
+        return nil
     }
     
     // MARK: - Verification
@@ -128,6 +151,33 @@ class InviteVerifier {
         if isValid {
             Log.info("✅ Invite signature valid: jti=\(invite.jti.prefix(8))...", category: "InviteVerifier")
         } else {
+            // Compatibility: some older invites stored server with scheme.
+            if invite.server.contains("http") {
+                let normalizedServer = normalizeServer(invite.server)
+                let normalizedInvite = InviteObject(
+                    v: invite.v,
+                    jti: invite.jti,
+                    uuid: invite.uuid,
+                    deviceId: invite.deviceId,
+                    server: normalizedServer,
+                    ephKey: invite.ephKey,
+                    ts: invite.ts,
+                    sig: invite.sig
+                )
+                
+                let normalizedData = normalizedInvite.canonicalString()
+                let normalizedValid = try verifyInviteSignature(
+                    data: normalizedData,
+                    signature: [UInt8](signatureData),
+                    verifyingKey: [UInt8](verifyingKeyData)
+                )
+                
+                if normalizedValid {
+                    Log.info("✅ Invite signature valid after server normalization: jti=\(invite.jti.prefix(8))..., server=\(normalizedServer)", category: "InviteVerifier")
+                    return true
+                }
+            }
+            
             Log.info("❌ Invalid invite signature: jti=\(invite.jti.prefix(8))...", category: "InviteVerifier")
             throw InviteVerificationError.invalidSignature
         }
@@ -162,6 +212,19 @@ class InviteVerifier {
             throw InviteVerificationError.publicKeyFetchFailed(error)
         }
     }
+
+    private func normalizeServer(_ server: String) -> String {
+        var value = server.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.hasPrefix("http://") {
+            value = String(value.dropFirst("http://".count))
+        } else if value.hasPrefix("https://") {
+            value = String(value.dropFirst("https://".count))
+        }
+        if value.hasSuffix("/") {
+            value = String(value.dropLast())
+        }
+        return value
+    }
 }
 
 // MARK: - Errors
@@ -191,5 +254,3 @@ enum InviteVerificationError: LocalizedError {
         }
     }
 }
-
-

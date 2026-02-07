@@ -83,14 +83,13 @@ class PublicKeyBundleHandler {
         }
         
         // Find user in any chat
-        let chatFetch = Chat.fetchRequestForCurrentUser()
-        let ownerPredicate = chatFetch.predicate!
+        let chatFetch = Chat.fetchRequest()
         let otherUserPredicate = NSPredicate(format: "otherUser.id == %@", data.userId)
-        chatFetch.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, otherUserPredicate])
+        chatFetch.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [otherUserPredicate])
         
         if let existingChat = try? context.fetch(chatFetch).first,
            let user = existingChat.otherUser {
-            let oldUsername = user.username ?? "(nil)"
+            let oldUsername = user.username
             user.username = data.username
             user.displayName = data.username
             do {
@@ -129,7 +128,7 @@ class PublicKeyBundleHandler {
         Log.info("📦 Received publicKeyBundle for incoming message from userId: \(data.userId)", category: "PublicKeyBundleHandler")
         
         // Update username if we have the user in Core Data
-        let userFetchRequest = User.fetchRequestForCurrentUser()
+        let userFetchRequest = User.fetchRequest()
         let userOwnerPredicate = userFetchRequest.predicate!
         let userIdPredicate = NSPredicate(format: "id == %@", data.userId)
         userFetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [userOwnerPredicate, userIdPredicate])
@@ -174,7 +173,7 @@ class PublicKeyBundleHandler {
             Log.info("🔐 SESSION_STATE[init_receiving_success]: userId=\(data.userId.prefix(8))..., duration=\(String(format: "%.2f", initDuration))s", category: "SessionInit")
             
             // Find or create chat
-            let chatFetchRequest = Chat.fetchRequestForCurrentUser()
+            let chatFetchRequest = Chat.fetchRequest()
             let chatOwnerPredicate = chatFetchRequest.predicate!
             let otherUserPredicate = NSPredicate(format: "otherUser.id == %@", data.userId)
             chatFetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [chatOwnerPredicate, otherUserPredicate])

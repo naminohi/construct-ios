@@ -243,6 +243,22 @@ typedef void (*UniffiForeignFutureCompleteVoid)(uint64_t, UniffiForeignFutureRes
     );
 
 #endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_POW_PROGRESS_CALLBACK_METHOD0
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_POW_PROGRESS_CALLBACK_METHOD0
+typedef void (*UniffiCallbackInterfacePowProgressCallbackMethod0)(uint64_t, uint64_t, uint64_t, float, void* _Nonnull, 
+        RustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+#endif
+#ifndef UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_POW_PROGRESS_CALLBACK
+#define UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_POW_PROGRESS_CALLBACK
+typedef struct UniffiVTableCallbackInterfacePowProgressCallback {
+    UniffiCallbackInterfaceFree _Nonnull uniffiFree;
+    UniffiCallbackInterfaceClone _Nonnull uniffiClone;
+    UniffiCallbackInterfacePowProgressCallbackMethod0 _Nonnull onProgress;
+} UniffiVTableCallbackInterfacePowProgressCallback;
+
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_CLONE_CLASSICCRYPTOCORE
 #define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_CLONE_CLASSICCRYPTOCORE
 uint64_t uniffi_construct_core_fn_clone_classiccryptocore(uint64_t handle, RustCallStatus *_Nonnull out_status
@@ -363,9 +379,24 @@ int8_t uniffi_construct_core_fn_method_trafficprotectionmanager_should_send_dumm
 void uniffi_construct_core_fn_method_trafficprotectionmanager_update_battery_level(uint64_t ptr, float level, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_INIT_CALLBACK_VTABLE_POWPROGRESSCALLBACK
+#define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_INIT_CALLBACK_VTABLE_POWPROGRESSCALLBACK
+void uniffi_construct_core_fn_init_callback_vtable_powprogresscallback(const UniffiVTableCallbackInterfacePowProgressCallback* _Nonnull vtable
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_BATTERY_AWARE_JITTER_MS
 #define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_BATTERY_AWARE_JITTER_MS
 uint64_t uniffi_construct_core_fn_func_battery_aware_jitter_ms(uint64_t base_ms, uint64_t max_jitter_ms, float battery_level, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_COMPUTE_POW
+#define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_COMPUTE_POW
+RustBuffer uniffi_construct_core_fn_func_compute_pow(RustBuffer challenge, uint32_t difficulty, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_COMPUTE_POW_WITH_PROGRESS
+#define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_COMPUTE_POW_WITH_PROGRESS
+RustBuffer uniffi_construct_core_fn_func_compute_pow_with_progress(RustBuffer challenge, uint32_t difficulty, RustBuffer progress_callback, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_CREATE_CRYPTO_CORE
@@ -379,9 +410,19 @@ uint64_t uniffi_construct_core_fn_func_create_crypto_core(RustCallStatus *_Nonnu
 uint64_t uniffi_construct_core_fn_func_create_crypto_core_from_keys_json(RustBuffer keys_json, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_DERIVE_DEVICE_ID
+#define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_DERIVE_DEVICE_ID
+RustBuffer uniffi_construct_core_fn_func_derive_device_id(RustBuffer identity_public_key, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_DERIVE_VERIFYING_KEY_FROM_SECRET
 #define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_DERIVE_VERIFYING_KEY_FROM_SECRET
 RustBuffer uniffi_construct_core_fn_func_derive_verifying_key_from_secret(RustBuffer identity_secret_key, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_FORMAT_FEDERATED_ID
+#define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_FORMAT_FEDERATED_ID
+RustBuffer uniffi_construct_core_fn_func_format_federated_id(RustBuffer device_id, RustBuffer server_hostname, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_GENERATE_DUMMY_MESSAGE
@@ -428,6 +469,11 @@ RustBuffer uniffi_construct_core_fn_func_sign_invite_data(RustBuffer data, RustB
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_VERIFY_INVITE_SIGNATURE
 #define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_VERIFY_INVITE_SIGNATURE
 int8_t uniffi_construct_core_fn_func_verify_invite_signature(RustBuffer data, RustBuffer signature, RustBuffer verifying_key, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_VERIFY_POW
+#define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_FN_FUNC_VERIFY_POW
+int8_t uniffi_construct_core_fn_func_verify_pow(RustBuffer challenge, RustBuffer solution, uint32_t required_difficulty, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_FFI_CONSTRUCT_CORE_RUSTBUFFER_ALLOC
@@ -696,6 +742,18 @@ uint16_t uniffi_construct_core_checksum_func_battery_aware_jitter_ms(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_FUNC_COMPUTE_POW
+#define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_FUNC_COMPUTE_POW
+uint16_t uniffi_construct_core_checksum_func_compute_pow(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_FUNC_COMPUTE_POW_WITH_PROGRESS
+#define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_FUNC_COMPUTE_POW_WITH_PROGRESS
+uint16_t uniffi_construct_core_checksum_func_compute_pow_with_progress(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_FUNC_CREATE_CRYPTO_CORE
 #define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_FUNC_CREATE_CRYPTO_CORE
 uint16_t uniffi_construct_core_checksum_func_create_crypto_core(void
@@ -708,9 +766,21 @@ uint16_t uniffi_construct_core_checksum_func_create_crypto_core_from_keys_json(v
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_FUNC_DERIVE_DEVICE_ID
+#define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_FUNC_DERIVE_DEVICE_ID
+uint16_t uniffi_construct_core_checksum_func_derive_device_id(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_FUNC_DERIVE_VERIFYING_KEY_FROM_SECRET
 #define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_FUNC_DERIVE_VERIFYING_KEY_FROM_SECRET
 uint16_t uniffi_construct_core_checksum_func_derive_verifying_key_from_secret(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_FUNC_FORMAT_FEDERATED_ID
+#define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_FUNC_FORMAT_FEDERATED_ID
+uint16_t uniffi_construct_core_checksum_func_format_federated_id(void
     
 );
 #endif
@@ -765,6 +835,12 @@ uint16_t uniffi_construct_core_checksum_func_sign_invite_data(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_FUNC_VERIFY_INVITE_SIGNATURE
 #define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_FUNC_VERIFY_INVITE_SIGNATURE
 uint16_t uniffi_construct_core_checksum_func_verify_invite_signature(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_FUNC_VERIFY_POW
+#define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_FUNC_VERIFY_POW
+uint16_t uniffi_construct_core_checksum_func_verify_pow(void
     
 );
 #endif
@@ -885,6 +961,12 @@ uint16_t uniffi_construct_core_checksum_method_trafficprotectionmanager_update_b
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_CONSTRUCTOR_TRAFFICPROTECTIONMANAGER_NEW
 #define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_CONSTRUCTOR_TRAFFICPROTECTIONMANAGER_NEW
 uint16_t uniffi_construct_core_checksum_constructor_trafficprotectionmanager_new(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_METHOD_POWPROGRESSCALLBACK_ON_PROGRESS
+#define UNIFFI_FFIDEF_UNIFFI_CONSTRUCT_CORE_CHECKSUM_METHOD_POWPROGRESSCALLBACK_ON_PROGRESS
+uint16_t uniffi_construct_core_checksum_method_powprogresscallback_on_progress(void
     
 );
 #endif

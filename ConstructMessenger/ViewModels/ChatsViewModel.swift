@@ -101,7 +101,7 @@ class ChatsViewModel: ObservableObject {
         .sink { [weak self] token, status, pushEnabled in
             Log.info("📡 State change: token=\(token != nil ? "present" : "nil"), status=\(status.displayText), push=\(pushEnabled)", category: "ChatsViewModel")
             
-            if token != nil && status == .connected {
+            if token != nil && status != .disconnected {
                 if pushEnabled {
                     Log.info("📱 Push enabled - using minimal background polling", category: "ChatsViewModel")
                     // TODO: Implement minimal polling (only when app is active)
@@ -138,7 +138,7 @@ class ChatsViewModel: ObservableObject {
         // ✅ Resume polling when app becomes active
         NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
+            .sink { _ in
                 Log.info("📱 App became active - resuming polling if conditions met", category: "ChatsViewModel")
                 // Don't manually restart - let Combine publisher handle it
                 // based on token + connection status
@@ -304,10 +304,9 @@ class ChatsViewModel: ObservableObject {
     private func saveMessage(for chat: Chat, with messageData: ChatMessage, decryptedContent: String) {
         guard let context = viewContext else { return }
         
-        let fetchRequest = Message.fetchRequestForCurrentUser()
-        let ownerPredicate = fetchRequest.predicate!
+        let fetchRequest = Message.fetchRequest()
         let messagePredicate = NSPredicate(format: "id == %@", messageData.id)
-        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, messagePredicate])
+        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [messagePredicate])
         
         // Check if message already exists
         if let existingMessage = try? context.fetch(fetchRequest).first {
@@ -321,7 +320,6 @@ class ChatsViewModel: ObservableObject {
         // Create new message
         let message = Message(context: context)
         message.id = messageData.id
-        message.setOwnerToCurrentUser()
         message.fromUserId = messageData.from
         message.toUserId = messageData.to
         message.encryptedContent = messageData.content

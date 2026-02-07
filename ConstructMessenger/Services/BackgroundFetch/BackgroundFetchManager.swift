@@ -83,7 +83,12 @@ class BackgroundFetchManager: NSObject, ObservableObject {
             forTaskWithIdentifier: Self.messageRefreshTaskID,
             using: nil
         ) { task in
-            self.handleMessageRefresh(task: task as! BGAppRefreshTask)
+            guard let refreshTask = task as? BGAppRefreshTask else {
+                Log.error("❌ Invalid task type for message refresh", category: "BackgroundFetch")
+                task.setTaskCompleted(success: false)
+                return
+            }
+            self.handleMessageRefresh(task: refreshTask)
         }
         
         // Register BGProcessingTask
@@ -91,7 +96,12 @@ class BackgroundFetchManager: NSObject, ObservableObject {
             forTaskWithIdentifier: Self.maintenanceTaskID,
             using: nil
         ) { task in
-            self.handleMaintenance(task: task as! BGProcessingTask)
+            guard let processingTask = task as? BGProcessingTask else {
+                Log.error("❌ Invalid task type for maintenance", category: "BackgroundFetch")
+                task.setTaskCompleted(success: false)
+                return
+            }
+            self.handleMaintenance(task: processingTask)
         }
         
         Log.info("Background tasks registered successfully")
@@ -294,7 +304,7 @@ class BackgroundFetchManager: NSObject, ObservableObject {
                 guard let otherUserId = chatUserIds[chatId] else { continue }
                 
                 // Find chat
-                let chatFetch = Chat.fetchRequestForCurrentUser()
+                let chatFetch = Chat.fetchRequest()
                 // Combine with additional predicate
                 let chatOwnerPredicate = chatFetch.predicate!
                 let chatIdPredicate = NSPredicate(format: "id == %@", chatId)
@@ -307,7 +317,7 @@ class BackgroundFetchManager: NSObject, ObservableObject {
                 // Process messages
                 for messageData in chatMessages {
                     // Check if message already exists
-                    let messageFetch = Message.fetchRequestForCurrentUser()
+                    let messageFetch = Message.fetchRequest()
                     // Combine with additional predicate
                     let messageOwnerPredicate = messageFetch.predicate!
                     let messageIdPredicate = NSPredicate(format: "id == %@", messageData.id)
@@ -336,7 +346,6 @@ class BackgroundFetchManager: NSObject, ObservableObject {
                     // Save message
                     let message = Message(context: backgroundContext)
                     message.id = messageData.id
-                    message.setOwnerToCurrentUser()  // ✅ MULTI-ACCOUNT: Set owner
                     message.fromUserId = messageData.from
                     message.toUserId = messageData.to
                     message.encryptedContent = messageData.content
@@ -393,7 +402,7 @@ class BackgroundFetchManager: NSObject, ObservableObject {
         in context: NSManagedObjectContext,
         currentUserId: String
     ) -> String? {
-        let chatFetch = Chat.fetchRequestForCurrentUser()
+        let chatFetch = Chat.fetchRequest()
         // Combine with additional predicate
         let chatOwnerPredicate = chatFetch.predicate!
         let otherUserPredicate = NSPredicate(format: "otherUser.id == %@", userId)
@@ -404,7 +413,7 @@ class BackgroundFetchManager: NSObject, ObservableObject {
         }
         
         // Create new chat
-        let userFetch = User.fetchRequestForCurrentUser()
+        let userFetch = User.fetchRequest()
         // Combine with additional predicate
         let userOwnerPredicate = userFetch.predicate!
         let userIdPredicate = NSPredicate(format: "id == %@", userId)
@@ -418,7 +427,6 @@ class BackgroundFetchManager: NSObject, ObservableObject {
         } else {
             let newUser = User(context: context)
             newUser.id = userId
-            newUser.setOwnerToCurrentUser()  // ✅ MULTI-ACCOUNT: Set owner
             newUser.username = userId // Temporary, will be updated when public key bundle is received
             newUser.displayName = userId
             newUser.isSharingWithMe = false
@@ -430,7 +438,6 @@ class BackgroundFetchManager: NSObject, ObservableObject {
         
         let newChat = Chat(context: context)
         newChat.id = UUID().uuidString
-        newChat.setOwnerToCurrentUser()  // ✅ MULTI-ACCOUNT: Set owner
         newChat.otherUser = dbUser
         
         return newChat.id
@@ -450,7 +457,7 @@ class BackgroundFetchManager: NSObject, ObservableObject {
             
             // Get user display name from Core Data
             let context = PersistenceController.shared.container.viewContext
-            let userFetch = User.fetchRequestForCurrentUser()
+            let userFetch = User.fetchRequest()
             // Combine with additional predicate
             let userOwnerPredicate = userFetch.predicate!
             let userIdPredicate = NSPredicate(format: "id == %@", userId)
@@ -465,7 +472,7 @@ class BackgroundFetchManager: NSObject, ObservableObject {
             
             let preview = messages.first.flatMap { msg -> String? in
                 // Try to get decrypted content if available
-                let messageFetch = Message.fetchRequestForCurrentUser()
+                let messageFetch = Message.fetchRequest()
                 // Combine with additional predicate
                 let messageOwnerPredicate = messageFetch.predicate!
                 let messageIdPredicate = NSPredicate(format: "id == %@", msg.id)

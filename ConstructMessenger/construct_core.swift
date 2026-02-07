@@ -414,7 +414,13 @@ fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
 
 
 // Public interface members begin here.
-
+// Magic number for the Rust proxy to call using the same mechanism as every other method,
+// to free the callback once it's dropped by Rust.
+private let IDX_CALLBACK_FREE: Int32 = 0
+// Callback return codes
+private let UNIFFI_CALLBACK_SUCCESS: Int32 = 0
+private let UNIFFI_CALLBACK_ERROR: Int32 = 1
+private let UNIFFI_CALLBACK_UNEXPECTED_ERROR: Int32 = 2
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -1347,6 +1353,114 @@ public func FfiConverterTypeInviteSignature_lower(_ value: InviteSignature) -> R
 }
 
 
+public struct PowChallenge: Equatable, Hashable {
+    public var challenge: String
+    public var difficulty: UInt32
+    public var expiresAt: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(challenge: String, difficulty: UInt32, expiresAt: Int64) {
+        self.challenge = challenge
+        self.difficulty = difficulty
+        self.expiresAt = expiresAt
+    }
+
+    
+}
+
+#if compiler(>=6)
+extension PowChallenge: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePowChallenge: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PowChallenge {
+        return
+            try PowChallenge(
+                challenge: FfiConverterString.read(from: &buf), 
+                difficulty: FfiConverterUInt32.read(from: &buf), 
+                expiresAt: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PowChallenge, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.challenge, into: &buf)
+        FfiConverterUInt32.write(value.difficulty, into: &buf)
+        FfiConverterInt64.write(value.expiresAt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePowChallenge_lift(_ buf: RustBuffer) throws -> PowChallenge {
+    return try FfiConverterTypePowChallenge.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePowChallenge_lower(_ value: PowChallenge) -> RustBuffer {
+    return FfiConverterTypePowChallenge.lower(value)
+}
+
+
+public struct PowSolution: Equatable, Hashable {
+    public var nonce: UInt64
+    public var hash: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(nonce: UInt64, hash: String) {
+        self.nonce = nonce
+        self.hash = hash
+    }
+
+    
+}
+
+#if compiler(>=6)
+extension PowSolution: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePowSolution: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PowSolution {
+        return
+            try PowSolution(
+                nonce: FfiConverterUInt64.read(from: &buf), 
+                hash: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PowSolution, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.nonce, into: &buf)
+        FfiConverterString.write(value.hash, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePowSolution_lift(_ buf: RustBuffer) throws -> PowSolution {
+    return try FfiConverterTypePowSolution.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePowSolution_lower(_ value: PowSolution) -> RustBuffer {
+    return FfiConverterTypePowSolution.lower(value)
+}
+
+
 public struct PrivateKeysJson: Equatable, Hashable {
     public var identitySecret: String
     public var signingSecret: String
@@ -1726,6 +1840,158 @@ public func FfiConverterTypeCryptoError_lower(_ value: CryptoError) -> RustBuffe
     return FfiConverterTypeCryptoError.lower(value)
 }
 
+
+
+
+public protocol PowProgressCallback: AnyObject, Sendable {
+    
+    func onProgress(currentNonce: UInt64, attempts: UInt64, estimatedProgress: Float) 
+    
+}
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfacePowProgressCallback {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // This creates 1-element array, since this seems to be the only way to construct a const
+    // pointer that we can pass to the Rust code.
+    static let vtable: [UniffiVTableCallbackInterfacePowProgressCallback] = [UniffiVTableCallbackInterfacePowProgressCallback(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterCallbackInterfacePowProgressCallback.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface PowProgressCallback: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterCallbackInterfacePowProgressCallback.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface PowProgressCallback: handle missing in uniffiClone")
+            }
+        },
+        onProgress: { (
+            uniffiHandle: UInt64,
+            currentNonce: UInt64,
+            attempts: UInt64,
+            estimatedProgress: Float,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterCallbackInterfacePowProgressCallback.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onProgress(
+                     currentNonce: try FfiConverterUInt64.lift(currentNonce),
+                     attempts: try FfiConverterUInt64.lift(attempts),
+                     estimatedProgress: try FfiConverterFloat.lift(estimatedProgress)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        }
+    )]
+}
+
+private func uniffiCallbackInitPowProgressCallback() {
+    uniffi_construct_core_fn_init_callback_vtable_powprogresscallback(UniffiCallbackInterfacePowProgressCallback.vtable)
+}
+
+// FfiConverter protocol for callback interfaces
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterCallbackInterfacePowProgressCallback {
+    fileprivate static let handleMap = UniffiHandleMap<PowProgressCallback>()
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+extension FfiConverterCallbackInterfacePowProgressCallback : FfiConverter {
+    typealias SwiftType = PowProgressCallback
+    typealias FfiType = UInt64
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lift(_ handle: UInt64) throws -> SwiftType {
+        try handleMap.get(handle: handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lower(_ v: SwiftType) -> UInt64 {
+        return handleMap.insert(obj: v)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func write(_ v: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(v))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfacePowProgressCallback_lift(_ handle: UInt64) throws -> PowProgressCallback {
+    return try FfiConverterCallbackInterfacePowProgressCallback.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfacePowProgressCallback_lower(_ v: PowProgressCallback) -> UInt64 {
+    return FfiConverterCallbackInterfacePowProgressCallback.lower(v)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionCallbackInterfacePowProgressCallback: FfiConverterRustBuffer {
+    typealias SwiftType = PowProgressCallback?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterCallbackInterfacePowProgressCallback.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterCallbackInterfacePowProgressCallback.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -1784,6 +2050,23 @@ public func batteryAwareJitterMs(baseMs: UInt64, maxJitterMs: UInt64, batteryLev
     )
 })
 }
+public func computePow(challenge: String, difficulty: UInt32) -> PowSolution  {
+    return try!  FfiConverterTypePowSolution_lift(try! rustCall() {
+    uniffi_construct_core_fn_func_compute_pow(
+        FfiConverterString.lower(challenge),
+        FfiConverterUInt32.lower(difficulty),$0
+    )
+})
+}
+public func computePowWithProgress(challenge: String, difficulty: UInt32, progressCallback: PowProgressCallback?) -> PowSolution  {
+    return try!  FfiConverterTypePowSolution_lift(try! rustCall() {
+    uniffi_construct_core_fn_func_compute_pow_with_progress(
+        FfiConverterString.lower(challenge),
+        FfiConverterUInt32.lower(difficulty),
+        FfiConverterOptionCallbackInterfacePowProgressCallback.lower(progressCallback),$0
+    )
+})
+}
 public func createCryptoCore()throws  -> ClassicCryptoCore  {
     return try  FfiConverterTypeClassicCryptoCore_lift(try rustCallWithError(FfiConverterTypeCryptoError_lift) {
     uniffi_construct_core_fn_func_create_crypto_core($0
@@ -1797,10 +2080,25 @@ public func createCryptoCoreFromKeysJson(keysJson: String)throws  -> ClassicCryp
     )
 })
 }
+public func deriveDeviceId(identityPublicKey: [UInt8]) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_construct_core_fn_func_derive_device_id(
+        FfiConverterSequenceUInt8.lower(identityPublicKey),$0
+    )
+})
+}
 public func deriveVerifyingKeyFromSecret(identitySecretKey: [UInt8])throws  -> [UInt8]  {
     return try  FfiConverterSequenceUInt8.lift(try rustCallWithError(FfiConverterTypeCryptoError_lift) {
     uniffi_construct_core_fn_func_derive_verifying_key_from_secret(
         FfiConverterSequenceUInt8.lower(identitySecretKey),$0
+    )
+})
+}
+public func formatFederatedId(deviceId: String, serverHostname: String) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_construct_core_fn_func_format_federated_id(
+        FfiConverterString.lower(deviceId),
+        FfiConverterString.lower(serverHostname),$0
     )
 })
 }
@@ -1871,6 +2169,15 @@ public func verifyInviteSignature(data: String, signature: [UInt8], verifyingKey
     )
 })
 }
+public func verifyPow(challenge: String, solution: PowSolution, requiredDifficulty: UInt32) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_construct_core_fn_func_verify_pow(
+        FfiConverterString.lower(challenge),
+        FfiConverterTypePowSolution_lower(solution),
+        FfiConverterUInt32.lower(requiredDifficulty),$0
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -1890,13 +2197,25 @@ private let initializationResult: InitializationResult = {
     if (uniffi_construct_core_checksum_func_battery_aware_jitter_ms() != 100) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_construct_core_checksum_func_compute_pow() != 52528) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_construct_core_checksum_func_compute_pow_with_progress() != 63236) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_construct_core_checksum_func_create_crypto_core() != 59945) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_construct_core_checksum_func_create_crypto_core_from_keys_json() != 4455) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_construct_core_checksum_func_derive_device_id() != 1055) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_construct_core_checksum_func_derive_verifying_key_from_secret() != 31516) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_construct_core_checksum_func_format_federated_id() != 19004) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_construct_core_checksum_func_generate_dummy_message() != 52724) {
@@ -1924,6 +2243,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_construct_core_checksum_func_verify_invite_signature() != 39140) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_construct_core_checksum_func_verify_pow() != 44600) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_construct_core_checksum_method_classiccryptocore_decrypt_message() != 15129) {
@@ -1986,7 +2308,11 @@ private let initializationResult: InitializationResult = {
     if (uniffi_construct_core_checksum_constructor_trafficprotectionmanager_new() != 21642) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_construct_core_checksum_method_powprogresscallback_on_progress() != 50608) {
+        return InitializationResult.apiChecksumMismatch
+    }
 
+    uniffiCallbackInitPowProgressCallback()
     return InitializationResult.ok
 }()
 

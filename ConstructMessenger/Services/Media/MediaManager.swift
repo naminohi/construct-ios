@@ -38,8 +38,14 @@ class MediaManager {
     func uploadImage(_ image: UIImage, for recipientId: String) async throws -> MediaMessageData {
         Log.info("📤 Uploading image for recipient: \(recipientId)", category: "MediaManager")
         
-        // Use MediaAPI to handle compression + encryption + upload
-        let uploadResult = try await MediaAPI.shared.uploadImage(image, quality: 0.8)
+        // Optimize before upload (resize + compress + strip metadata)
+        let optimized = try MediaOptimizer.optimizeImage(image)
+        
+        // Upload optimized data
+        let uploadResult = try await MediaAPI.shared.uploadData(
+            optimized.data,
+            mimeType: optimized.metadata.mimeType
+        )
         Log.info("✅ Image uploaded: \(uploadResult.mediaId)", category: "MediaManager")
         
         // ✅ Use raw base64 key - entire message will be encrypted via Double Ratchet
@@ -47,8 +53,9 @@ class MediaManager {
         let mediaKeyBase64 = uploadResult.encryptionKey.base64EncodedString()
         
         // Extract image dimensions
-        let width = Int(image.size.width)
-        let height = Int(image.size.height)
+        let width = optimized.metadata.width
+        let height = optimized.metadata.height
+        let thumbnailBase64 = optimized.thumbnail?.base64EncodedString()
         
         return MediaMessageData(
             mediaId: uploadResult.mediaId,
@@ -59,7 +66,7 @@ class MediaManager {
             width: width,
             height: height,
             duration: nil,
-            thumbnail: nil,
+            thumbnail: thumbnailBase64,
             hash: uploadResult.hash
         )
     }
@@ -70,8 +77,15 @@ class MediaManager {
     func uploadAvatar(_ image: UIImage) async throws -> AvatarUploadResult {
         Log.info("📤 Uploading avatar", category: "MediaManager")
         
-        // Use MediaAPI to handle compression + encryption + upload
-        let uploadResult = try await MediaAPI.shared.uploadImage(image, quality: 0.8)
+        // Optimize avatar (resize + compress) using ImageHelper
+        guard let avatarData = ImageHelper.prepareAvatarImage(image) else {
+            throw MediaManagerError.optimizationFailed
+        }
+        
+        let uploadResult = try await MediaAPI.shared.uploadData(
+            avatarData,
+            mimeType: "image/jpeg"
+        )
         Log.info("✅ Avatar uploaded: \(uploadResult.mediaId)", category: "MediaManager")
         
         // For avatars, return raw base64 key (not Double Ratchet encrypted)
@@ -277,6 +291,7 @@ enum MediaManagerError: LocalizedError {
     case invalidURL
     case downloadFailed(Int)  // HTTP status code
     case decryptionFailed
+    case optimizationFailed
     
     var errorDescription: String? {
         switch self {
@@ -288,6 +303,8 @@ enum MediaManagerError: LocalizedError {
             return "Download failed with HTTP \(statusCode)"
         case .decryptionFailed:
             return "Failed to decrypt media"
+        case .optimizationFailed:
+            return "Failed to optimize image"
         }
     }
 }

@@ -33,10 +33,9 @@ class MessagePersistenceService {
     ) throws -> Bool {
         Log.debug("💾 Saving message \(message.id), isSentByMe: \(isSentByMe), status: \(status)", category: "MessagePersistence")
         
-        let fetchRequest = Message.fetchRequestForCurrentUser()
-        let ownerPredicate = fetchRequest.predicate!
+        let fetchRequest = Message.fetchRequest()
         let messagePredicate = NSPredicate(format: "id == %@", message.id)
-        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, messagePredicate])
+        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [messagePredicate])
         
         let messageTimestamp = Date(timeIntervalSince1970: TimeInterval(message.timestamp))
         let isNewMessage: Bool
@@ -49,7 +48,6 @@ class MessagePersistenceService {
             Log.debug("✨ Creating new message \(message.id)", category: "MessagePersistence")
             let newMessage = Message(context: context)
             newMessage.id = message.id
-            newMessage.setOwnerToCurrentUser()
             newMessage.fromUserId = message.from
             newMessage.toUserId = message.to
             newMessage.encryptedContent = message.content
@@ -103,10 +101,9 @@ class MessagePersistenceService {
         status: DeliveryStatus,
         in context: NSManagedObjectContext
     ) throws {
-        let fetchRequest = Message.fetchRequestForCurrentUser()
-        let ownerPredicate = fetchRequest.predicate!
+        let fetchRequest = Message.fetchRequest()
         let messagePredicate = NSPredicate(format: "id == %@", messageId)
-        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, messagePredicate])
+        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [messagePredicate])
         
         guard let message = try? context.fetch(fetchRequest).first else {
             Log.error("❌ Message not found: \(messageId)", category: "MessagePersistence")
@@ -194,10 +191,9 @@ class MessagePersistenceService {
         
         Log.debug("🗑️ Deleting \(messageIds.count) messages", category: "MessagePersistenceService")
         
-        let fetchRequest = Message.fetchRequestForCurrentUser()
-        let ownerPredicate = fetchRequest.predicate!
+        let fetchRequest = Message.fetchRequest()
         let idsPredicate = NSPredicate(format: "id IN %@", messageIds)
-        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, idsPredicate])
+        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [idsPredicate])
         
         guard let messagesToDelete = try? context.fetch(fetchRequest) else {
             Log.error("❌ Failed to fetch messages for deletion", category: "MessagePersistenceService")
@@ -236,10 +232,9 @@ class MessagePersistenceService {
         in context: NSManagedObjectContext
     ) throws {
         // Find the most recent message for this chat
-        let fetchRequest = Message.fetchRequestForCurrentUser()
-        let ownerPredicate = fetchRequest.predicate!
+        let fetchRequest = Message.fetchRequest()
         let chatPredicate = NSPredicate(format: "chat == %@", chat)
-        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [ownerPredicate, chatPredicate])
+        fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [chatPredicate])
         fetchRequest.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: false)]
         fetchRequest.fetchLimit = 1
         
