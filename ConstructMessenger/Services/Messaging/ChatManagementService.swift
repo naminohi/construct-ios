@@ -120,6 +120,9 @@ class ChatManagementService {
 
     private func normalizedUsername(from value: String?) -> String {
         guard let value, !value.isEmpty else { return "" }
+        if value.lowercased() == "anonymous" {
+            return ""
+        }
         if UUID(uuidString: value) != nil {
             return ""
         }

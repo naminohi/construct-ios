@@ -86,7 +86,7 @@ class AuthViewModel: ObservableObject {
         // Step 1: Try to restore existing session token
         SessionManager.shared.loadSessionToken()
         
-        if let token = SessionManager.shared.sessionToken, 
+        if let _ = SessionManager.shared.sessionToken,
            let userId = SessionManager.shared.currentUserId {
             // We have session token - verify it's still valid
             print("✅ Found session token for user: \(userId)")
@@ -100,7 +100,7 @@ class AuthViewModel: ObservableObject {
         
         // Step 2: No session token - try device-based auth
         guard let deviceId = KeychainManager.shared.loadDeviceID(),
-              let signingKey = KeychainManager.shared.loadDeviceSigningKey() else {
+              let _ = KeychainManager.shared.loadDeviceSigningKey() else {
             print("❌ No device keys found - user needs to register")
             return
         }

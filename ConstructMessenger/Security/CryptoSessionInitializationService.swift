@@ -116,10 +116,16 @@ final class CryptoSessionInitializationService {
             "suite_id": suiteID,
         ]
 
+        let unpaddedContent = MessagePadding.unpadCiphertextBase64(firstMessage.content)
+        guard let contentData = Data(base64Encoded: unpaddedContent) else {
+            Log.error("❌ Invalid base64: firstMessage.content", category: "CryptoManager")
+            throw CryptoManagerError.invalidKeyData
+        }
+
         let messageDict: [String: Any] = [
             "ephemeral_public_key": [UInt8](firstMessage.ephemeralPublicKey),
             "message_number": firstMessage.messageNumber,
-            "content": firstMessage.content
+            "content": [UInt8](contentData)
         ]
 
         do {

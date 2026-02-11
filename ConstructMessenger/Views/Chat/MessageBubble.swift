@@ -327,31 +327,22 @@ struct MessageBubble: View {
 
         switch status {
         case .sending:
-            ProgressView()
-                .scaleEffect(0.6)
-                .frame(width: 12, height: 12)
+            // Сообщение только отправлено - серый пустой круг с галочкой
+            Image(systemName: "checkmark.circle")
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
 
         case .sent:
-            // Один серый чекмарк - сообщение на сервере, но получатель может быть оффлайн
-            HStack(spacing: 1) {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.secondary)
-            }
-            .frame(width: 14, height: 10)
+            // Сервер подтвердил получение - серый заполненный круг с галочкой
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
 
         case .delivered:
-            // Два зеленых чекмарка - сообщение доставлено получателю
-            HStack(spacing: -8) {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(.green)
-                    .opacity(0.8)
-                Image(systemName: "checkmark")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(.green)
-            }
-            .frame(width: 14, height: 10)
+            // Получатель подтвердил доставку (HMAC-SHA256 ACK) - зелёный заполненный
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 12))
+                .foregroundColor(.green)
 
         case .queued:
             Button {

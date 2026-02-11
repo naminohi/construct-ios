@@ -129,13 +129,22 @@ class PublicKeyBundleHandler {
         
         // Update username if we have the user in Core Data
         let userFetchRequest = User.fetchRequest()
-        let userOwnerPredicate = userFetchRequest.predicate!
         let userIdPredicate = NSPredicate(format: "id == %@", data.userId)
-        userFetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [userOwnerPredicate, userIdPredicate])
+        var predicates: [NSPredicate] = [userIdPredicate]
+        if let existingPredicate = userFetchRequest.predicate {
+            predicates.insert(existingPredicate, at: 0)
+        }
+        userFetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
         
         if let user = try? context.fetch(userFetchRequest).first {
-            user.username = data.username
-            user.displayName = data.username
+            let normalized = data.username.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !normalized.isEmpty, normalized.lowercased() != "anonymous", UUID(uuidString: normalized) == nil {
+                user.username = normalized
+                user.displayName = normalized
+            } else {
+                user.username = ""
+                user.displayName = DisplayNameGenerator.generate(from: data.userId)
+            }
             try? context.save()
             Log.info("Updated username for user: \(data.username)", category: "PublicKeyBundleHandler")
         }

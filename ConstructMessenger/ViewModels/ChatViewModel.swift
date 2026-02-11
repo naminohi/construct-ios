@@ -223,9 +223,10 @@ class ChatViewModel: NSObject, ObservableObject {
         if data.userId == chat.otherUser?.id {
             // ✅ Update username if we have the user in Core Data
             if let user = chat.otherUser {
-                if UUID(uuidString: data.username) == nil, !data.username.isEmpty {
-                    user.username = data.username
-                    user.displayName = data.username
+                let normalized = data.username.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !normalized.isEmpty, normalized.lowercased() != "anonymous", UUID(uuidString: normalized) == nil {
+                    user.username = normalized
+                    user.displayName = normalized
                 } else {
                     user.username = ""
                     user.displayName = DisplayNameGenerator.generate(from: data.userId)
