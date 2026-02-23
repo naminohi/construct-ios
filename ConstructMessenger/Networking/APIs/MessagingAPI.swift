@@ -43,12 +43,24 @@ class MessagingAPI {
         ]
 
         Log.debug("📤 Sending message to \(recipientId), suiteId: \(suiteId), msgNum: \(messageNumber)", category: "Network")
+        
+        #if DEBUG
+        Log.debug("📤 OUTGOING message details:", category: "Network")
+        Log.debug("   ephemeralPublicKey: \(ephemeralPublicKey.count) bytes", category: "Network")
+        let ephemeralPreview = ephemeralPublicKey.prefix(16).map { String(format: "%02x", $0) }.joined()
+        Log.debug("   ephemeralPublicKey preview: \(ephemeralPreview)...", category: "Network")
+        Log.debug("   messageNumber: \(messageNumber)", category: "Network")
+        Log.debug("   ciphertext length: \(content.count) chars", category: "Network")
+        Log.debug("   ciphertext preview: \(content.prefix(32))...", category: "Network")
+        #endif
 
         let response: SendMessageResponse = try await client.performRequest(
             endpoint: endpoint,
             method: "POST",
             body: requestBody,
-            requiresAuth: true
+            requiresAuth: true,
+            timeout: APIConstants.messageSendNetworkTimeout,  // Increased timeout for message sending
+            maxRetries: APIConstants.maxRetryAttempts  // Auto-retry on transient failures
         )
 
         return response
@@ -58,12 +70,6 @@ class MessagingAPI {
     /// GET /api/v1/messages?since=<id>&timeout=30
     func pollMessages(sinceId: String? = nil, timeout: Int = 30) async throws -> PollMessagesResponse {
         var endpoint = "/api/v1/messages"
-        
-        if let sinceId = sinceId {
-            Log.info("📡 Polling messages with since=\(sinceId)", category: "Network")
-        } else {
-            Log.info("📡 Polling messages without since parameter (first request)", category: "Network")
-        }
         
         // Build query parameters with proper URL encoding
         var queryItems: [URLQueryItem] = []
@@ -80,8 +86,6 @@ class MessagingAPI {
             }
         }
         
-        Log.info("📡 Final endpoint: \(endpoint)", category: "Network")
-        
         let response: PollMessagesResponse = try await client.performRequest(
             endpoint: endpoint,
             method: "GET",
@@ -91,12 +95,34 @@ class MessagingAPI {
             isLongPolling: true
         )
         
-        Log.info("📥 Received \(response.messages.count) messages", category: "Network")
+        // Only log if there are messages or errors
+        if !response.messages.isEmpty {
+            Log.info("📥 Received \(response.messages.count) messages", category: "Network")
+        }
+        
+        // Validate nextSince format
         if let nextSince = response.nextSince {
             Log.info("   nextSince: \(nextSince)", category: "Network")
+            
+            // Validate Redis Stream ID format: "timestamp-sequence" (exactly 2 numeric components)
+            let components = nextSince.split(separator: "-")
+            let isValid = components.count == 2 && 
+                          components[0].allSatisfy { $0.isNumber } &&
+                          components[1].allSatisfy { $0.isNumber }
+            
+            if !isValid {
+                Log.error("   ⚠️ nextSince has invalid format (expected timestamp-seq, got \(components.count) components)", category: "Network")
+                Log.error("   This looks like UUID! Server should return Redis Stream ID", category: "Network")
+            }
         } else {
             Log.info("   nextSince: nil", category: "Network")
+            
+            // Critical error if we have messages but no nextSince
+            if !response.messages.isEmpty {
+                Log.error("   ❌ CRITICAL: Messages returned but nextSince is nil!", category: "Network")
+            }
         }
+        
         Log.info("   hasMore: \(response.hasMore ?? false)", category: "Network")
         
         return response
@@ -135,10 +161,14 @@ private actor MessageSendThrottler {
     private var lastSendNs: UInt64?
 
     func waitForTurn(minIntervalMs: UInt64) async {
-        if !UIDevice.current.isBatteryMonitoringEnabled {
-            UIDevice.current.isBatteryMonitoringEnabled = true
+        // Access UIDevice on MainActor (required for Swift 6 concurrency)
+        let batteryLevel = await MainActor.run {
+            if !UIDevice.current.isBatteryMonitoringEnabled {
+                UIDevice.current.isBatteryMonitoringEnabled = true
+            }
+            return UIDevice.current.batteryLevel
         }
-        let batteryLevel = UIDevice.current.batteryLevel
+        
         let adjustedMinIntervalMs: UInt64
         if batteryLevel >= 0, batteryLevel < TrafficProtectionConfig.batteryLevelThreshold {
             adjustedMinIntervalMs = UInt64(Double(minIntervalMs) * TrafficProtectionConfig.lowBatterySendIntervalMultiplier)

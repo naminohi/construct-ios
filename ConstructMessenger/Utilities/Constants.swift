@@ -111,13 +111,18 @@ struct APIConstants {
     static let lastUsernameKey = "last_username"
 
     // API Timeouts
-    static let connectionTimeout: TimeInterval = 10.0
+    static let connectionTimeout: TimeInterval = 30.0  // URLSession timeout for regular requests
     static let messageAckTimeout: TimeInterval = 15.0  // Timeout for message ACK (increased for poor network)
     static let reconnectMaxDelay: TimeInterval = 30.0
     static let messageSendTimeout: TimeInterval = 20.0  // Timeout for stuck messages in sending state
+    static let messageSendNetworkTimeout: TimeInterval = 60.0  // Network timeout for POST /api/v1/messages (slow networks)
     static let queueCheckInterval: TimeInterval = 5.0   // How often to check for stuck messages
     static let longPollingTimeout: TimeInterval = 65.0  // > server timeout (60 max)
     static let longPollingResourceTimeout: TimeInterval = 70.0  // Buffer for long polling resource timeout
+    
+    // Retry Configuration
+    static let maxRetryAttempts: Int = 3  // Max retry attempts for transient failures
+    static let retryBaseDelay: TimeInterval = 1.0  // Base delay for exponential backoff (1s, 2s, 4s)
 
     // Server Info (для отображения в UI)
     static var serverInfo: String {
@@ -285,9 +290,10 @@ struct ChunkedDeliveryConfig {
 
 // MARK: - Long Polling Configuration
 struct LongPollingConfig {
-    // Add light jitter after successful polls to reduce timing correlation
-    static let successJitterMinMs: UInt64 = 100
-    static let successJitterMaxMs: UInt64 = 900
+    // Add jitter after successful polls to reduce timing correlation
+    // Reduced from 2-5s to 1-3s for faster response while maintaining privacy
+    static let successJitterMinMs: UInt64 = 1000   // 1 second
+    static let successJitterMaxMs: UInt64 = 3000   // 3 seconds
 
     // Polling behavior
     static let fullTimeoutSeconds: Int = 30

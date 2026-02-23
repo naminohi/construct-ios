@@ -158,8 +158,9 @@ struct MessageBubble: View {
     // MARK: - Regular Message View
     private var regularMessageView: some View {
         HStack(spacing: 8) {
-            // Selection checkbox in edit mode
-            if isEditMode {
+            // Selection checkbox in edit mode - positioned based on message direction
+            if isEditMode && !message.isSentByMe {
+                // Checkbox on LEFT for incoming messages
                 Button {
                     onSelect?(message)
                 } label: {
@@ -252,6 +253,19 @@ struct MessageBubble: View {
             if !message.isSentByMe {
                 Spacer(minLength: 60)
             }
+            
+            // Selection checkbox in edit mode - positioned based on message direction
+            if isEditMode && message.isSentByMe {
+                // Checkbox on RIGHT for outgoing messages
+                Button {
+                    onSelect?(message)
+                } label: {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .foregroundColor(isSelected ? .blue : .gray)
+                        .font(.title3)
+                }
+                .buttonStyle(.plain)
+            }
         }
         .contextMenu {
             // Context menu only available when not in edit mode
@@ -314,11 +328,6 @@ struct MessageBubble: View {
                 }
             }
         }
-        #if DEBUG
-        .sheet(isPresented: $showMessageInfo) {
-            MessageInfoSheet(message: message)
-        }
-        #endif
     }
 
     @ViewBuilder

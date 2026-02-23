@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import CoreData
 
 struct AccountSettingsView: View {
     @Environment(\.managedObjectContext) private var viewContext
@@ -17,7 +18,6 @@ struct AccountSettingsView: View {
     
     @State private var showingDeleteAccountWarning = false
     @State private var showingDeleteAccountConfirmation = false
-    @State private var showingResetSessionsWarning = false
     @State private var deleteAccountError: String?
     
     var body: some View {
@@ -74,30 +74,55 @@ struct AccountSettingsView: View {
             }
             
             
-            // MARK: - Danger Zone
+            // MARK: - Debug Tools (temporary)
             Section {
-                // Delete All Sessions
-                Button(role: .destructive) {
-                    showingResetSessionsWarning = true
+                // Reset Long-Polling Cursor
+                Button {
+                    UserDefaults.standard.removeObject(forKey: "construct.lastMessageId")
+                    Log.info("🔄 [DEBUG] Long-polling cursor reset - restart app to take effect", category: "AccountSettings")
                 } label: {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                                .foregroundColor(.orange)
-                            Text("Reset All Sessions")
-                                .fontWeight(.semibold)
-                            Spacer()
-                        }
-                        
-                        Text("Reset encrypted sessions with all contacts")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.leading)
-                    }
-                    .padding(.vertical, 4)
+                    Label("Reset Polling Cursor", systemImage: "arrow.clockwise.circle")
+                        .foregroundColor(.orange)
                 }
                 
-                // Delete Account
+                Button(role: .destructive) {
+                    // Clear local crypto keys without server call
+                    CryptoManager.shared.deleteAllCryptoKeys()
+                    KeychainManager.shared.deleteDeviceKeys()
+                    
+                    // Also clear Core Data
+                    let context = PersistenceController.shared.container.viewContext
+                    
+                    // Delete all chats and messages
+                    let chatFetchRequest: NSFetchRequest<Chat> = Chat.fetchRequest()
+                    if let chats = try? context.fetch(chatFetchRequest) {
+                        for chat in chats {
+                            context.delete(chat)
+                        }
+                    }
+                    
+                    // Delete all users
+                    let userFetchRequest: NSFetchRequest<User> = User.fetchRequest()
+                    if let users = try? context.fetch(userFetchRequest) {
+                        for user in users {
+                            context.delete(user)
+                        }
+                    }
+                    
+                    try? context.save()
+                    
+                    Log.info("🗑️ [DEBUG] Local keys and data cleared", category: "AccountSettings")
+                } label: {
+                    debugButtonLabel
+                }
+            } header: {
+                Text("DEBUG TOOLS")
+                    .foregroundColor(.orange)
+            }
+            
+            // MARK: - Danger Zone
+            Section {
+                // Delete Account (only truly destructive action)
                 Button(role: .destructive) {
                     showingDeleteAccountWarning = true
                 } label: {
@@ -124,33 +149,16 @@ struct AccountSettingsView: View {
                 Text("DANGER_ZONE")
                     .foregroundColor(.red)
             } footer: {
-                Text("These actions cannot be undone. Use with caution.")
+                Text("Permanent account deletion. Cannot be undone.")
                     .font(.caption)
             }
+
         }
         .navigationTitle("account")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             viewModel.setContext(viewContext)
             viewModel.loadUserInfo(from: authViewModel)
-        }
-        // MARK: - Reset Sessions Dialog
-        .confirmationDialog(
-            "Reset All Sessions?",
-            isPresented: $showingResetSessionsWarning,
-            titleVisibility: .visible
-        ) {
-            Button("Reset All", role: .destructive) {
-                Task {
-                    await ChatsViewModel().sendEndSessionToAllContacts(
-                        reason: "user_requested_reset_all"
-                    )
-                    Log.info("✅ All sessions reset by user", category: "AccountSettings")
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This will reset encrypted sessions with all your contacts. They will need to send you a message to re-establish encryption.")
         }
         // MARK: - Delete Account Dialog
         .alert("delete_account_warning_title", isPresented: $showingDeleteAccountWarning) {
@@ -191,6 +199,23 @@ struct AccountSettingsView: View {
                 viewModel.saveAvatar(image, authViewModel: authViewModel)
             })
         }
+    }
+    
+    // MARK: - Computed Properties
+    
+    private var debugButtonLabel: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Image(systemName: "key.slash.fill")
+                Text("Clear Local Keys (Debug)")
+                    .fontWeight(.medium)
+                Spacer()
+            }
+            Text("Removes all crypto keys and data from this device only. Server account remains.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .padding(.vertical, 4)
     }
 }
 
@@ -309,26 +334,24 @@ struct ImagePicker: UIViewControllerRepresentable {
     }
 }
 
-#if DEBUG
-#Preview {
-    let container = PreviewHelpers.createPreviewContainer()
-    let context = container.viewContext
-
-    // Create sample user
-    let user = User(context: context)
-    user.id = "user123"
-    user.username = "john_doe"
-    user.displayName = "John Doe"
-
-    try? context.save()
-
-    let authViewModel = AuthViewModel(context: context)
-    authViewModel.configureMockAuth()
-
-    return NavigationStack {
-        AccountSettingsView()
-            .environment(\.managedObjectContext, context)
-            .environmentObject(authViewModel)
-    }
-}
-#endif
+//#Preview {
+//    let container = PreviewHelpers.createPreviewContainer()
+//    let context = container.viewContext
+//
+//    // Create sample user
+//    let user = User(context: context)
+//    user.id = "user123"
+//    user.username = "john_doe"
+//    user.displayName = "John Doe"
+//
+//    try? context.save()
+//
+//    let authViewModel = AuthViewModel(context: context)
+//    authViewModel.configureMockAuth()
+//
+//    return NavigationStack {
+//        AccountSettingsView()
+//            .environment(\.managedObjectContext, context)
+//            .environmentObject(authViewModel)
+//    }
+//}

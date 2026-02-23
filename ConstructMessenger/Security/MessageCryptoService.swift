@@ -39,14 +39,40 @@ final class MessageCryptoService {
             throw CryptoManagerError.sessionNotFound
         }
 
+        #if DEBUG
+        Log.debug("🔐 ENCRYPT: Preparing to encrypt message", category: "CryptoManager")
+        Log.debug("   userId: \(userId)", category: "CryptoManager")
+        Log.debug("   sessionId: \(sessionId.prefix(16))...", category: "CryptoManager")
+        Log.debug("   suiteId: \(suiteId)", category: "CryptoManager")
+        Log.debug("   plaintext length: \(message.count) chars", category: "CryptoManager")
+        Log.debug("   plaintext preview: \(message.prefix(50))...", category: "CryptoManager")
+        #endif
+
         do {
             let rustComponents = try core.encryptMessage(sessionId: sessionId, plaintext: message)
+            
+            #if DEBUG
+            Log.debug("🔐 ENCRYPT: Rust core returned components", category: "CryptoManager")
+            Log.debug("   ephemeralPublicKey: \(rustComponents.ephemeralPublicKey.count) bytes", category: "CryptoManager")
+            let ephemeralPreview = rustComponents.ephemeralPublicKey.prefix(16).map { String(format: "%02x", $0) }.joined()
+            Log.debug("   ephemeralPublicKey preview: \(ephemeralPreview)...", category: "CryptoManager")
+            Log.debug("   messageNumber: \(rustComponents.messageNumber)", category: "CryptoManager")
+            Log.debug("   content (before padding): \(rustComponents.content.count) chars", category: "CryptoManager")
+            Log.debug("   content preview: \(rustComponents.content.prefix(32))...", category: "CryptoManager")
+            #endif
+            
             let components = EncryptedMessageComponents(
                 ephemeralPublicKey: Data(rustComponents.ephemeralPublicKey),
                 messageNumber: rustComponents.messageNumber,
                 content: MessagePadding.padCiphertextBase64(rustComponents.content),
                 suiteId: suiteId
             )
+            
+            #if DEBUG
+            Log.debug("🔐 ENCRYPT: After padding", category: "CryptoManager")
+            Log.debug("   content (after padding): \(components.content.count) chars", category: "CryptoManager")
+            #endif
+            
             saveSession(userId)
             return components
         } catch {

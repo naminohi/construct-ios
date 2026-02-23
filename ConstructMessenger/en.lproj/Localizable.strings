@@ -279,11 +279,11 @@
 "default_server" = "Default Server";
 "last_error" = "Last Connection Error";
 "delete_my_account" = "Delete My Account";
-"delete_account_warning" = "Deleting your account is permanent and cannot be undone. All your data, messages, and conversations will be permanently deleted. After server confirmation, your device keys will be erased and you will return to onboarding.";
+"delete_account_warning" = "Permanently deletes your account from the server. After successful deletion, all local encryption keys and app data will be automatically cleared from this device.";
 "delete_account_warning_title" = "Delete Account?";
-"delete_account_warning_message" = "This action cannot be undone. After server confirmation, your device keys will be erased and you will return to onboarding. You can cancel within a few seconds.";
-"delete_account_confirmation_message" = "This action is irreversible and will permanently delete all your data. You can cancel within a few seconds.";
-"delete_account_irreversible_warning" = "This action is irreversible. All your data will be permanently deleted and cannot be recovered.";
+"delete_account_warning_message" = "This will permanently delete your account from the server. After server confirms deletion, all local keys and data will be automatically cleared from this device. You cannot undo this action.";
+"delete_account_confirmation_message" = "Final confirmation: Your account will be deleted from the server, and all local encryption keys will be cleared after server confirmation. This action is irreversible.";
+"delete_account_irreversible_warning" = "This action is irreversible. All your data will be permanently deleted from the server and cannot be recovered.";
 "delete_account" = "Delete Account";
 "delete_account_countdown" = "Delete in %ds";
 "warning" = "Warning";"DANGER_ZONE" = "Danger Zone";

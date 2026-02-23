@@ -302,12 +302,19 @@ class CryptoManager {
 
     // MARK: - Key Management
 
-    /// Delete all saved cryptographic keys (e.g., on logout)
-    /// After calling this, the app must be restarted to generate new keys
+    /// Delete all saved cryptographic keys and sessions (e.g., on account deletion)
+    /// After calling this, the app will generate fresh keys on next registration
     func deleteAllCryptoKeys() {
+        Log.info("🗑️ Deleting all cryptographic data from Keychain...", category: "CryptoManager")
+        
+        // Delete private keys JSON (identity, signed prekey, signing key)
         KeychainManager.shared.deletePrivateKeysJson()
+        
+        // Delete all individual keys and ALL sessions
         KeychainManager.shared.deleteAllKeys()
-        Log.info("🗑️ All cryptographic keys deleted from Keychain", category: "CryptoManager")
+        
+        Log.info("✅ All cryptographic keys and sessions deleted from Keychain", category: "CryptoManager")
+        Log.info("ℹ️ On next app launch, fresh cryptographic keys will be generated", category: "CryptoManager")
     }
 
     // MARK: - Registration

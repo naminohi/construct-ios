@@ -272,6 +272,44 @@ class KeychainManager {
         delete(forKey: "identity_key")
         delete(forKey: "signed_prekey")
         delete(forKey: "signing_key")
+        delete(forKey: "userId")
+        deleteAllSessions()
+        Log.info("🗑️ All cryptographic keys and sessions deleted", category: "Keychain")
+    }
+    
+    /// Delete all saved sessions (sessions are stored with keys like "session_<contactId>")
+    /// Note: Keychain doesn't provide a way to list keys, so we delete by pattern
+    /// This is called during account deletion to ensure clean state
+    private func deleteAllSessions() {
+        // Since we can't enumerate Keychain keys, we'll delete all items with kSecClass = kSecClassGenericPassword
+        // and service matching our bundle identifier with "session_" prefix
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: Bundle.main.bundleIdentifier ?? "dev.construct.messenger"
+        ]
+        
+        // Get all items
+        let queryWithReturnData = query.merging([
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll
+        ]) { $1 }
+        
+        var result: AnyObject?
+        let status = SecItemCopyMatching(queryWithReturnData as CFDictionary, &result)
+        
+        if status == errSecSuccess, let items = result as? [[String: Any]] {
+            var deletedCount = 0
+            for item in items {
+                if let account = item[kSecAttrAccount as String] as? String,
+                   account.hasPrefix("session_") {
+                    delete(forKey: account)
+                    deletedCount += 1
+                }
+            }
+            if deletedCount > 0 {
+                Log.info("🗑️ Deleted \(deletedCount) session(s) from Keychain", category: "Keychain")
+            }
+        }
     }
 
     // MARK: - Session Persistence

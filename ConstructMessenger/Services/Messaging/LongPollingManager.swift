@@ -127,16 +127,23 @@ class LongPollingManager: ObservableObject {
     // MARK: - Private Implementation
     
     private func pollMessagesLoop() async {
+        Log.debug("🔁 Poll loop started", category: "LongPollingManager")
         while isPolling && !Task.isCancelled {
+            Log.debug("🔁 Poll loop iteration (isPolling=\(isPolling), cancelled=\(Task.isCancelled))", category: "LongPollingManager")
             do {
                 // Get current lastMessageId
                 let lastId = getLastMessageId?()
                 
-                // Log current state
+                // Validate format if present (only log if invalid)
                 if let lastId = lastId {
-                    Log.info("📡 Polling loop: lastMessageId=\(lastId)", category: "LongPollingManager")
-                } else {
-                    Log.info("📡 Polling loop: lastMessageId is nil (first request)", category: "LongPollingManager")
+                    let components = lastId.split(separator: "-")
+                    let isValid = components.count == 2 && 
+                                  components[0].allSatisfy { $0.isNumber } &&
+                                  components[1].allSatisfy { $0.isNumber }
+                    
+                    if !isValid {
+                        Log.error("⚠️ Invalid lastMessageId format: \(lastId) (expected timestamp-seq, got \(components.count) components)", category: "LongPollingManager")
+                    }
                 }
                 
                 // Poll for messages
@@ -145,8 +152,20 @@ class LongPollingManager: ObservableObject {
                     timeout: pollingTimeout
                 )
                 
-                // Log response summary
-                Log.info("📥 Poll response: \(response.messages.count) messages, nextSince=\(response.nextSince ?? "nil"), hasMore=\(response.hasMore ?? false)", category: "LongPollingManager")
+                // Log response summary (only log if interesting)
+                if !response.messages.isEmpty || response.nextSince != nil {
+                    Log.info("📥 Poll response: \(response.messages.count) messages, nextSince=\(response.nextSince ?? "nil"), hasMore=\(response.hasMore ?? false)", category: "LongPollingManager")
+                }
+                
+                // Validate nextSince format (Redis Stream ID: "timestamp-seq")
+                if let nextSince = response.nextSince {
+                    let parts = nextSince.split(separator: "-")
+                    if parts.count != 2 {
+                        Log.error("   ⚠️ nextSince format unexpected: \(nextSince) (expected: timestamp-seq)", category: "LongPollingManager")
+                    }
+                } else if !response.messages.isEmpty {
+                    Log.error("   ❌ BUG: Server returned \(response.messages.count) messages but nextSince is NULL!", category: "LongPollingManager")
+                }
                 
                 // Notify about received messages
                 if !response.messages.isEmpty {
@@ -170,6 +189,14 @@ class LongPollingManager: ObservableObject {
                     continue
                 }
 
+                // 🛡️ Rate limiting: if server returned messages but no nextSince, wait before next poll
+                // This prevents infinite loops when server has bugs
+                if !response.messages.isEmpty && response.nextSince == nil {
+                    Log.error("⚠️ Server bug detected (messages without nextSince) - rate limiting to 5s", category: "LongPollingManager")
+                    try? await Task.sleep(nanoseconds: 5_000_000_000)  // 5 seconds
+                    continue
+                }
+
                 // Add light jitter after successful poll to reduce timing correlation
                 if UIApplication.shared.applicationState == .active {
                     let jitterMs = UInt64.random(in: LongPollingConfig.successJitterMinMs...LongPollingConfig.successJitterMaxMs)
@@ -180,9 +207,13 @@ class LongPollingManager: ObservableObject {
 
                 // Optional idle delay (used for minimal polling when push is enabled)
                 if postSuccessDelaySeconds > 0 {
+                    Log.debug("⏳ Waiting \(postSuccessDelaySeconds)s before next poll (postSuccessDelay)", category: "LongPollingManager")
                     let delayNs = UInt64(postSuccessDelaySeconds * 1_000_000_000)
                     try? await Task.sleep(nanoseconds: delayNs)
                 }
+                
+                // Log that we're continuing the loop
+                Log.debug("🔄 Continuing polling loop (isPolling=\(isPolling), cancelled=\(Task.isCancelled))", category: "LongPollingManager")
                 
             } catch {
                 // Check if polling was explicitly stopped (e.g., app went to background)
@@ -212,5 +243,6 @@ class LongPollingManager: ObservableObject {
                 try? await Task.sleep(nanoseconds: delay)
             }
         }
+        Log.info("🛑 Poll loop exited (isPolling=\(isPolling), cancelled=\(Task.isCancelled))", category: "LongPollingManager")
     }
 }

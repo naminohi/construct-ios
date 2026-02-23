@@ -67,6 +67,7 @@ class RestAPIClient {
     ///   - requiresAuth: Whether to include Bearer token in Authorization header
     ///   - timeout: Optional custom timeout (for long-polling)
     ///   - isLongPolling: Whether this is a long-polling request (uses separate session)
+    ///   - maxRetries: Maximum number of retry attempts for transient failures (default: 0)
     /// - Returns: Decoded response of type T
     func performRequest<T: Decodable>(
         endpoint: String,
@@ -74,7 +75,104 @@ class RestAPIClient {
         body: [String: Any]? = nil,
         requiresAuth: Bool = false,
         timeout: TimeInterval? = nil,
-        isLongPolling: Bool = false
+        isLongPolling: Bool = false,
+        maxRetries: Int = 0
+    ) async throws -> T {
+        // Retry loop for transient failures
+        var retryAttempt = 0
+        let totalAttempts = maxRetries + 1  // Initial attempt + retries
+        
+        while retryAttempt < totalAttempts {
+            do {
+                // Try to perform the request
+                let result: T = try await performSingleRequest(
+                    endpoint: endpoint,
+                    method: method,
+                    body: body,
+                    requiresAuth: requiresAuth,
+                    timeout: timeout,
+                    isLongPolling: isLongPolling,
+                    attemptNumber: retryAttempt + 1,
+                    totalAttempts: totalAttempts
+                )
+                
+                // Success! Return result
+                if retryAttempt > 0 {
+                    Log.info("✅ Request succeeded after \(retryAttempt) retries", category: "Network")
+                }
+                return result
+                
+            } catch let error as NetworkError {
+                // Check if this is a retryable error
+                let isRetryable = shouldRetry(error: error)
+                
+                if isRetryable && retryAttempt < maxRetries {
+                    retryAttempt += 1
+                    let delay = calculateBackoff(attempt: retryAttempt)
+                    Log.info("🔄 Retry \(retryAttempt)/\(maxRetries) after \(delay)s delay (error: \(error))", category: "Network")
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                } else {
+                    // Not retryable or out of retries
+                    if maxRetries > 0 && !isRetryable {
+                        Log.error("❌ Error not retryable: \(error)", category: "Network")
+                    }
+                    throw error
+                }
+                
+            } catch {
+                // Non-NetworkError - don't retry
+                throw error
+            }
+        }
+        
+        // Should never reach here
+        throw NetworkError.connectionFailed
+    }
+    
+    /// Calculate exponential backoff delay
+    private func calculateBackoff(attempt: Int) -> TimeInterval {
+        // Exponential backoff: 1s, 2s, 4s, 8s...
+        let baseDelay = APIConstants.retryBaseDelay
+        let delay = baseDelay * pow(2.0, Double(attempt - 1))
+        return min(delay, 10.0)  // Cap at 10 seconds
+    }
+    
+    /// Determine if an error is retryable
+    private func shouldRetry(error: NetworkError) -> Bool {
+        switch error {
+        case .serverError(let message, _):
+            // Retry timeout and connectivity errors
+            if message.contains("timedOut") || 
+               message.contains("Cannot connect") ||
+               message.contains("timeout") {
+                return true
+            }
+            // Retry 5xx server errors (temporary)
+            if message.contains("Server error (status: 5") {
+                return true
+            }
+            return false
+        case .connectionFailed:
+            return true
+        case .disconnected:
+            return true  // Retry on connection loss
+        case .notConnected:
+            return false  // No internet - don't retry
+        case .decodingFailed, .encodingFailed, .invalidMessage:
+            return false  // Permanent errors
+        }
+    }
+    
+    /// Perform a single request attempt (without retry logic)
+    private func performSingleRequest<T: Decodable>(
+        endpoint: String,
+        method: String,
+        body: [String: Any]?,
+        requiresAuth: Bool,
+        timeout: TimeInterval?,
+        isLongPolling: Bool,
+        attemptNumber: Int,
+        totalAttempts: Int
     ) async throws -> T {
         let serverURLs = getServerURLsToTry()
         var lastError: Error?
@@ -82,7 +180,9 @@ class RestAPIClient {
         // Try each server URL until one works
         for (index, serverURL) in serverURLs.enumerated() {
             let fullURL = serverURL + endpoint
-            Log.info("🌐 REST API \(method) \(endpoint) (attempt \(index + 1)/\(serverURLs.count))", category: "Network")
+            
+            let retryPrefix = totalAttempts > 1 ? "[Retry \(attemptNumber)/\(totalAttempts)] " : ""
+            Log.info("🌐 \(retryPrefix)REST API \(method) \(endpoint) (server \(index + 1)/\(serverURLs.count))", category: "Network")
             Log.info("   Server URL: \(serverURL)", category: "Network")
             Log.info("   Full URL: \(fullURL)", category: "Network")
             

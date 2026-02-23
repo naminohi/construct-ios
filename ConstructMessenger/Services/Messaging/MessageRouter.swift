@@ -51,6 +51,20 @@ class MessageRouter {
         
         let otherUserId = message.from == currentUserId ? message.to : message.from
         
+        #if DEBUG
+        Log.debug("📥 INCOMING message RAW from server:", category: "MessageRouter")
+        Log.debug("   messageId: \(message.id)", category: "MessageRouter")
+        Log.debug("   from: \(message.from)", category: "MessageRouter")
+        Log.debug("   to: \(message.to)", category: "MessageRouter")
+        Log.debug("   messageNumber: \(message.messageNumber)", category: "MessageRouter")
+        Log.debug("   ephemeralPublicKey: \(message.ephemeralPublicKey.count) bytes", category: "MessageRouter")
+        let ephemeralPreview = message.ephemeralPublicKey.prefix(16).map { String(format: "%02x", $0) }.joined()
+        Log.debug("   ephemeralPublicKey preview: \(ephemeralPreview)...", category: "MessageRouter")
+        Log.debug("   content (padded): \(message.content.count) chars", category: "MessageRouter")
+        Log.debug("   content preview: \(message.content.prefix(32))...", category: "MessageRouter")
+        Log.debug("   isEndSession: \(message.isEndSession)", category: "MessageRouter")
+        #endif
+        
         // 1. Check if this is an END_SESSION control message
         if message.isEndSession {
             Log.info("🛑 Received END_SESSION from \(otherUserId)", category: "MessageRouter")

@@ -17,6 +17,9 @@ class ChatsViewModel: ObservableObject {
 
     // ✅ Store pending first messages from users we don't have sessions with yet
     private var pendingFirstMessages: [String: ChatMessage] = [:]  // [userId: firstMessage]
+    
+    // 🚦 Track users currently initializing session (prevents parallel init attempts)
+    private var usersInitializingSession: Set<String> = []
 
     // ✅ Chat ID to open programmatically (e.g., from deep link)
     @Published var chatToOpen: String?
@@ -263,32 +266,50 @@ class ChatsViewModel: ObservableObject {
         // Callback when public key bundle is needed for incoming message
         messageRouter.onPublicKeyBundleNeeded = { [weak self] userId, message in
             guard let self = self else { return }
-            Task {
+            
+            // 🚦 Check if already initializing session for this user
+            Task { @MainActor in
+                if self.usersInitializingSession.contains(userId) {
+                    Log.info("⏸️ Session init already in progress for \(userId.prefix(8))..., skipping duplicate attempt", category: "SessionInit")
+                    return
+                }
+                
+                // Mark as initializing
+                self.usersInitializingSession.insert(userId)
+                Log.debug("🔒 Locked session init for \(userId.prefix(8))...", category: "SessionInit")
+                
                 do {
                     let fetchStartTime = Date()
                     let publicKeyBundle = try await self.publicKeyBundleHandler.fetchPublicKeyWithRetry(userId: userId)
                     let fetchDuration = Date().timeIntervalSince(fetchStartTime)
                     Log.info("🔐 SESSION_STATE[bundle_fetched]: userId=\(userId.prefix(8))..., duration=\(String(format: "%.2f", fetchDuration))s", category: "SessionInit")
                     
-                    await MainActor.run {
-                        let success = self.publicKeyBundleHandler.handlePublicKeyBundleForIncomingMessage(
-                            publicKeyBundle,
-                            message: message
-                        ) { chat, message, decryptedContent in
-                            // Save the decrypted message
-                            self.saveMessage(for: chat, with: message, decryptedContent: decryptedContent)
-                        }
-                        
-                        if success {
-                            // Remove from pending messages
-                            self.pendingFirstMessages.removeValue(forKey: userId)
-                        } else {
-                            Log.info("🔄 Keeping message in pending for retry", category: "ChatsViewModel")
-                        }
+                    let success = self.publicKeyBundleHandler.handlePublicKeyBundleForIncomingMessage(
+                        publicKeyBundle,
+                        message: message
+                    ) { chat, message, decryptedContent in
+                        // Save the decrypted message
+                        self.saveMessage(for: chat, with: message, decryptedContent: decryptedContent)
                     }
+                    
+                    if success {
+                        // Remove from pending messages
+                        self.pendingFirstMessages.removeValue(forKey: userId)
+                    } else {
+                        Log.info("🔄 Keeping message in pending for retry", category: "ChatsViewModel")
+                    }
+                    
+                    // ✅ Always unlock after completion (success or failure)
+                    self.usersInitializingSession.remove(userId)
+                    Log.debug("🔓 Unlocked session init for \(userId.prefix(8))...", category: "SessionInit")
+                    
                 } catch {
                     Log.error("🔐 SESSION_STATE[bundle_fetch_failed]: userId=\(userId.prefix(8))..., error=\(error.localizedDescription)", category: "SessionInit")
                     Log.error("❌ Failed to fetch public key after retries: \(error.localizedDescription)", category: "ChatsViewModel")
+                    
+                    // ✅ Unlock even on error
+                    self.usersInitializingSession.remove(userId)
+                    Log.debug("🔓 Unlocked session init for \(userId.prefix(8))... (after error)", category: "SessionInit")
                 }
             }
         }
