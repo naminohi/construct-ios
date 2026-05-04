@@ -162,6 +162,7 @@ struct AccountSettingsView: View {
 
     private var appleBody: some View {
         @Bindable var viewModel = viewModel
+        
         return ScrollView {
             VStack(spacing: 30) {
                     appleAvatarHeader
@@ -303,17 +304,10 @@ struct AccountSettingsView: View {
                     }
                     .buttonStyle(.plain)
                 }
-
-                Text(NSLocalizedString("changes_encrypted_footer", comment: ""))
-                    .font(.caption)
-                    .foregroundStyle(Color(.secondaryLabel))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
+               
             }
             .padding(.bottom, 32)
         }
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .navigationTitle(NSLocalizedString("account", comment: ""))
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -364,7 +358,7 @@ struct AccountSettingsView: View {
         .padding(.vertical, 20)
         .padding(.horizontal, 16)
         .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .padding(.horizontal, 16)
     }
 
