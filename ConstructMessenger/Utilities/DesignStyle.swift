@@ -57,7 +57,7 @@ enum DesignStyle: String, CaseIterable {
 // MARK: - Environment Key
 
 private struct DesignStyleKey: EnvironmentKey {
-    static let defaultValue: DesignStyle = .terminal
+    static let defaultValue: DesignStyle = .apple
 }
 
 extension EnvironmentValues {

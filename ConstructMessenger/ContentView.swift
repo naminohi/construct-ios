@@ -13,7 +13,7 @@ struct ContentView: View {
     @Environment(DeepLinkHandler.self) var deepLinkHandler
     @Environment(\.managedObjectContext) private var viewContext
     @AppStorage("appTheme") private var appTheme: AppTheme = .dark
-    @AppStorage("designStyle") private var designStyle: DesignStyle = .terminal
+    @AppStorage("designStyle") private var designStyle: DesignStyle = .apple
 
     @State private var chatsViewModel = ChatsViewModel()
 

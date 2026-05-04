@@ -9,7 +9,7 @@ import SwiftUI
 
 struct AppearanceSettingsView: View {
     @AppStorage("appTheme") private var appTheme: AppTheme = .dark
-    @AppStorage("designStyle") private var designStyle: DesignStyle = .terminal
+    @AppStorage("designStyle") private var designStyle: DesignStyle = .apple
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {

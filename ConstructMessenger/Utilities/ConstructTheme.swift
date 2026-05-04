@@ -499,6 +499,10 @@ struct CTNavBar: View {
                 backAction: backAction,
                 trailingAction: trailingAction
             )
+            // Always suppress the system NavigationStack bar when using a custom bar.
+            // This is applied from inside the component so it works regardless of
+            // whether the parent view sets .toolbar(.hidden) explicitly.
+            .toolbar(.hidden, for: .navigationBar)
         }
     }
 }

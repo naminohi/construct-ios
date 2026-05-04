@@ -90,49 +90,46 @@ struct _APNavBar: View {
     var trailingAction: (() -> Void)? = nil
 
     var body: some View {
-        HStack(spacing: 4) {
-            if showBack {
-                Button(action: { backAction?() }) {
-                    HStack(spacing: 2) {
-                        Image(systemName: "chevron.left")
-                            .imageScale(.medium)
-                            .fontWeight(.semibold)
-                        Text(NSLocalizedString("back", comment: ""))
-                            .font(.body)
-                    }
-                    .foregroundStyle(.tint)
-                }
-                .buttonStyle(.plain)
-            }
-
-            Spacer()
-
+        ZStack {
+            // Centered title
             Text(title)
                 .font(.headline)
                 .foregroundStyle(.primary)
+                .lineLimit(1)
 
-            Spacer()
-
-            if let sym = trailingSymbol {
-                Button(action: { trailingAction?() }) {
-                    Image(systemName: sfSymbol(for: sym))
-                        .imageScale(.medium)
-                        .foregroundStyle(trailingColor)
+            HStack(spacing: 0) {
+                if showBack {
+                    Button(action: { backAction?() }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "chevron.left")
+                                .font(.body.weight(.semibold))
+                            Text(NSLocalizedString("back", comment: ""))
+                                .font(.body)
+                        }
+                        .foregroundStyle(.tint)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
-            } else {
-                // Reserve space so title stays centered when there's a back button but no trailing
-                Color.clear.frame(width: showBack ? 44 : 0)
+
+                Spacer()
+
+                if let sym = trailingSymbol {
+                    Button(action: { trailingAction?() }) {
+                        Image(systemName: sfSymbol(for: sym))
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(trailingColor)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(
-            ZStack(alignment: .bottom) {
-                Color(.systemBackground)
-                Divider().frame(maxWidth: .infinity, maxHeight: 0.5)
-            }
-        )
+        .padding(.vertical, 13)
+        .background(.bar)
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
     }
 }
 
@@ -150,7 +147,7 @@ struct _APTabBar: View {
                         Image(systemName: tabIcon(items[i].symbol, selected: i == selected))
                             .imageScale(.medium)
                             .symbolRenderingMode(.hierarchical)
-                        Text(items[i].label)
+                        Text(fullLabel(for: items[i].label))
                             .font(.system(size: 10))
                     }
                     .foregroundStyle(i == selected ? Color.accentColor : Color(.secondaryLabel))
@@ -170,7 +167,20 @@ struct _APTabBar: View {
 
     private func tabIcon(_ ctSymbol: String, selected: Bool) -> String {
         let base = sfSymbol(for: ctSymbol)
-        return selected ? "\(base).fill" : base
+        let filled = "\(base).fill"
+        // Some SF Symbols don't have a .fill variant — fall back gracefully.
+        return selected ? filled : base
+    }
+
+    /// Maps CT abbreviated tab labels to full localized names for Apple HIG display.
+    private func fullLabel(for ctLabel: String) -> String {
+        switch ctLabel {
+        case "MSG": return NSLocalizedString("tab_chats_full",    comment: "")
+        case "SYN": return NSLocalizedString("tab_synaps_full",   comment: "")
+        case "TEL": return NSLocalizedString("tab_calls_full",    comment: "")
+        case "CFG": return NSLocalizedString("tab_settings_full", comment: "")
+        default:    return ctLabel
+        }
     }
 }
 
@@ -203,7 +213,7 @@ struct _APSettingsRow: View {
 
     var body: some View {
         HStack {
-            Text(label)
+            Text(normalizedLabel)
                 .font(.body)
                 .foregroundStyle(isDestructive ? .red : (labelColor == Color.CT.textDim ? Color.primary : labelColor))
 
@@ -224,14 +234,23 @@ struct _APSettingsRow: View {
         .background(Color(.secondarySystemGroupedBackground))
     }
 
+    /// Converts ALL-CAPS strings (from CT views that call .uppercased()) to title case.
+    private var normalizedLabel: String {
+        let hasLower = label.contains(where: \.isLowercase)
+        guard !hasLower else { return label }
+        return label.localizedCapitalized
+    }
+
     private var appleValue: String {
-        // Map CT status symbols to readable equivalents
         switch value {
         case CTSymbol.ok:        return "✓"
         case CTSymbol.forward:   return ""
         case CTSymbol.error:     return "⚠"
         case CTSymbol.loading:   return "…"
-        default:                 return value
+        default:
+            // Also normalize value if all-caps
+            let hasLower = value.contains(where: \.isLowercase)
+            return hasLower ? value : value.localizedCapitalized
         }
     }
 }

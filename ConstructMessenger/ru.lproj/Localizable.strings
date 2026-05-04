@@ -343,6 +343,10 @@
 "design_terminal" = "Терминал";
 "design_apple" = "Apple HIG";
 "design_style_footer" = "Терминал: ASCII-эстетика с JetBrains Mono. Apple HIG: стандартный iOS-интерфейс с SF Symbols.";
+"tab_chats_full" = "Чаты";
+"tab_synaps_full" = "Синапсы";
+"tab_calls_full" = "Звонки";
+"tab_settings_full" = "Настройки";
 
 // Account deletion
 "delete_account_countdown" = "Удалить через %dс";

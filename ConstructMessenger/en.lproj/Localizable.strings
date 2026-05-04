@@ -129,6 +129,10 @@
 "design_terminal" = "Terminal";
 "design_apple" = "Apple HIG";
 "design_style_footer" = "Terminal: ASCII aesthetic with JetBrains Mono. Apple HIG: standard iOS look with SF Symbols.";
+"tab_chats_full" = "Chats";
+"tab_synaps_full" = "Synaps";
+"tab_calls_full" = "Calls";
+"tab_settings_full" = "Settings";
 
 // MARK: - Settings -> Network
 "connected" = "Connected";
