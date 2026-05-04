@@ -164,7 +164,7 @@ struct SettingsView: View {
 
     private var appleBody: some View {
         ScrollView {
-            VStack(spacing: 0) {
+            VStack(spacing: 30) {
                 Text(NSLocalizedString("settings", comment: ""))
                     .font(.largeTitle.weight(.bold))
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -233,6 +233,16 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.plain)
                     CTSep(style: .thin)
+                    NavigationLink(destination: DataStorageSettingsView()) {
+                        CTSettingsRow(
+                            label: NSLocalizedString("data_and_storage", comment: "").uppercased(),
+                            value: CTSymbol.forward,
+                            isAction: true,
+                            icon: CTSymbol.disk
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    CTSep(style: .thin)
                     NavigationLink(destination: AppearanceSettingsView()) {
                         CTSettingsRow(
                             label: NSLocalizedString("appearance", comment: "").uppercased(),
@@ -283,18 +293,6 @@ struct SettingsView: View {
                             value: CTSymbol.forward,
                             isAction: true,
                             icon: CTSymbol.drafts
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                ConstructSection {
-                    NavigationLink(destination: DataStorageSettingsView()) {
-                        CTSettingsRow(
-                            label: NSLocalizedString("data_and_storage", comment: "").uppercased(),
-                            value: CTSymbol.forward,
-                            isAction: true,
-                            icon: CTSymbol.disk
                         )
                     }
                     .buttonStyle(.plain)

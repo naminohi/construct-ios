@@ -16,6 +16,7 @@ struct AccountSettingsView: View {
     @Environment(SocialRecoveryService.self) private var socialRecoveryService
     @Environment(SettingsViewModel.self) private var viewModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.designStyle) private var designStyle
 
     @State private var showingImagePicker = false
     @State private var selectedPhotoItem: PhotosPickerItem?
@@ -42,6 +43,85 @@ struct AccountSettingsView: View {
 
     var body: some View {
         @Bindable var viewModel = viewModel
+        Group {
+            if designStyle == .apple {
+                appleBody
+            } else {
+                ctBody
+            }
+        }
+        .onAppear {
+            viewModel.setContext(viewContext)
+            viewModel.loadUserInfo(from: authViewModel)
+            originalUsername = viewModel.username
+        }
+        .onChange(of: viewModel.usernameSaved) { _, saved in
+            if saved { originalUsername = viewModel.username }
+        }
+        .sheet(isPresented: $showingExportBackup) {
+            ExportBackupView().environment(\.managedObjectContext, viewContext)
+        }
+        .sheet(isPresented: $showingImportBackup) { ImportBackupView() }
+        .sheet(isPresented: $showingSendNearby) {
+            SendBackupNearbyView().environment(\.managedObjectContext, viewContext)
+        }
+        .sheet(isPresented: $showingReceiveNearby) { ReceiveBackupNearbyView() }
+        .sheet(isPresented: $showingDeleteConfirmation) {
+            DeleteAccountConfirmationView(onDelete: { authViewModel.deleteAccount() }, onCancel: { showingDeleteConfirmation = false })
+                .environment(authViewModel)
+        }
+        .sheet(isPresented: $showingAvatarViewer) {
+            AvatarViewerSheet(image: viewModel.profileImage, onChangeAvatar: {
+                showingAvatarViewer = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showingImagePicker = true }
+            })
+        }
+        .photosPicker(isPresented: $showingImagePicker, selection: $selectedPhotoItem, matching: .images)
+        .onChange(of: selectedPhotoItem) { _, newItem in
+            guard let newItem else { return }
+            Task {
+                if let data = try? await newItem.loadTransferable(type: Data.self),
+                   let image = UIImage(data: data) {
+                    await MainActor.run { imageToCrop = image; showingCropView = true }
+                }
+                selectedPhotoItem = nil
+            }
+        }
+        .sheet(isPresented: $showingCropView) {
+            if let img = imageToCrop {
+                ImageCropView(
+                    image: img,
+                    onConfirm: { cropped in showingCropView = false; imageToCrop = nil; viewModel.saveAvatar(cropped, authViewModel: authViewModel) },
+                    onCancel: { showingCropView = false; imageToCrop = nil }
+                )
+            }
+        }
+        .alert(LocalizedStringKey("logout_confirm_title"), isPresented: $showingLogoutConfirm) {
+            Button(LocalizedStringKey("logout_confirm_action"), role: .destructive) { authViewModel.logout() }
+            Button(LocalizedStringKey("cancel"), role: .cancel) { }
+        } message: { Text(LocalizedStringKey("logout_confirm_message")) }
+        .alert(LocalizedStringKey("logout_all_confirm_title"), isPresented: $showingLogoutAllConfirm) {
+            Button(LocalizedStringKey("logout_all_confirm_action"), role: .destructive) { authViewModel.logoutAllDevices() }
+            Button(LocalizedStringKey("cancel"), role: .cancel) { }
+        } message: { Text(LocalizedStringKey("logout_all_confirm_message")) }
+        .alert(LocalizedStringKey("logout_no_backup_title"), isPresented: $showingNoBackupWarning) {
+            Button(LocalizedStringKey("logout_no_backup_setup_action")) { showingRecoverySetup = true }
+            Button(LocalizedStringKey("logout_no_backup_proceed_action"), role: .destructive) {
+                if pendingLogoutAll { authViewModel.logoutAllDevices() } else { authViewModel.logout() }
+            }
+            Button(LocalizedStringKey("cancel"), role: .cancel) { }
+        } message: { Text(LocalizedStringKey("logout_no_backup_message")) }
+        .sheet(isPresented: $showingRecoverySetup) {
+            RecoverySetupView().environment(recoveryVM).environment(authViewModel)
+        }
+        .sheet(isPresented: $showingSocialRecoverySetup) {
+            SocialRecoverySetupView().environment(socialRecoveryService)
+        }
+    }
+
+    // MARK: - CT Body
+
+    private var ctBody: some View {
         VStack(spacing: 0) {
             CTNavBar(
                 title: NSLocalizedString("account", comment: ""),
@@ -76,101 +156,284 @@ struct AccountSettingsView: View {
         #if os(iOS)
         .toolbar(.hidden, for: .navigationBar)
         #endif
-        .onAppear {
-            viewModel.setContext(viewContext)
-            viewModel.loadUserInfo(from: authViewModel)
-            originalUsername = viewModel.username
-        }
-        .onChange(of: viewModel.usernameSaved) { _, saved in
-            if saved { originalUsername = viewModel.username }
-        }
-        .sheet(isPresented: $showingExportBackup) {
-            ExportBackupView()
-                .environment(\.managedObjectContext, viewContext)
-        }
-        .sheet(isPresented: $showingImportBackup) {
-            ImportBackupView()
-        }
-        .sheet(isPresented: $showingSendNearby) {
-            SendBackupNearbyView()
-                .environment(\.managedObjectContext, viewContext)
-        }
-        .sheet(isPresented: $showingReceiveNearby) {
-            ReceiveBackupNearbyView()
-        }
-        .sheet(isPresented: $showingDeleteConfirmation) {
-            DeleteAccountConfirmationView(onDelete: { authViewModel.deleteAccount() },
-                                         onCancel: { showingDeleteConfirmation = false })
-            .environment(authViewModel)
-        }
-        .sheet(isPresented: $showingAvatarViewer) {
-            AvatarViewerSheet(image: viewModel.profileImage, onChangeAvatar: {
-                showingAvatarViewer = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showingImagePicker = true }
-            })
-        }
-        .photosPicker(isPresented: $showingImagePicker, selection: $selectedPhotoItem, matching: .images)
-        .onChange(of: selectedPhotoItem) { _, newItem in
-            guard let newItem else { return }
-            Task {
-                if let data = try? await newItem.loadTransferable(type: Data.self),
-                   let image = UIImage(data: data) {
-                    await MainActor.run { imageToCrop = image; showingCropView = true }
+    }
+
+    // MARK: - Apple Body
+
+    private var appleBody: some View {
+        @Bindable var viewModel = viewModel
+        return ScrollView {
+            VStack(spacing: 0) {
+                Text(NSLocalizedString("account", comment: ""))
+                    .font(.largeTitle.weight(.bold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+                    .padding(.bottom, 16)
+
+                appleAvatarHeader
+
+                ConstructSection {
+                    appleEditRow(
+                        label: NSLocalizedString("username", comment: ""),
+                        isEditing: $isEditingUsername,
+                        value: $viewModel.username,
+                        icon: "at",
+                        maxLength: MessageSizeLimits.maxUsernameCharacters,
+                        isSaving: viewModel.isSavingUsername,
+                        errorMessage: viewModel.usernameSaveError
+                    ) { Task { await viewModel.saveUsername(viewModel.username, authViewModel: authViewModel) } }
+
+                    CTSep(style: .thin)
+
+                    appleEditRow(
+                        label: NSLocalizedString("display_name", comment: ""),
+                        isEditing: $isEditingDisplayName,
+                        value: $viewModel.displayName,
+                        icon: "person",
+                        maxLength: MessageSizeLimits.maxDisplayNameCharacters
+                    ) { viewModel.saveDisplayName(viewModel.displayName, authViewModel: authViewModel) }
+
+                    CTSep(style: .thin)
+
+                    HStack(spacing: 14) {
+                        Image(systemName: "magnifyingglass")
+                            .imageScale(.medium)
+                            .frame(width: 28, alignment: .center)
+                            .foregroundStyle(Color(.secondaryLabel))
+                        Text(NSLocalizedString("searchable_toggle_title", comment: ""))
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Text(viewModel.isDiscoverable
+                             ? NSLocalizedString("searchable_indicator", comment: "")
+                             : NSLocalizedString("searchable_indicator_off", comment: ""))
+                            .font(.caption)
+                            .foregroundStyle(viewModel.isDiscoverable ? .green : Color(.secondaryLabel))
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
                 }
-                selectedPhotoItem = nil
+
+                ConstructSection {
+                    HStack(spacing: 14) {
+                        Image(systemName: "person.text.rectangle")
+                            .imageScale(.medium)
+                            .frame(width: 28, alignment: .center)
+                            .foregroundStyle(Color(.secondaryLabel))
+                        Text(NSLocalizedString("user_id", comment: ""))
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        let uid = viewModel.userId
+                        Text(uid.count > 12 ? "\(uid.prefix(8))…\(uid.suffix(2))" : uid)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(Color(.secondaryLabel))
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+
+                    CTSep(style: .thin)
+
+                    NavigationLink(destination: DevicesView()) {
+                        CTSettingsRow(
+                            label: NSLocalizedString("linked_devices", comment: "").uppercased(),
+                            isAction: true,
+                            icon: "laptopcomputer"
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    CTSep(style: .thin)
+
+                    Button { showingSocialRecoverySetup = true } label: {
+                        CTSettingsRow(
+                            label: (socialRecoveryService.isConfigured
+                                ? NSLocalizedString("social_recovery_row_active", comment: "")
+                                : NSLocalizedString("social_recovery_row_inactive", comment: "")).uppercased(),
+                            isAction: true,
+                            icon: "person.2"
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    CTSep(style: .thin)
+
+                    Button { handleLogoutTap(allDevices: false) } label: {
+                        CTSettingsRow(
+                            label: NSLocalizedString("logout_row", comment: "").uppercased(),
+                            isAction: true,
+                            icon: "rectangle.portrait.and.arrow.right"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                ConstructSection {
+                    Button { showingExportBackup = true } label: {
+                        CTSettingsRow(label: NSLocalizedString("export_backup", comment: "").uppercased(), isAction: true, icon: "arrow.up.doc")
+                    }
+                    .buttonStyle(.plain)
+                    CTSep(style: .thin)
+                    Button { showingImportBackup = true } label: {
+                        CTSettingsRow(label: NSLocalizedString("import_backup", comment: "").uppercased(), isAction: true, icon: "arrow.down.doc")
+                    }
+                    .buttonStyle(.plain)
+                    CTSep(style: .thin)
+                    Button { showingSendNearby = true } label: {
+                        CTSettingsRow(label: NSLocalizedString("transfer_send_nearby", comment: "").uppercased(), isAction: true, icon: "wifi")
+                    }
+                    .buttonStyle(.plain)
+                    CTSep(style: .thin)
+                    Button { showingReceiveNearby = true } label: {
+                        CTSettingsRow(label: NSLocalizedString("transfer_receive_nearby", comment: "").uppercased(), isAction: true, icon: "wifi.slash")
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                ConstructSection {
+                    Button { handleLogoutTap(allDevices: true) } label: {
+                        CTSettingsRow(
+                            label: NSLocalizedString("logout_all_row", comment: "").uppercased(),
+                            isAction: true,
+                            isDestructive: true,
+                            icon: "rectangle.portrait.and.arrow.right.fill"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    CTSep(style: .thin)
+                    Button { showingDeleteConfirmation = true } label: {
+                        CTSettingsRow(
+                            label: NSLocalizedString("delete_account_row", comment: "").uppercased(),
+                            isAction: true,
+                            isDestructive: true,
+                            icon: "trash"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Text(NSLocalizedString("changes_encrypted_footer", comment: ""))
+                    .font(.caption)
+                    .foregroundStyle(Color(.secondaryLabel))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
             }
+            .padding(.bottom, 32)
         }
-        .sheet(isPresented: $showingCropView) {
-            if let img = imageToCrop {
-                ImageCropView(
-                    image: img,
-                    onConfirm: { cropped in
-                        showingCropView = false; imageToCrop = nil
-                        viewModel.saveAvatar(cropped, authViewModel: authViewModel)
-                    },
-                    onCancel: { showingCropView = false; imageToCrop = nil }
-                )
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+    }
+
+    // MARK: - Apple Avatar Header
+
+    private var appleAvatarHeader: some View {
+        @Bindable var viewModel = viewModel
+        return VStack(spacing: 10) {
+            let initials: String = {
+                let name = viewModel.displayName.isEmpty ? viewModel.userId : viewModel.displayName
+                let parts = name.split(separator: " ")
+                if parts.count >= 2 { return String(parts[0].prefix(1) + parts[1].prefix(1)).uppercased() }
+                return String(name.prefix(2)).uppercased()
+            }()
+            let img: Image? = viewModel.profileImage.map { Image(uiImage: $0) }
+            CTHexAvatar(initials: initials, image: img, size: .large)
+                .onTapGesture {
+                    if viewModel.profileImage != nil { showingAvatarViewer = true }
+                    else { showingImagePicker = true }
+                }
+            VStack(spacing: 4) {
+                if !viewModel.displayName.isEmpty {
+                    Text(viewModel.displayName)
+                        .font(.title2.weight(.semibold))
+                }
+                if !viewModel.username.isEmpty {
+                    Text("@\(viewModel.username)")
+                        .font(.subheadline)
+                        .foregroundStyle(Color(.secondaryLabel))
+                }
             }
-        }
-        // Sign out this device
-        .alert(LocalizedStringKey("logout_confirm_title"), isPresented: $showingLogoutConfirm) {
-            Button(LocalizedStringKey("logout_confirm_action"), role: .destructive) {
-                authViewModel.logout()
+            Button { showingImagePicker = true } label: {
+                Text(NSLocalizedString("change_photo", comment: ""))
+                    .font(.footnote)
             }
-            Button(LocalizedStringKey("cancel"), role: .cancel) { }
-        } message: {
-            Text(LocalizedStringKey("logout_confirm_message"))
+            .buttonStyle(.plain)
         }
-        // Sign out all devices
-        .alert(LocalizedStringKey("logout_all_confirm_title"), isPresented: $showingLogoutAllConfirm) {
-            Button(LocalizedStringKey("logout_all_confirm_action"), role: .destructive) {
-                authViewModel.logoutAllDevices()
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 20)
+        .padding(.horizontal, 16)
+        .background(Color(.secondarySystemGroupedBackground))
+        .padding(.bottom, 8)
+    }
+
+    // MARK: - Apple Edit Row
+
+    private func appleEditRow(
+        label: String,
+        isEditing: Binding<Bool>,
+        value: Binding<String>,
+        icon: String? = nil,
+        maxLength: Int? = nil,
+        isSaving: Bool = false,
+        errorMessage: String? = nil,
+        onCommit: @escaping () -> Void = {}
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                if !isEditing.wrappedValue { isEditing.wrappedValue = true }
+            } label: {
+                HStack(spacing: 14) {
+                    if let icon {
+                        Image(systemName: icon)
+                            .imageScale(.medium)
+                            .frame(width: 28, alignment: .center)
+                            .foregroundStyle(Color(.secondaryLabel))
+                    }
+                    Text(label)
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    if isEditing.wrappedValue {
+                        TextField("", text: value)
+                            .multilineTextAlignment(.trailing)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                            .onSubmit { onCommit(); isEditing.wrappedValue = false }
+                            .onChange(of: value.wrappedValue) { _, newValue in
+                                if let max = maxLength, newValue.count > max {
+                                    value.wrappedValue = String(newValue.prefix(max))
+                                }
+                            }
+                            .frame(maxWidth: 160)
+                        Button {
+                            onCommit()
+                            isEditing.wrappedValue = false
+                        } label: {
+                            if isSaving {
+                                ProgressView().scaleEffect(0.8)
+                            } else {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(Color.accentColor)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        Text(value.wrappedValue.isEmpty ? "—" : value.wrappedValue)
+                            .foregroundStyle(Color(.secondaryLabel))
+                        Image(systemName: "chevron.right")
+                            .imageScale(.small)
+                            .foregroundStyle(Color(.tertiaryLabel))
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .contentShape(Rectangle())
             }
-            Button(LocalizedStringKey("cancel"), role: .cancel) { }
-        } message: {
-            Text(LocalizedStringKey("logout_all_confirm_message"))
-        }
-        // No backup warning
-        .alert(LocalizedStringKey("logout_no_backup_title"), isPresented: $showingNoBackupWarning) {
-            Button(LocalizedStringKey("logout_no_backup_setup_action")) {
-                showingRecoverySetup = true
+            .buttonStyle(.plain)
+            if let err = errorMessage, !err.isEmpty {
+                Text(err)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 6)
             }
-            Button(LocalizedStringKey("logout_no_backup_proceed_action"), role: .destructive) {
-                if pendingLogoutAll { authViewModel.logoutAllDevices() }
-                else { authViewModel.logout() }
-            }
-            Button(LocalizedStringKey("cancel"), role: .cancel) { }
-        } message: {
-            Text(LocalizedStringKey("logout_no_backup_message"))
-        }
-        .sheet(isPresented: $showingRecoverySetup) {
-            RecoverySetupView()
-                .environment(recoveryVM)
-                .environment(authViewModel)
-        }
-        .sheet(isPresented: $showingSocialRecoverySetup) {
-            SocialRecoverySetupView()
-                .environment(socialRecoveryService)
         }
     }
 
