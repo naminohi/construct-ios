@@ -315,7 +315,7 @@ struct AccountSettingsView: View {
         }
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .navigationTitle(NSLocalizedString("account", comment: ""))
-        .navigationBarTitleDisplayMode(.large)
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     // MARK: - Apple Avatar Header
