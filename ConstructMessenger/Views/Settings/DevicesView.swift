@@ -15,6 +15,7 @@ struct DevicesView: View {
 
     @Environment(AuthViewModel.self) private var authViewModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.designStyle) private var designStyle
 
     @State private var devices: [AuthServiceClient.LinkedDevice] = []
     @State private var isLoading = false
@@ -29,6 +30,77 @@ struct DevicesView: View {
     @State private var showSignOutAllConfirm = false
 
     var body: some View {
+        Group {
+            if designStyle == .apple { appleBody } else { ctBody }
+        }
+        .refreshable { await loadDevices() }
+        .task { await loadDevices() }
+
+        // MARK: Sheets
+        .sheet(isPresented: $showingQRSheet) { DeviceLinkQRSheet() }
+        .sheet(isPresented: $showSendHistorySync) {
+            SendBackupNearbyView(mode: .historySync)
+                .environment(\.managedObjectContext, PersistenceController.shared.container.viewContext)
+        }
+        #if os(iOS)
+        .sheet(isPresented: $showingScanner) { DeviceLinkScanView() }
+        #endif
+
+        // MARK: Alerts — revoke device
+        .alert(LocalizedStringKey("device_revoke_confirm_title"), isPresented: $showRevokeConfirm) {
+            if let device = deviceToRevoke {
+                Button(LocalizedStringKey("device_revoke"), role: .destructive) {
+                    Task { await revokeDevice(device) }
+                }
+            }
+            Button(LocalizedStringKey("cancel"), role: .cancel) {}
+        } message: {
+            if let name = deviceToRevoke?.name {
+                Text(String(format: NSLocalizedString("device_revoke_confirm_message", comment: ""), name))
+            }
+        }
+
+        // MARK: Alert — sign out this device
+        .alert(LocalizedStringKey("sign_out_this_device"), isPresented: $showSignOutConfirm) {
+            Button(LocalizedStringKey("sign_out"), role: .destructive) {
+                authViewModel.logout()
+            }
+            Button(LocalizedStringKey("cancel"), role: .cancel) {}
+        } message: {
+            Text(LocalizedStringKey("sign_out_this_device_message"))
+        }
+
+        // MARK: Alert — sign out other devices
+        .alert(LocalizedStringKey("sign_out_other_devices"), isPresented: $showSignOutOthersConfirm) {
+            Button(LocalizedStringKey("sign_out_other_devices"), role: .destructive) {
+                Task { await revokeAllOtherDevices() }
+            }
+            Button(LocalizedStringKey("cancel"), role: .cancel) {}
+        } message: {
+            Text(LocalizedStringKey("sign_out_other_devices_message"))
+        }
+
+        // MARK: Alert — sign out all devices
+        .alert(LocalizedStringKey("sign_out_all_devices"), isPresented: $showSignOutAllConfirm) {
+            Button(LocalizedStringKey("sign_out_all_devices"), role: .destructive) {
+                authViewModel.logoutAllDevices()
+            }
+            Button(LocalizedStringKey("cancel"), role: .cancel) {}
+        } message: {
+            Text(LocalizedStringKey("sign_out_all_devices_message"))
+        }
+
+        // MARK: Error alert
+        .alert(LocalizedStringKey("error"), isPresented: .constant(errorMessage != nil)) {
+            Button(LocalizedStringKey("ok"), role: .cancel) { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "")
+        }
+    }
+
+    // MARK: - CT Body
+
+    private var ctBody: some View {
         VStack(spacing: 0) {
             CTNavBar(
                 title: NSLocalizedString("linked_devices", comment: ""),
@@ -139,85 +211,114 @@ struct DevicesView: View {
         #if os(iOS)
         .toolbar(.hidden, for: .navigationBar)
         #endif
-        .refreshable { await loadDevices() }
-        .task { await loadDevices() }
+    }
 
-        // MARK: Sheets
-        .sheet(isPresented: $showingQRSheet) { DeviceLinkQRSheet() }
-        .sheet(isPresented: $showSendHistorySync) {
-            SendBackupNearbyView(mode: .historySync)
-                .environment(\.managedObjectContext, PersistenceController.shared.container.viewContext)
-        }
-        #if os(iOS)
-        .sheet(isPresented: $showingScanner) { DeviceLinkScanView() }
-        #endif
+    // MARK: - Apple Body
 
-        // MARK: Confirmations — revoke device
-        .confirmationDialog(
-            LocalizedStringKey("device_revoke_confirm_title"),
-            isPresented: $showRevokeConfirm,
-            titleVisibility: .visible
-        ) {
-            if let device = deviceToRevoke {
-                Button(LocalizedStringKey("device_revoke"), role: .destructive) {
-                    Task { await revokeDevice(device) }
+    private var appleBody: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                CTNavBar(
+                    title: NSLocalizedString("linked_devices", comment: ""),
+                    showBack: true,
+                    backAction: { dismiss() }
+                )
+
+                if isLoading && devices.isEmpty {
+                    ConstructSection {
+                        HStack { Spacer(); ProgressView(); Spacer() }.padding()
+                    }
+                } else {
+                    if let current = devices.first(where: { $0.isCurrent }) {
+                        ConstructSection(header: NSLocalizedString("this_device", comment: "")) {
+                            DeviceRow(device: current, isCurrent: true, onRevoke: {})
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 14)
+                        }
+                    }
+
+                    let others = devices.filter { !$0.isCurrent }
+                    if !others.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ConstructSection(header: NSLocalizedString("other_devices", comment: "")) {
+                                ForEach(Array(others.enumerated()), id: \.element.id) { index, device in
+                                    if index > 0 { ConstructRowDivider(indent: 52) }
+                                    DeviceRow(device: device, isCurrent: false) {
+                                        deviceToRevoke = device
+                                        showRevokeConfirm = true
+                                    }
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 14)
+                                }
+                            }
+                            if others.count > 1 {
+                                Text(LocalizedStringKey("other_devices_hint"))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 20)
+                            }
+                        }
+                    }
+
+                    // MARK: - Link / Approve
+                    VStack(alignment: .leading, spacing: 6) {
+                        ConstructSection {
+                            ConstructButtonRow(icon: "plus.circle.fill", title: LocalizedStringKey("link_new_device")) {
+                                showingQRSheet = true
+                            }
+                            #if os(iOS)
+                            ConstructRowDivider(indent: 52)
+                            ConstructButtonRow(icon: "qrcode.viewfinder", title: LocalizedStringKey("device_scan_to_approve")) {
+                                showingScanner = true
+                            }
+                            #endif
+                        }
+                        Text(LocalizedStringKey("linked_devices_hint"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 20)
+                    }
+
+                    // MARK: - History Transfer
+                    VStack(alignment: .leading, spacing: 6) {
+                        ConstructSection {
+                            ConstructButtonRow(icon: "arrow.right.circle.fill", title: LocalizedStringKey("transfer_history_row")) {
+                                showSendHistorySync = true
+                            }
+                        }
+                        Text(LocalizedStringKey("transfer_history_hint"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 20)
+                    }
+
+                    // MARK: - Session management
+                    VStack(alignment: .leading, spacing: 6) {
+                        ConstructSection(header: NSLocalizedString("session_management", comment: "")) {
+                            ConstructActionRow(icon: "rectangle.portrait.and.arrow.right", title: LocalizedStringKey("sign_out_this_device"), role: .destructive) {
+                                showSignOutConfirm = true
+                            }
+                            if devices.filter({ !$0.isCurrent }).count > 0 {
+                                ConstructRowDivider(indent: 52)
+                                ConstructActionRow(icon: "xmark.circle.fill", title: LocalizedStringKey("sign_out_other_devices"), role: .destructive) {
+                                    showSignOutOthersConfirm = true
+                                }
+                            }
+                            ConstructRowDivider(indent: 52)
+                            ConstructActionRow(icon: "xmark.circle.fill", title: LocalizedStringKey("sign_out_all_devices"), role: .destructive) {
+                                showSignOutAllConfirm = true
+                            }
+                        }
+                        Text(LocalizedStringKey("sign_out_all_hint"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 20)
+                    }
                 }
             }
-            Button(LocalizedStringKey("cancel"), role: .cancel) {}
-        } message: {
-            if let name = deviceToRevoke?.name {
-                Text(String(format: NSLocalizedString("device_revoke_confirm_message", comment: ""), name))
-            }
+            .padding(.vertical, 20)
         }
-
-        // MARK: Confirmations — sign out this device
-        .confirmationDialog(
-            LocalizedStringKey("sign_out_this_device"),
-            isPresented: $showSignOutConfirm,
-            titleVisibility: .visible
-        ) {
-            Button(LocalizedStringKey("sign_out"), role: .destructive) {
-                authViewModel.logout()
-            }
-            Button(LocalizedStringKey("cancel"), role: .cancel) {}
-        } message: {
-            Text(LocalizedStringKey("sign_out_this_device_message"))
-        }
-
-        // MARK: Confirmations — sign out other devices
-        .confirmationDialog(
-            LocalizedStringKey("sign_out_other_devices"),
-            isPresented: $showSignOutOthersConfirm,
-            titleVisibility: .visible
-        ) {
-            Button(LocalizedStringKey("sign_out_other_devices"), role: .destructive) {
-                Task { await revokeAllOtherDevices() }
-            }
-            Button(LocalizedStringKey("cancel"), role: .cancel) {}
-        } message: {
-            Text(LocalizedStringKey("sign_out_other_devices_message"))
-        }
-
-        // MARK: Confirmations — sign out all devices
-        .confirmationDialog(
-            LocalizedStringKey("sign_out_all_devices"),
-            isPresented: $showSignOutAllConfirm,
-            titleVisibility: .visible
-        ) {
-            Button(LocalizedStringKey("sign_out_all_devices"), role: .destructive) {
-                authViewModel.logoutAllDevices()
-            }
-            Button(LocalizedStringKey("cancel"), role: .cancel) {}
-        } message: {
-            Text(LocalizedStringKey("sign_out_all_devices_message"))
-        }
-
-        // MARK: Error alert
-        .alert(LocalizedStringKey("error"), isPresented: .constant(errorMessage != nil)) {
-            Button(LocalizedStringKey("ok"), role: .cancel) { errorMessage = nil }
-        } message: {
-            Text(errorMessage ?? "")
-        }
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
     }
 
     // MARK: - Network
@@ -263,7 +364,17 @@ private struct DeviceRow: View {
     let isCurrent: Bool
     let onRevoke: () -> Void
 
+    @Environment(\.designStyle) private var designStyle
+
     var body: some View {
+        if designStyle == .apple {
+            appleContent
+        } else {
+            ctContent
+        }
+    }
+
+    private var ctContent: some View {
         HStack(spacing: 12) {
             CTRowIcon(asciiPlatformIcon,
                       color: isCurrent ? Color.CT.accent : Color.CT.textDim)
@@ -301,12 +412,59 @@ private struct DeviceRow: View {
         }
     }
 
+    private var appleContent: some View {
+        HStack(spacing: 12) {
+            Image(systemName: sfPlatformIcon)
+                .font(.system(size: 22))
+                .foregroundStyle(isCurrent ? Color.accentColor : Color(.secondaryLabel))
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(device.name)
+                    .font(.body.weight(.semibold))
+
+                if isCurrent {
+                    Label {
+                        Text(LocalizedStringKey("device_active_now"))
+                    } icon: {
+                        Circle().fill(.green).frame(width: 8, height: 8)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(Color(.secondaryLabel))
+                } else {
+                    Text(lastSeenText)
+                        .font(.caption)
+                        .foregroundStyle(Color(.secondaryLabel))
+                }
+            }
+
+            Spacer()
+
+            if !isCurrent {
+                Button(role: .destructive, action: onRevoke) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.red)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
     private var asciiPlatformIcon: String {
         switch device.platform {
         case .ios:     return CTSymbol.deviceIOS
         case .desktop: return CTSymbol.deviceMac
         case .android: return CTSymbol.deviceAndroid
         default:       return CTSymbol.deviceGeneric
+        }
+    }
+
+    private var sfPlatformIcon: String {
+        switch device.platform {
+        case .ios:     return "iphone"
+        case .desktop: return "desktopcomputer"
+        case .android: return "square.grid.2x2.fill"
+        default:       return "questionmark.circle"
         }
     }
 

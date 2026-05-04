@@ -13,6 +13,7 @@ struct NetworkSettingsView: View {
     }
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.designStyle) private var designStyle
     private var connectionManager = ConnectionStatusManager.shared
     private var streamManager = MessageStreamManager.shared
 
@@ -24,6 +25,19 @@ struct NetworkSettingsView: View {
     @StateObject private var iceManager = IceProxyManager.shared
 
     var body: some View {
+        Group {
+            if designStyle == .apple { appleBody } else { ctBody }
+        }
+        .alert("server_applied_title", isPresented: $showingAppliedAlert) {
+            Button("ok") { }
+        } message: {
+            Text("server_applied_message")
+        }
+    }
+
+    // MARK: - CT Body
+
+    private var ctBody: some View {
         VStack(spacing: 0) {
             if showNavBar {
                 CTNavBar(
@@ -202,13 +216,175 @@ struct NetworkSettingsView: View {
             .toolbar(.hidden, for: .navigationBar)
             #endif
         }
-        .alert("server_applied_title", isPresented: $showingAppliedAlert) {
-            Button("ok") { }
-        } message: {
-            Text("server_applied_message")
-        }
         }
         .background(Color.CT.bg.ignoresSafeArea())
+    }
+
+    // MARK: - Apple Body
+
+    private var appleBody: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                if showNavBar {
+                    CTNavBar(
+                        title: NSLocalizedString("network", comment: ""),
+                        showBack: true,
+                        backAction: { dismiss() }
+                    )
+                }
+
+                // MARK: - Connection Status
+                VStack(alignment: .leading, spacing: 6) {
+                    ConstructSection(header: NSLocalizedString("status", comment: "")) {
+                        HStack(spacing: 12) {
+                            Image(systemName: appleConnectionStatusIcon)
+                                .font(.system(size: 17))
+                                .foregroundStyle(appleConnectionStatusColor)
+                                .frame(width: 22)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(connectionManager.connectionStatus.displayText)
+                                    .font(.body)
+                                Text(iceManager.currentTrafficPath.displayDetail)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                            Spacer()
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 13)
+                        .background(Color(.secondarySystemGroupedBackground))
+
+                        if let heartbeat = streamManager.lastHeartbeatDate {
+                            ConstructRowDivider(indent: 52)
+                            HStack {
+                                Label(LocalizedStringKey("last_heartbeat"), systemImage: "heart.fill")
+                                    .font(.body)
+                                Spacer()
+                                Text(heartbeat, style: .relative)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 13)
+                            .background(Color(.secondarySystemGroupedBackground))
+                        }
+
+                        if let error = connectionManager.lastError {
+                            ConstructRowDivider(indent: 16)
+                            Text(error)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.red)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                                .background(Color(.secondarySystemGroupedBackground))
+                        }
+                    }
+                }
+
+                // MARK: - Traffic Protection (ICE)
+                VStack(alignment: .leading, spacing: 6) {
+                    ConstructSection(header: NSLocalizedString("traffic_protection", comment: "")) {
+                        HStack {
+                            Label(LocalizedStringKey("ice_title"), systemImage: "shield.fill")
+                                .font(.body)
+                                .foregroundStyle(iceManager.hasCert ? Color.primary : Color.secondary)
+                            Spacer()
+                            CTModeSelector(
+                                selection: Binding(
+                                    get: { iceManager.mode },
+                                    set: { newMode in
+                                        let oldMode = iceManager.mode
+                                        iceManager.mode = newMode
+                                        switch newMode {
+                                        case .off:
+                                            iceManager.stop()
+                                        case .auto:
+                                            if oldMode == .on { iceManager.stop() }
+                                        case .on:
+                                            Task { await iceManager.startIfEnabled() }
+                                        }
+                                    }
+                                ),
+                                options: IceMode.allCases,
+                                labels: [
+                                    .off:  NSLocalizedString("ice_mode_off", comment: ""),
+                                    .auto: NSLocalizedString("ice_mode_auto", comment: ""),
+                                    .on:   NSLocalizedString("ice_mode_on", comment: "")
+                                ]
+                            )
+                            .disabled(!iceManager.hasCert)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 13)
+                        .background(Color(.secondarySystemGroupedBackground))
+
+                        if (iceManager.mode != .off || iceManager.isRunning) && iceManager.hasCert {
+                            if iceManager.isOnCooldown {
+                                ConstructRowDivider(indent: 52)
+                                HStack {
+                                    Label(LocalizedStringKey("ice_retry"), systemImage: "arrow.clockwise")
+                                        .font(.body)
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 13)
+                                .background(Color(.secondarySystemGroupedBackground))
+                            } else if iceManager.isRunning, let relay = iceManager.activeRelay {
+                                ConstructRowDivider(indent: 52)
+                                HStack {
+                                    Image(systemName: "network")
+                                        .font(.system(size: 17))
+                                        .foregroundStyle(.tint)
+                                        .frame(width: 22)
+                                    Text(relay.address)
+                                        .font(.subheadline.monospaced())
+                                        .foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+                                    Spacer()
+                                    if relay.tlsServerName != nil {
+                                        Text("TLS")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                            .padding(.horizontal, 5).padding(.vertical, 2)
+                                            .background(Color(.tertiarySystemFill))
+                                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                                    }
+                                    Text("obfs4")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .padding(.horizontal, 5).padding(.vertical, 2)
+                                        .background(Color(.tertiarySystemFill))
+                                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                                .background(Color(.secondarySystemGroupedBackground))
+                            } else if iceManager.mode != .off && !iceManager.isRunning {
+                                ConstructRowDivider(indent: 52)
+                                Text(iceManager.lastError ?? NSLocalizedString("ice_unavailable", comment: ""))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 10)
+                                    .background(Color(.secondarySystemGroupedBackground))
+                            }
+                        }
+                    }
+                    Text(LocalizedStringKey(!iceManager.hasCert ? "ice_unavailable" : iceFooterKey))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 20)
+                }
+            }
+            .padding(.vertical, 20)
+        }
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
     }
 
     // MARK: - Actions
@@ -221,6 +397,24 @@ struct NetworkSettingsView: View {
     }
 
     // MARK: - Helpers
+
+    private var appleConnectionStatusIcon: String {
+        switch connectionManager.connectionStatus {
+        case .connected:    return "wifi"
+        case .disconnected: return "wifi.slash"
+        case .connecting:   return "arrow.clockwise"
+        case .unknown:      return "questionmark.circle"
+        }
+    }
+
+    private var appleConnectionStatusColor: Color {
+        switch connectionManager.connectionStatus {
+        case .connected:    return .green
+        case .disconnected: return .red
+        case .connecting:   return .orange
+        case .unknown:      return Color(.secondaryLabel)
+        }
+    }
 
     private var iceFooterKey: String {
         switch iceManager.mode {

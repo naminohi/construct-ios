@@ -856,3 +856,6 @@
 /* Engine background push notifications */
 "notification.new_message.title" = "Новое сообщение";
 "notification.new_message.body" = "У вас новое зашифрованное сообщение.";
+
+/* Apple design nav back button */
+"back" = "Назад";

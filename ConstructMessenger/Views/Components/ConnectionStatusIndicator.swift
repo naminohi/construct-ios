@@ -47,26 +47,33 @@ struct ConnectionStatusIndicator: View {
 
     @ViewBuilder
     private var appleStatus: some View {
+        if visible {
+            Text(appleLabel)
+                .font(.caption)
+                .foregroundStyle(appleColor)
+                .opacity(textOpacity)
+        }
+    }
+
+    private var appleLabel: String {
+        switch connectionManager.connectionStatus {
+        case .connected:   return trafficLabel
+        case .connecting, .unknown: return "\(trafficLabel) · \(NSLocalizedString("connecting", comment: ""))…"
+        case .disconnected: return NSLocalizedString("offline", comment: "").uppercased()
+        }
+    }
+
+    private var appleColor: Color {
         switch connectionManager.connectionStatus {
         case .connected:
-            EmptyView()
-        case .connecting, .unknown:
-            HStack(spacing: 4) {
-                Image(systemName: "wifi")
-                    .imageScale(.small)
-                Text(NSLocalizedString("connecting", comment: ""))
-                    .font(.caption)
+            switch iceProxy.currentTrafficPath {
+            case .direct:               return Color(.secondaryLabel)
+            case .icePrimary, .iceWebTunnel: return Color.accentColor
+            case .iceRelay:             return Color(.tertiaryLabel)
+            case .iceCooldown, .iceConnecting: return Color(.secondaryLabel)
             }
-            .foregroundStyle(Color(.secondaryLabel))
-            .opacity(textOpacity)
-        case .disconnected:
-            HStack(spacing: 4) {
-                Image(systemName: "wifi.slash")
-                    .imageScale(.small)
-                Text(NSLocalizedString("offline", comment: ""))
-                    .font(.caption)
-            }
-            .foregroundStyle(.red)
+        case .connecting, .unknown:     return Color(.secondaryLabel)
+        case .disconnected:             return .red
         }
     }
 

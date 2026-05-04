@@ -846,3 +846,6 @@
 /* Engine background push notifications */
 "notification.new_message.title" = "New message";
 "notification.new_message.body" = "You have a new encrypted message.";
+
+/* Apple design nav back button */
+"back" = "Back";

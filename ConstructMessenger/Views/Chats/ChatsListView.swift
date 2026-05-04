@@ -165,8 +165,7 @@ struct ChatsListView: View {
             if designStyle == .apple {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(NSLocalizedString("chats", comment: ""))
-                            .font(.largeTitle.weight(.bold))
+                        
                         ConnectionStatusIndicator()
                     }
                     Spacer()
