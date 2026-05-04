@@ -122,7 +122,7 @@ struct AccountSettingsView: View {
     // MARK: - CT Body
 
     private var ctBody: some View {
-        VStack(spacing: 30) {
+        VStack(spacing: 10) {
             CTNavBar(
                 title: NSLocalizedString("account", comment: ""),
                 showBack: true,
@@ -131,7 +131,7 @@ struct AccountSettingsView: View {
             flatDivider(thick: true)
 
             ScrollView {
-                VStack(spacing: 30) {
+                VStack(spacing: 10) {
                     avatarHeader
                     flatDivider(thick: true)
                     identitySection
@@ -163,15 +163,8 @@ struct AccountSettingsView: View {
     private var appleBody: some View {
         @Bindable var viewModel = viewModel
         return ScrollView {
-            VStack(spacing: 0) {
-                Text(NSLocalizedString("account", comment: ""))
-                    .font(.largeTitle.weight(.bold))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
-                    .padding(.bottom, 16)
-
-                appleAvatarHeader
+            VStack(spacing: 30) {
+                    appleAvatarHeader
 
                 ConstructSection {
                     appleEditRow(
@@ -321,6 +314,8 @@ struct AccountSettingsView: View {
             .padding(.bottom, 32)
         }
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .navigationTitle(NSLocalizedString("account", comment: ""))
+        .navigationBarTitleDisplayMode(.large)
     }
 
     // MARK: - Apple Avatar Header
@@ -351,17 +346,13 @@ struct AccountSettingsView: View {
                         .foregroundStyle(Color(.secondaryLabel))
                 }
             }
-            Button { showingImagePicker = true } label: {
-                Text(NSLocalizedString("change_photo", comment: ""))
-                    .font(.footnote)
-            }
-            .buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 20)
         .padding(.horizontal, 16)
         .background(Color(.secondarySystemGroupedBackground))
-        .padding(.bottom, 8)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .padding(.horizontal, 16)
     }
 
     // MARK: - Apple Edit Row

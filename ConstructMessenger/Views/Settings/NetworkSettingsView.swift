@@ -225,14 +225,6 @@ struct NetworkSettingsView: View {
     private var appleBody: some View {
         ScrollView {
             VStack(spacing: 20) {
-                if showNavBar {
-                    CTNavBar(
-                        title: NSLocalizedString("network", comment: ""),
-                        showBack: true,
-                        backAction: { dismiss() }
-                    )
-                }
-
                 // MARK: - Connection Status
                 VStack(alignment: .leading, spacing: 6) {
                     ConstructSection(header: NSLocalizedString("status", comment: "")) {
@@ -385,6 +377,8 @@ struct NetworkSettingsView: View {
             .padding(.vertical, 20)
         }
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .navigationTitle(NSLocalizedString("network", comment: ""))
+        .navigationBarTitleDisplayMode(.large)
     }
 
     // MARK: - Actions

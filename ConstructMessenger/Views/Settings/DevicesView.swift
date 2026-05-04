@@ -218,12 +218,6 @@ struct DevicesView: View {
     private var appleBody: some View {
         ScrollView {
             VStack(spacing: 20) {
-                CTNavBar(
-                    title: NSLocalizedString("linked_devices", comment: ""),
-                    showBack: true,
-                    backAction: { dismiss() }
-                )
-
                 if isLoading && devices.isEmpty {
                     ConstructSection {
                         HStack { Spacer(); ProgressView(); Spacer() }.padding()
@@ -319,6 +313,8 @@ struct DevicesView: View {
             .padding(.vertical, 20)
         }
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .navigationTitle(NSLocalizedString("linked_devices", comment: ""))
+        .navigationBarTitleDisplayMode(.large)
     }
 
     // MARK: - Network

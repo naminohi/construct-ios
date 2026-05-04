@@ -242,12 +242,6 @@ struct NotificationsSettingsView: View {
     private var appleBody: some View {
         ScrollView {
             VStack(spacing: 20) {
-                CTNavBar(
-                    title: NSLocalizedString("notifications", comment: ""),
-                    showBack: true,
-                    backAction: { dismiss() }
-                )
-
                 // MARK: - General Notifications
                 VStack(alignment: .leading, spacing: 6) {
                     ConstructSection(header: NSLocalizedString("notifications", comment: "")) {
@@ -431,6 +425,8 @@ struct NotificationsSettingsView: View {
             .padding(.vertical, 20)
         }
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .navigationTitle(NSLocalizedString("notifications", comment: ""))
+        .navigationBarTitleDisplayMode(.large)
     }
 
     // MARK: - Computed Properties

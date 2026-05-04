@@ -125,12 +125,6 @@ struct AppearanceSettingsView: View {
     private var appleBody: some View {
         ScrollView {
             VStack(spacing: 20) {
-                CTNavBar(
-                    title: NSLocalizedString("appearance", comment: ""),
-                    showBack: true,
-                    backAction: { dismiss() }
-                )
-
                 // MARK: Theme section
                 VStack(alignment: .leading, spacing: 6) {
                     ConstructSection(header: NSLocalizedString("theme", comment: "")) {
@@ -211,6 +205,8 @@ struct AppearanceSettingsView: View {
             .padding(.vertical, 20)
         }
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .navigationTitle(NSLocalizedString("appearance", comment: ""))
+        .navigationBarTitleDisplayMode(.large)
     }
 
     private func appleStyleIcon(_ style: DesignStyle) -> String {

@@ -193,14 +193,7 @@ struct DataStorageSettingsView: View {
 
     private var appleBody: some View {
         ScrollView {
-            VStack(spacing: 0) {
-                Text(NSLocalizedString("data_and_storage", comment: ""))
-                    .font(.largeTitle.weight(.bold))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
-                    .padding(.bottom, 20)
-
+            VStack(spacing: 20) {
                 // Usage
                 ConstructSection {
                     VStack(alignment: .leading, spacing: 10) {
@@ -307,6 +300,8 @@ struct DataStorageSettingsView: View {
             .padding(.bottom, 32)
         }
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .navigationTitle(NSLocalizedString("data_and_storage", comment: ""))
+        .navigationBarTitleDisplayMode(.large)
         .task { cacheSize = MediaManager.shared.diskCacheSize() }
         .alert("storage_clear_confirm_title",
                isPresented: $showClearConfirm) {
