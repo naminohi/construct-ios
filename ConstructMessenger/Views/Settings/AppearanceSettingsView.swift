@@ -204,7 +204,7 @@ struct AppearanceSettingsView: View {
             }
             .padding(.vertical, 20)
         }
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+//        .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .navigationTitle(NSLocalizedString("appearance", comment: ""))
         .navigationBarTitleDisplayMode(.large)
     }

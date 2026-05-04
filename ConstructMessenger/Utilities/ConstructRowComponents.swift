@@ -367,7 +367,7 @@ struct ConstructSection<Content: View>: View {
     @Environment(\.designStyle) private var designStyle
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 8) {
             if let header {
                 Text(header.uppercased())
                     .font(designStyle == .apple ? .footnote : CTFont.bold(10))

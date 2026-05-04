@@ -17,6 +17,7 @@ struct MessageInputTextBar: View {
     let onStartVoice: (() -> Void)?     // nil on macOS
 
     @FocusState private var focused: Bool
+    @Environment(\.designStyle) private var designStyle
 
     var body: some View {
         HStack(spacing: 0) {
@@ -25,8 +26,20 @@ struct MessageInputTextBar: View {
             sendButton
             voiceButton
         }
-        .background(Color.CT.outMsgBg)
-        .overlay(Rectangle().stroke(Color.CT.noise, lineWidth: 0.5))
+        .background(
+            designStyle == .apple
+                ? AnyView(
+                    RoundedRectangle(cornerRadius: 20)
+                        .fill(Color(.secondarySystemBackground))
+                )
+                : AnyView(Color.CT.outMsgBg)
+        )
+        .overlay(
+            designStyle == .apple
+                ? nil
+                : Rectangle().stroke(Color.CT.noise, lineWidth: 0.5)
+        )
+        .padding(.horizontal, designStyle == .apple ? 8 : 0)
     }
 
     // MARK: - Text field
@@ -60,8 +73,8 @@ struct MessageInputTextBar: View {
         .padding(.trailing, canSend ? 8 : 12)
         #else
         TextField("message_placeholder", text: $text, axis: .vertical)
-            .font(CTFont.regular(14))
-            .foregroundColor(Color.CT.text)
+            .font(designStyle == .apple ? .body : CTFont.regular(14))
+            .foregroundColor(designStyle == .apple ? Color.primary : Color.CT.text)
             .lineLimit(1...5)
             .padding(.leading, 12)
             .padding(.trailing, canSend ? 8 : 12)
@@ -80,14 +93,14 @@ struct MessageInputTextBar: View {
                 // Oversized: will auto-split — show chunk count
                 let chunks = MessageValidator.splitIntoChunks(text)
                 Text("→ \(chunks.count) msgs")
-                    .font(CTFont.regular(10))
-                    .foregroundColor(Color.CT.accent)
+                    .font(designStyle == .apple ? .caption : CTFont.regular(10))
+                    .foregroundColor(designStyle == .apple ? Color.secondary : Color.CT.accent)
                     .padding(.trailing, 4)
                     .transition(.opacity)
             } else {
                 Text("\(remaining)")
-                    .font(CTFont.regular(10))
-                    .foregroundColor(Color.CT.textDim)
+                    .font(designStyle == .apple ? .caption : CTFont.regular(10))
+                    .foregroundColor(designStyle == .apple ? Color.secondary : Color.CT.textDim)
                     .padding(.trailing, 4)
                     .transition(.opacity)
             }
@@ -100,14 +113,22 @@ struct MessageInputTextBar: View {
     private var sendButton: some View {
         if canSend {
             Button(action: onSend) {
-                Text(CTSymbol.upload)
-                    .font(CTFont.bold(15))
-                    .foregroundColor(Color.CT.accent)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 10)
-                    #if os(macOS)
-                    .help("Send (⏎) · New line (⇧⏎)")
-                    #endif
+                if designStyle == .apple {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(Color(.systemBlue))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 8)
+                } else {
+                    Text(CTSymbol.upload)
+                        .font(CTFont.bold(15))
+                        .foregroundColor(Color.CT.accent)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 10)
+                        #if os(macOS)
+                        .help("Send (⏎) · New line (⇧⏎)")
+                        #endif
+                }
             }
             .disabled(isSending)
             .transition(.scale.combined(with: .opacity))
@@ -121,11 +142,19 @@ struct MessageInputTextBar: View {
         #if os(iOS)
         if !canSend, let onStartVoice {
             Button(action: onStartVoice) {
-                Text(CTSymbol.mic)
-                    .font(CTFont.regular(13))
-                    .foregroundColor(Color.CT.textDim)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 10)
+                if designStyle == .apple {
+                    Image(systemName: "mic.fill")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 10)
+                } else {
+                    Text(CTSymbol.mic)
+                        .font(CTFont.regular(13))
+                        .foregroundColor(Color.CT.textDim)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 10)
+                }
             }
             .buttonStyle(.plain)
             .transition(.scale.combined(with: .opacity))

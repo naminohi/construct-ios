@@ -170,7 +170,7 @@ struct SettingsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 16)
                     .padding(.top, 8)
-                    .padding(.bottom, 20)
+                    .padding(.bottom, 16)
 
                 if recoveryVM.statusLoaded && !recoveryVM.isSetup && !recoveryBannerDismissed {
                     appleRecoveryBanner

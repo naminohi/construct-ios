@@ -12,6 +12,7 @@ import UniformTypeIdentifiers
 struct ChatView: View {
     @Environment(\.managedObjectContext) private var viewContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.designStyle) private var designStyle
     @State private var viewModel: ChatViewModel  // ✅ FIX: State persists across view updates
     @State private var scrollManager = ChatScrollManager()  // ✅ NEW: Isolated scroll management
     private var connectionManager = ConnectionStatusManager.shared
@@ -245,6 +246,7 @@ struct ChatView: View {
         #if os(macOS)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         #endif
+        .background(designStyle == .apple ? Color(.systemBackground) : Color.CT.bg)
         #if os(iOS)
         .toolbar(.hidden, for: .navigationBar)
         .toolbar(.hidden, for: .tabBar)
@@ -279,19 +281,34 @@ struct ChatView: View {
         }
         .overlay {
             if isChatDropTargeted {
-                Rectangle()
-                    .strokeBorder(Color.CT.accent, lineWidth: 2)
-                    .background(Color.CT.accent.opacity(0.05))
-                    .overlay(
-                        Text(LocalizedStringKey("drop_to_attach"))
-                            .font(CTFont.regular(16))
-                            .foregroundColor(Color.CT.accent)
-                            .padding(16)
-                            .background(Color.CT.bgMsg)
-                            .overlay(Rectangle().stroke(Color.CT.accent.opacity(0.4), lineWidth: 1))
-                    )
-                    .allowsHitTesting(false)
-                    .padding(8)
+                if designStyle == .apple {
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(.tint, lineWidth: 2)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(Color(.tintColor).opacity(0.05)))
+                        .overlay(
+                            Text(LocalizedStringKey("drop_to_attach"))
+                                .font(.body)
+                                .foregroundStyle(.tint)
+                                .padding(16)
+                                .background(RoundedRectangle(cornerRadius: 8).fill(Color(.systemBackground)))
+                        )
+                        .allowsHitTesting(false)
+                        .padding(8)
+                } else {
+                    Rectangle()
+                        .strokeBorder(Color.CT.accent, lineWidth: 2)
+                        .background(Color.CT.accent.opacity(0.05))
+                        .overlay(
+                            Text(LocalizedStringKey("drop_to_attach"))
+                                .font(CTFont.regular(16))
+                                .foregroundColor(Color.CT.accent)
+                                .padding(16)
+                                .background(Color.CT.bgMsg)
+                                .overlay(Rectangle().stroke(Color.CT.accent.opacity(0.4), lineWidth: 1))
+                        )
+                        .allowsHitTesting(false)
+                        .padding(8)
+                }
             }
         }
         .overlay(alignment: .top, content: searchOverlay)
@@ -382,9 +399,15 @@ struct ChatView: View {
         let senderId = viewModel.chat.otherUser?.id ?? ""
         if floodGuard.suppressedSenders.contains(senderId) {
             HStack(spacing: 10) {
-                Text("[!]")
-                    .font(CTFont.regular(16))
-                    .foregroundStyle(.orange)
+                if designStyle == .apple {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .font(.body)
+                } else {
+                    Text("[!]")
+                        .font(CTFont.regular(16))
+                        .foregroundStyle(.orange)
+                }
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(LocalizedStringKey("flood_banner_title"))
@@ -399,9 +422,15 @@ struct ChatView: View {
                 Button {
                     IncomingFloodGuard.shared.unsuppress(senderId: senderId)
                 } label: {
-                    Text("[allow →]")
-                        .font(CTFont.regular(12))
-                        .foregroundStyle(.orange)
+                    if designStyle == .apple {
+                        Label(NSLocalizedString("flood_banner_allow", comment: ""), systemImage: "checkmark")
+                            .foregroundStyle(.orange)
+                            .font(.caption)
+                    } else {
+                        Text("[allow →]")
+                            .font(CTFont.regular(12))
+                            .foregroundStyle(.orange)
+                    }
                 }
 
                 Button {
@@ -412,9 +441,15 @@ struct ChatView: View {
                     }
                     IncomingFloodGuard.shared.unsuppress(senderId: senderId)
                 } label: {
-                    Text("[block]")
-                        .font(CTFont.regular(12))
-                        .foregroundStyle(Color.CT.danger)
+                    if designStyle == .apple {
+                        Label(NSLocalizedString("flood_banner_block", comment: ""), systemImage: "hand.raised")
+                            .foregroundStyle(.red)
+                            .font(.caption)
+                    } else {
+                        Text("[block]")
+                            .font(CTFont.regular(12))
+                            .foregroundStyle(Color.CT.danger)
+                    }
                 }
             }
             .padding(.horizontal, 14)
@@ -428,22 +463,40 @@ struct ChatView: View {
     @ViewBuilder
     private var deleteButtonBar: some View {
         if isEditMode && !selectedMessages.isEmpty {
-            HStack {
-                Button(role: .destructive) {
-                    deleteSelectedMessages()
-                } label: {
-                    Text("[\(NSLocalizedString("delete_selected", comment: "")) →]")
-                        .font(CTFont.regular(13))
-                        .foregroundStyle(Color.CT.danger)
+            if designStyle == .apple {
+                HStack {
+                    Button(role: .destructive) {
+                        deleteSelectedMessages()
+                    } label: {
+                        Label(NSLocalizedString("delete_selected", comment: ""), systemImage: "trash")
+                            .foregroundStyle(.red)
+                    }
+                    Spacer()
+                    Text("\(selectedMessages.count) \(selectedMessages.count == 1 ? NSLocalizedString("message_selected", comment: "") : NSLocalizedString("messages_selected", comment: ""))")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
-                Spacer()
-                Text("\(selectedMessages.count) \(selectedMessages.count == 1 ? "message_selected" : "messages_selected")")
-                    .font(CTFont.regular(12))
-                    .foregroundStyle(Color.CT.textDim)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(.bar)
+            } else {
+                HStack {
+                    Button(role: .destructive) {
+                        deleteSelectedMessages()
+                    } label: {
+                        Text("[\(NSLocalizedString("delete_selected", comment: "")) →]")
+                            .font(CTFont.regular(13))
+                            .foregroundStyle(Color.CT.danger)
+                    }
+                    Spacer()
+                    Text("\(selectedMessages.count) \(selectedMessages.count == 1 ? "message_selected" : "messages_selected")")
+                        .font(CTFont.regular(12))
+                        .foregroundStyle(Color.CT.textDim)
+                }
+                .padding()
+                .background(Color.CT.bg)
+                .overlay(Rectangle().frame(height: 1).foregroundStyle(Color.CT.accent.opacity(0.3)), alignment: .top)
             }
-            .padding()
-            .background(Color.CT.bg)
-            .overlay(Rectangle().frame(height: 1).foregroundStyle(Color.CT.accent.opacity(0.3)), alignment: .top)
         }
     }
     
@@ -501,42 +554,152 @@ struct ChatView: View {
         .overlay(alignment: .bottomTrailing) {
             // ✅ Scroll to bottom button (appears when scrolled far from newest)
             if scrollManager.shouldShowScrollToBottomButton && !isEditMode {
-                Button {
-                    withAnimation(.easeOut(duration: 0.3)) {
-                        if let lastMessage = filteredMessages.last {
-                            scrollManager.scrollToBottom(messageId: lastMessage.id)
+                if designStyle == .apple {
+                    Button {
+                        withAnimation(.easeOut(duration: 0.3)) {
+                            if let lastMessage = filteredMessages.last {
+                                scrollManager.scrollToBottom(messageId: lastMessage.id)
+                            }
+                            scrollManager.shouldScrollToBottom = true
                         }
-                        scrollManager.shouldScrollToBottom = true
+                    } label: {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.tint)
+                            .background(Circle().fill(Color(.systemBackground)))
+                            .shadow(radius: 2)
                     }
-                } label: {
-                    HStack(spacing: 6) {
-                        Text("↓")
-                            .font(CTFont.bold(14))
-                        Text(viewModel.chat.unreadCount > 0
-                             ? NSLocalizedString("new_messages", comment: "New messages below")
-                             : NSLocalizedString("scroll_to_bottom", comment: "Scroll back to latest messages"))
-                            .font(CTFont.regular(13))
+                    .padding(.trailing, 16)
+                    .padding(.bottom, 80)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: scrollManager.shouldShowScrollToBottomButton)
+                } else {
+                    Button {
+                        withAnimation(.easeOut(duration: 0.3)) {
+                            if let lastMessage = filteredMessages.last {
+                                scrollManager.scrollToBottom(messageId: lastMessage.id)
+                            }
+                            scrollManager.shouldScrollToBottom = true
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text("↓")
+                                .font(CTFont.bold(14))
+                            Text(viewModel.chat.unreadCount > 0
+                                 ? NSLocalizedString("new_messages", comment: "New messages below")
+                                 : NSLocalizedString("scroll_to_bottom", comment: "Scroll back to latest messages"))
+                                .font(CTFont.regular(13))
+                        }
+                        .foregroundColor(Color.CT.accent)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(
+                            Rectangle()
+                                .fill(Color.CT.bgMsg)
+                                .overlay(Rectangle().strokeBorder(Color.CT.accent.opacity(0.5), lineWidth: 1))
+                        )
                     }
-                    .foregroundColor(Color.CT.accent)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(
-                        Rectangle()
-                            .fill(Color.CT.bgMsg)
-                            .overlay(Rectangle().strokeBorder(Color.CT.accent.opacity(0.5), lineWidth: 1))
-                    )
+                    .padding(.trailing, 16)
+                    .padding(.bottom, 80) // Above message input
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: scrollManager.shouldShowScrollToBottomButton)
                 }
-                .padding(.trailing, 16)
-                .padding(.bottom, 80) // Above message input
-                .transition(.move(edge: .trailing).combined(with: .opacity))
-                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: scrollManager.shouldShowScrollToBottomButton)
             }
         }
     }
     
-    // MARK: - CT Navigation Bar
+    // MARK: - Navigation Bar
 
+    @ViewBuilder
     private var chatNavBar: some View {
+        if designStyle == .apple {
+            appleNavBar
+        } else {
+            ctNavBar
+        }
+    }
+
+    @ViewBuilder private var appleNavBar: some View {
+        HStack(spacing: 12) {
+            Button { dismiss() } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.left")
+                        .font(.body.weight(.semibold))
+                    Text(NSLocalizedString("back", comment: ""))
+                        .font(.body)
+                }
+                .foregroundStyle(.tint)
+            }
+
+            Button { showingUserProfile = true } label: {
+                HStack(spacing: 10) {
+                    let name = viewModel.chat.otherUser?.resolvedDisplayName ?? ""
+                    let initials = String(name.split(separator: " ").compactMap(\.first).prefix(2).map(String.init).joined())
+                    ZStack {
+                        Circle()
+                            .fill(Color(.systemGray4))
+                            .frame(width: 36, height: 36)
+                        Text(initials.isEmpty ? "?" : String(initials.prefix(2)).uppercased())
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.primary)
+                    }
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(name.isEmpty ? NSLocalizedString("chat", comment: "") : name)
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        if let subtitle = navigationStatusSubtitle {
+                            Text(subtitle)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    ktBadge
+                }
+            }
+            .buttonStyle(.plain)
+
+            Spacer()
+
+            if isEditMode {
+                Button {
+                    withAnimation { isEditMode = false; selectedMessages.removeAll() }
+                } label: {
+                    Text(NSLocalizedString("done", comment: ""))
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.tint)
+                }
+            } else {
+                HStack(spacing: 16) {
+                    if CallsFeature.isEnabled, let otherUser = viewModel.chat.otherUser,
+                       case .idle = callManager.state {
+                        Button {
+                            Task { await callManager.startOutgoingCall(
+                                to: otherUser.id,
+                                displayName: otherUser.resolvedDisplayName,
+                                hasVideo: false
+                            ) }
+                        } label: {
+                            Image(systemName: "phone")
+                                .font(.body)
+                                .foregroundStyle(.tint)
+                        }
+                    }
+                    Button {
+                        withAnimation { isSearchActive.toggle(); if !isSearchActive { searchText = "" } }
+                    } label: {
+                        Image(systemName: isSearchActive ? "xmark" : "magnifyingglass")
+                            .font(.body)
+                            .foregroundStyle(.tint)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.bar)
+    }
+
+    private var ctNavBar: some View {
         HStack(spacing: 10) {
             Button { dismiss() } label: {
                 Text(CTSymbol.back)
@@ -604,17 +767,32 @@ struct ChatView: View {
 
     /// KT badge shown in the nav bar.  `[✓]` when verified, `[!]` on key-change/failure, hidden otherwise.
     @ViewBuilder private var ktBadge: some View {
-        switch contactKTStatus {
-        case .verified:
-            Text("[✓]")
-                .font(CTFont.regular(11))
-                .foregroundColor(Color.CT.accent)
-        case .keyChanged, .failed:
-            Text("[!]")
-                .font(CTFont.bold(11))
-                .foregroundColor(Color.CT.danger)
-        case .unverified:
-            EmptyView()
+        if designStyle == .apple {
+            switch contactKTStatus {
+            case .verified:
+                Image(systemName: "checkmark.seal.fill")
+                    .foregroundStyle(.tint)
+                    .font(.caption)
+            case .keyChanged, .failed:
+                Image(systemName: "exclamationmark.shield.fill")
+                    .foregroundStyle(.red)
+                    .font(.caption)
+            case .unverified:
+                EmptyView()
+            }
+        } else {
+            switch contactKTStatus {
+            case .verified:
+                Text("[✓]")
+                    .font(CTFont.regular(11))
+                    .foregroundColor(Color.CT.accent)
+            case .keyChanged, .failed:
+                Text("[!]")
+                    .font(CTFont.bold(11))
+                    .foregroundColor(Color.CT.danger)
+            case .unverified:
+                EmptyView()
+            }
         }
     }
 
@@ -648,58 +826,101 @@ struct ChatView: View {
     @ViewBuilder
     private func searchOverlay() -> some View {
         if isSearchActive {
-            VStack(spacing: 0) {
-                HStack(spacing: 8) {
-                    Text(">")
-                        .font(CTFont.regular(14))
-                        .foregroundStyle(Color.CT.accent)
-
-                    TextField("search_messages", text: $searchText)
-                        .font(CTFont.regular(14))
-                        .foregroundStyle(Color.CT.text)
-                        .tint(Color.CT.accent)
-                        #if os(iOS)
-                        .autocapitalization(.none)
-                        .submitLabel(.search)
-                        #endif
-                        .autocorrectionDisabled()
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
-                        .background(Color.CT.bgMsg)
-                        .overlay(Rectangle().stroke(Color.CT.accent.opacity(0.4)))
-
-                    Button {
-                        withAnimation {
-                            isSearchActive = false
-                            searchText = ""
+            if designStyle == .apple {
+                VStack(spacing: 0) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundStyle(.secondary)
+                        TextField(NSLocalizedString("search_messages", comment: ""), text: $searchText)
+                            .submitLabel(.search)
+                            .autocorrectionDisabled()
+                        if !searchText.isEmpty {
+                            Button {
+                                searchText = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.secondary)
+                            }
                         }
-                    } label: {
-                        Text("[x]")
-                            .font(CTFont.regular(14))
-                            .foregroundStyle(Color.CT.accentDim)
+                        Button {
+                            withAnimation { isSearchActive = false; searchText = "" }
+                        } label: {
+                            Text(NSLocalizedString("cancel", comment: ""))
+                                .foregroundStyle(.tint)
+                        }
                     }
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(Color.CT.bg)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(.bar)
 
-                if !searchText.isEmpty {
-                    HStack {
-                        Text("[\(filteredMessages.count) results]")
-                            .font(CTFont.regular(12))
-                            .foregroundStyle(Color.CT.textDim)
-                        Spacer()
+                    if !searchText.isEmpty {
+                        HStack {
+                            Text("\(filteredMessages.count) \(NSLocalizedString("results", comment: ""))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 4)
+                        .background(.bar)
+                    }
+                    Divider()
+                    Spacer()
+                }
+            } else {
+                VStack(spacing: 0) {
+                    HStack(spacing: 8) {
+                        Text(">")
+                            .font(CTFont.regular(14))
+                            .foregroundStyle(Color.CT.accent)
+
+                        TextField("search_messages", text: $searchText)
+                            .font(CTFont.regular(14))
+                            .foregroundStyle(Color.CT.text)
+                            .tint(Color.CT.accent)
+                            #if os(iOS)
+                            .autocapitalization(.none)
+                            .submitLabel(.search)
+                            #endif
+                            .autocorrectionDisabled()
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                            .background(Color.CT.bgMsg)
+                            .overlay(Rectangle().stroke(Color.CT.accent.opacity(0.4)))
+
+                        Button {
+                            withAnimation {
+                                isSearchActive = false
+                                searchText = ""
+                            }
+                        } label: {
+                            Text("[x]")
+                                .font(CTFont.regular(14))
+                                .foregroundStyle(Color.CT.accentDim)
+                        }
                     }
                     .padding(.horizontal, 14)
-                    .padding(.bottom, 6)
+                    .padding(.vertical, 10)
                     .background(Color.CT.bg)
+
+                    if !searchText.isEmpty {
+                        HStack {
+                            Text("[\(filteredMessages.count) results]")
+                                .font(CTFont.regular(12))
+                                .foregroundStyle(Color.CT.textDim)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 6)
+                        .background(Color.CT.bg)
+                    }
+
+                    Rectangle()
+                        .frame(height: 1)
+                        .foregroundStyle(Color.CT.accent.opacity(0.3))
+
+                    Spacer()
                 }
-
-                Rectangle()
-                    .frame(height: 1)
-                    .foregroundStyle(Color.CT.accent.opacity(0.3))
-
-                Spacer()
             }
         }
     }
