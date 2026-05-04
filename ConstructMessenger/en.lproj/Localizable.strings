@@ -133,6 +133,9 @@
 "tab_synaps_full" = "Synaps";
 "tab_calls_full" = "Calls";
 "tab_settings_full" = "Settings";
+"status_enabled" = "enabled";
+"status_disabled" = "disabled";
+"recovery_setup_action" = "Set Up";
 
 // MARK: - Settings -> Network
 "connected" = "Connected";

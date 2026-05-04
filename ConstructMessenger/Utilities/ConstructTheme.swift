@@ -592,11 +592,16 @@ struct CTSettingsSectionHeader: View {
 
 struct CTSettingsRow: View {
     let label: String
-    let value: String
+    var value: String       = CTSymbol.forward
     var labelColor: Color   = Color.CT.textDim
     var valueColor: Color   = Color.CT.text
     var isAction: Bool      = false
     var isDestructive: Bool = false
+    /// SF Symbol name or CT symbol (e.g. "[lock]") — shown only in Apple mode.
+    var icon: String?       = nil
+    /// Optional subtitle shown below the label in Apple mode.
+    var subtitle: String?   = nil
+    var subtitleColor: Color = Color(.secondaryLabel)
 
     @Environment(\.designStyle) private var designStyle
 
@@ -623,6 +628,9 @@ struct CTSettingsRow: View {
             _APSettingsRow(
                 label: label,
                 value: value,
+                icon: icon,
+                subtitle: subtitle,
+                subtitleColor: subtitleColor,
                 labelColor: labelColor,
                 valueColor: valueColor,
                 isAction: isAction,

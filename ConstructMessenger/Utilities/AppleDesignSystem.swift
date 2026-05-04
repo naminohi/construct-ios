@@ -62,7 +62,7 @@ func sfSymbol(for ctSymbol: String) -> String {
     // Tab bar
     case CTSymbol.tabChats:     return "message"
     case CTSymbol.tabSynaps,
-         CTSymbol.tabContacts:  return "person.2"
+         CTSymbol.tabContacts:  return "person.circle.fill"
     case CTSymbol.tabCalls:     return "phone"
     case CTSymbol.tabSettings:  return "gear"
     // Input
@@ -205,21 +205,39 @@ struct _APSettingsSectionHeader: View {
 
 struct _APSettingsRow: View {
     let label: String
-    let value: String
+    var value: String = CTSymbol.forward
+    var icon: String? = nil
+    var subtitle: String? = nil
+    var subtitleColor: Color = Color(.secondaryLabel)
     var labelColor: Color = .primary
     var valueColor: Color = Color(.secondaryLabel)
     var isAction: Bool    = false
     var isDestructive: Bool = false
 
     var body: some View {
-        HStack {
-            Text(normalizedLabel)
-                .font(.body)
-                .foregroundStyle(isDestructive ? .red : (labelColor == Color.CT.textDim ? Color.primary : labelColor))
+        HStack(spacing: 14) {
+            if let icon {
+                Image(systemName: resolvedIcon(icon))
+                    .font(.system(size: 16, weight: .regular))
+                    .foregroundStyle(isDestructive ? .red : iconColor(for: labelColor))
+                    .frame(width: 24, alignment: .center)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(normalizedLabel)
+                    .font(.body)
+                    .foregroundStyle(isDestructive ? .red : (labelColor == Color.CT.textDim ? Color.primary : labelColor))
+
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(subtitleColor)
+                }
+            }
 
             Spacer()
 
-            if isAction {
+            if isAction || value == CTSymbol.forward {
                 Image(systemName: "chevron.right")
                     .imageScale(.small)
                     .foregroundStyle(Color(.tertiaryLabel))
@@ -229,9 +247,21 @@ struct _APSettingsRow: View {
                     .foregroundStyle(isDestructive ? .red : (valueColor == Color.CT.text ? Color(.secondaryLabel) : valueColor))
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 13)
+        .padding(.horizontal, icon != nil ? 16 : 20)
+        .padding(.vertical, subtitle != nil ? 10 : 13)
         .background(Color(.secondarySystemGroupedBackground))
+    }
+
+    /// Resolves a CT symbol (e.g. "[lock]") or plain SF Symbol name to an SF Symbol name.
+    private func resolvedIcon(_ icon: String) -> String {
+        icon.hasPrefix("[") ? sfSymbol(for: icon) : icon
+    }
+
+    private func iconColor(for labelColor: Color) -> Color {
+        if labelColor == Color.CT.textDim || labelColor == .primary || labelColor == Color.CT.text {
+            return Color(.secondaryLabel)
+        }
+        return labelColor
     }
 
     /// Converts ALL-CAPS strings (from CT views that call .uppercased()) to title case.
@@ -248,7 +278,6 @@ struct _APSettingsRow: View {
         case CTSymbol.error:     return "⚠"
         case CTSymbol.loading:   return "…"
         default:
-            // Also normalize value if all-caps
             let hasLower = value.contains(where: \.isLowercase)
             return hasLower ? value : value.localizedCapitalized
         }

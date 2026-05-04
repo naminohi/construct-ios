@@ -347,6 +347,9 @@
 "tab_synaps_full" = "Синапсы";
 "tab_calls_full" = "Звонки";
 "tab_settings_full" = "Настройки";
+"status_enabled" = "включён";
+"status_disabled" = "выключен";
+"recovery_setup_action" = "Настроить";
 
 // Account deletion
 "delete_account_countdown" = "Удалить через %dс";

@@ -18,124 +18,20 @@ struct SettingsView: View {
     @State private var showingRecoverySetup = false
     @State private var recoveryBannerDismissed = UserDefaults.standard.bool(forKey: "recovery_banner_dismissed")
     @State private var navigationPath = NavigationPath()
+    @Environment(\.designStyle) private var designStyle
 
     private let inviteGenerator = InviteGenerator()
 
     var body: some View {
         NavigationStack(path: $navigationPath) {
-            VStack(spacing: 0) {
-                
-                CTNavBar(title: NSLocalizedString("settings", comment: ""))
-                
-
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-
-                        // MARK: Recovery warning
-                        if recoveryVM.statusLoaded && !recoveryVM.isSetup && !recoveryBannerDismissed {
-                            recoveryBanner
-                        }
-
-                        // MARK: Profile
-                        CTSettingsSectionHeader(title: NSLocalizedString("account", comment: ""))
-                        NavigationLink(destination: AccountSettingsView()
-                            .environment(authViewModel)
-                            .environment(recoveryVM)
-                            .environment(socialRecoveryService)
-                            .environment(viewModel)) {
-                            profileRow
-                        }
-                        .buttonStyle(.plain)
-                        CTSep()
-
-                        // MARK: Share
-                        CTSettingsSectionHeader(title: NSLocalizedString("share", comment: ""))
-                        Button { showingQRCode = true } label: {
-                            CTSettingsRow(label: NSLocalizedString("show_qr_code", comment: "").uppercased(), value: CTSymbol.forward, isAction: true)
-                        }
-                        .buttonStyle(.plain)
-                        CTSep(style: .thin)
-                        Button { copyContactLink() } label: {
-                            CTSettingsRow(
-                                label: linkCopied ? NSLocalizedString("link_copied", comment: "").uppercased() : NSLocalizedString("copy_contact_link", comment: "").uppercased(),
-                                value: linkCopied ? CTSymbol.ok : CTSymbol.forward,
-                                valueColor: linkCopied ? Color.CT.accentDim : Color.CT.text,
-                                isAction: !linkCopied
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(linkCopied)
-                        CTSep()
-
-                        // MARK: Settings
-                        CTSettingsSectionHeader(title: NSLocalizedString("settings", comment: ""))
-                        NavigationLink(destination: DevicesView()) {
-                            CTSettingsRow(label: NSLocalizedString("linked_devices", comment: "").uppercased(), value: CTSymbol.forward)
-                        }
-                        .buttonStyle(.plain)
-                        CTSep(style: .thin)
-                        NavigationLink(destination: AppearanceSettingsView()) {
-                            CTSettingsRow(label: NSLocalizedString("appearance", comment: "").uppercased(), value: CTSymbol.forward)
-                        }
-                        .buttonStyle(.plain)
-                        CTSep()
-                        NavigationLink(destination: SecurityView()
-                            .environment(viewModel)) {
-                            CTSettingsRow(label: NSLocalizedString("security", comment: "").uppercased(), value: CTSymbol.forward)
-                        }
-                        .buttonStyle(.plain)
-                        CTSep(style: .thin)
-                        NavigationLink(destination: DataStorageSettingsView()) {
-                            CTSettingsRow(label: NSLocalizedString("data_and_storage", comment: "").uppercased(), value: CTSymbol.forward)
-                        }
-                        .buttonStyle(.plain)
-                        CTSep(style: .thin)
-                        NavigationLink(destination: NotificationsSettingsView()) {
-                            CTSettingsRow(label: NSLocalizedString("notifications", comment: "").uppercased(), value: CTSymbol.forward)
-                        }
-                        .buttonStyle(.plain)
-                        CTSep(style: .thin)
-                        NavigationLink(destination: BackgroundFetchSettingsView()) {
-                            CTSettingsRow(
-                                label: NSLocalizedString("background_fetch", comment: "").uppercased(),
-                                value: BackgroundFetchConfig.shouldBeEnabled ? "[on]" : "[off]",
-                                valueColor: BackgroundFetchConfig.shouldBeEnabled ? Color.CT.accentDim : Color.CT.textDim
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        CTSep(style: .thin)
-                        NavigationLink(destination: NetworkSettingsView()) {
-                            CTSettingsRow(
-                                label: NSLocalizedString("network", comment: "").uppercased(),
-                                value: connectionStatus.isConnected ? "[ok]" : "[err]",
-                                valueColor: connectionStatus.isConnected ? Color.CT.accentDim : Color.CT.danger
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        CTSep(style: .thin)
-                        NavigationLink(destination: DraftsView()) {
-                            CTSettingsRow(label: NSLocalizedString("drafts", comment: "").uppercased(), value: CTSymbol.forward)
-                        }
-                        .buttonStyle(.plain)
-                        CTSep()
-
-                        
-                        
-
-                        // MARK: About
-                        CTSettingsSectionHeader(title: NSLocalizedString("about", comment: ""))
-                        CTSettingsRow(label: NSLocalizedString("version", comment: "").uppercased(), value: "v\(AppConstants.appVersion)")
-                        CTSep()
-
-                        // MARK: Developer
-                        CTSettingsSectionHeader(title: NSLocalizedString("developer", comment: ""), color: .orange)
-                        NavigationLink(destination: DiagnosticsView()) {
-                            CTSettingsRow(label: NSLocalizedString("diagnostics_logs", comment: "").uppercased(), value: CTSymbol.forward, labelColor: .orange, valueColor: .orange)
-                        }
-                        .buttonStyle(.plain)
-                        CTSep()
+            Group {
+                if designStyle == .apple {
+                    appleBody
+                } else {
+                    VStack(spacing: 0) {
+                        CTNavBar(title: NSLocalizedString("settings", comment: ""))
+                        ScrollView { ctContent }
                     }
-                    .padding(.bottom, 32)
                 }
             }
             .ctBackground()
@@ -160,6 +56,336 @@ struct SettingsView: View {
                 chatsViewModel.isInSettings = !path.isEmpty
             }
         }
+    }
+
+    // MARK: - CT Content (terminal design)
+
+    private var ctContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if recoveryVM.statusLoaded && !recoveryVM.isSetup && !recoveryBannerDismissed {
+                recoveryBanner
+            }
+
+            CTSettingsSectionHeader(title: NSLocalizedString("account", comment: ""))
+            NavigationLink(destination: AccountSettingsView()
+                .environment(authViewModel)
+                .environment(recoveryVM)
+                .environment(socialRecoveryService)
+                .environment(viewModel)) {
+                profileRow
+            }
+            .buttonStyle(.plain)
+            CTSep()
+
+            CTSettingsSectionHeader(title: NSLocalizedString("share", comment: ""))
+            Button { showingQRCode = true } label: {
+                CTSettingsRow(label: NSLocalizedString("show_qr_code", comment: "").uppercased(), value: CTSymbol.forward, isAction: true)
+            }
+            .buttonStyle(.plain)
+            CTSep(style: .thin)
+            Button { copyContactLink() } label: {
+                CTSettingsRow(
+                    label: linkCopied ? NSLocalizedString("link_copied", comment: "").uppercased() : NSLocalizedString("copy_contact_link", comment: "").uppercased(),
+                    value: linkCopied ? CTSymbol.ok : CTSymbol.forward,
+                    valueColor: linkCopied ? Color.CT.accentDim : Color.CT.text,
+                    isAction: !linkCopied
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(linkCopied)
+            CTSep()
+
+            CTSettingsSectionHeader(title: NSLocalizedString("settings", comment: ""))
+            NavigationLink(destination: DevicesView()) {
+                CTSettingsRow(label: NSLocalizedString("linked_devices", comment: "").uppercased(), value: CTSymbol.forward)
+            }
+            .buttonStyle(.plain)
+            CTSep(style: .thin)
+            NavigationLink(destination: AppearanceSettingsView()) {
+                CTSettingsRow(label: NSLocalizedString("appearance", comment: "").uppercased(), value: CTSymbol.forward)
+            }
+            .buttonStyle(.plain)
+            CTSep()
+            NavigationLink(destination: SecurityView()
+                .environment(viewModel)) {
+                CTSettingsRow(label: NSLocalizedString("security", comment: "").uppercased(), value: CTSymbol.forward)
+            }
+            .buttonStyle(.plain)
+            CTSep(style: .thin)
+            NavigationLink(destination: DataStorageSettingsView()) {
+                CTSettingsRow(label: NSLocalizedString("data_and_storage", comment: "").uppercased(), value: CTSymbol.forward)
+            }
+            .buttonStyle(.plain)
+            CTSep(style: .thin)
+            NavigationLink(destination: NotificationsSettingsView()) {
+                CTSettingsRow(label: NSLocalizedString("notifications", comment: "").uppercased(), value: CTSymbol.forward)
+            }
+            .buttonStyle(.plain)
+            CTSep(style: .thin)
+            NavigationLink(destination: BackgroundFetchSettingsView()) {
+                CTSettingsRow(
+                    label: NSLocalizedString("background_fetch", comment: "").uppercased(),
+                    value: BackgroundFetchConfig.shouldBeEnabled ? "[on]" : "[off]",
+                    valueColor: BackgroundFetchConfig.shouldBeEnabled ? Color.CT.accentDim : Color.CT.textDim
+                )
+            }
+            .buttonStyle(.plain)
+            CTSep(style: .thin)
+            NavigationLink(destination: NetworkSettingsView()) {
+                CTSettingsRow(
+                    label: NSLocalizedString("network", comment: "").uppercased(),
+                    value: connectionStatus.isConnected ? "[ok]" : "[err]",
+                    valueColor: connectionStatus.isConnected ? Color.CT.accentDim : Color.CT.danger
+                )
+            }
+            .buttonStyle(.plain)
+            CTSep(style: .thin)
+            NavigationLink(destination: DraftsView()) {
+                CTSettingsRow(label: NSLocalizedString("drafts", comment: "").uppercased(), value: CTSymbol.forward)
+            }
+            .buttonStyle(.plain)
+            CTSep()
+
+            CTSettingsSectionHeader(title: NSLocalizedString("about", comment: ""))
+            CTSettingsRow(label: NSLocalizedString("version", comment: "").uppercased(), value: "v\(AppConstants.appVersion)")
+            CTSep()
+
+            CTSettingsSectionHeader(title: NSLocalizedString("developer", comment: ""), color: .orange)
+            NavigationLink(destination: DiagnosticsView()) {
+                CTSettingsRow(label: NSLocalizedString("diagnostics_logs", comment: "").uppercased(), value: CTSymbol.forward, labelColor: .orange, valueColor: .orange)
+            }
+            .buttonStyle(.plain)
+            CTSep()
+        }
+        .padding(.bottom, 32)
+    }
+
+    // MARK: - Apple Body
+
+    private var appleBody: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                Text(NSLocalizedString("settings", comment: ""))
+                    .font(.largeTitle.weight(.bold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+                    .padding(.bottom, 20)
+
+                if recoveryVM.statusLoaded && !recoveryVM.isSetup && !recoveryBannerDismissed {
+                    appleRecoveryBanner
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 16)
+                }
+
+                ConstructSection {
+                    NavigationLink(destination: AccountSettingsView()
+                        .environment(authViewModel)
+                        .environment(recoveryVM)
+                        .environment(socialRecoveryService)
+                        .environment(viewModel)) {
+                        appleProfileRow
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                ConstructSection {
+                    Button { showingQRCode = true } label: {
+                        CTSettingsRow(
+                            label: NSLocalizedString("show_qr_code", comment: "").uppercased(),
+                            value: CTSymbol.forward,
+                            isAction: true,
+                            icon: CTSymbol.scan
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    CTSep(style: .thin)
+                    Button { copyContactLink() } label: {
+                        CTSettingsRow(
+                            label: linkCopied ? NSLocalizedString("link_copied", comment: "").uppercased() : NSLocalizedString("copy_contact_link", comment: "").uppercased(),
+                            value: linkCopied ? CTSymbol.ok : CTSymbol.forward,
+                            isAction: !linkCopied,
+                            icon: "link"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(linkCopied)
+                }
+
+                ConstructSection {
+                    NavigationLink(destination: SecurityView().environment(viewModel)) {
+                        CTSettingsRow(
+                            label: NSLocalizedString("security", comment: "").uppercased(),
+                            value: CTSymbol.forward,
+                            isAction: true,
+                            icon: CTSymbol.lock
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    CTSep(style: .thin)
+                    NavigationLink(destination: DevicesView()) {
+                        CTSettingsRow(
+                            label: NSLocalizedString("linked_devices", comment: "").uppercased(),
+                            value: CTSymbol.forward,
+                            isAction: true,
+                            icon: "laptopcomputer"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    CTSep(style: .thin)
+                    NavigationLink(destination: AppearanceSettingsView()) {
+                        CTSettingsRow(
+                            label: NSLocalizedString("appearance", comment: "").uppercased(),
+                            value: CTSymbol.forward,
+                            isAction: true,
+                            icon: "paintbrush"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    CTSep(style: .thin)
+                    NavigationLink(destination: NotificationsSettingsView()) {
+                        CTSettingsRow(
+                            label: NSLocalizedString("notifications", comment: "").uppercased(),
+                            value: CTSymbol.forward,
+                            isAction: true,
+                            icon: "bell"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    CTSep(style: .thin)
+                    NavigationLink(destination: BackgroundFetchSettingsView()) {
+                        CTSettingsRow(
+                            label: NSLocalizedString("background_fetch", comment: "").uppercased(),
+                            value: CTSymbol.forward,
+                            isAction: true,
+                            icon: "arrow.clockwise.circle",
+                            subtitle: "● \(BackgroundFetchConfig.shouldBeEnabled ? NSLocalizedString("status_enabled", comment: "") : NSLocalizedString("status_disabled", comment: ""))",
+                            subtitleColor: BackgroundFetchConfig.shouldBeEnabled ? .green : Color(.secondaryLabel)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    CTSep(style: .thin)
+                    NavigationLink(destination: NetworkSettingsView()) {
+                        CTSettingsRow(
+                            label: NSLocalizedString("network", comment: "").uppercased(),
+                            value: CTSymbol.forward,
+                            isAction: true,
+                            icon: "globe",
+                            subtitle: "● \(connectionStatus.isConnected ? NSLocalizedString("connected", comment: "") : NSLocalizedString("disconnected", comment: ""))",
+                            subtitleColor: connectionStatus.isConnected ? .green : .red
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    CTSep(style: .thin)
+                    NavigationLink(destination: DraftsView()) {
+                        CTSettingsRow(
+                            label: NSLocalizedString("drafts", comment: "").uppercased(),
+                            value: CTSymbol.forward,
+                            isAction: true,
+                            icon: CTSymbol.drafts
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                ConstructSection {
+                    NavigationLink(destination: DataStorageSettingsView()) {
+                        CTSettingsRow(
+                            label: NSLocalizedString("data_and_storage", comment: "").uppercased(),
+                            value: CTSymbol.forward,
+                            isAction: true,
+                            icon: CTSymbol.disk
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                ConstructSection {
+                    CTSettingsRow(
+                        label: NSLocalizedString("version", comment: "").uppercased(),
+                        value: "Construct v\(AppConstants.appVersion)",
+                        icon: "info.circle"
+                    )
+                }
+
+                ConstructSection {
+                    NavigationLink(destination: DiagnosticsView()) {
+                        CTSettingsRow(
+                            label: NSLocalizedString("diagnostics_logs", comment: "").uppercased(),
+                            value: CTSymbol.forward,
+                            labelColor: .orange,
+                            isAction: true,
+                            icon: "stethoscope"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.bottom, 32)
+        }
+    }
+
+    // MARK: - Apple Profile Row
+
+    private var appleProfileRow: some View {
+        HStack(spacing: 14) {
+            let img: Image? = {
+                guard let ui = viewModel.profileImage else { return nil }
+                return Image(uiImage: ui)
+            }()
+            CTHexAvatar(initials: profileInitials, image: img, size: .large)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(profileDisplayName)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.primary)
+                if !viewModel.username.isEmpty {
+                    Text("@\(viewModel.username)")
+                        .font(.subheadline)
+                        .foregroundStyle(Color(.secondaryLabel))
+                }
+            }
+            Spacer()
+            Image(systemName: "chevron.right")
+                .imageScale(.small)
+                .foregroundStyle(Color(.tertiaryLabel))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+    }
+
+    // MARK: - Apple Recovery Banner
+
+    private var appleRecoveryBanner: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(NSLocalizedString("recovery_not_configured_title", comment: ""))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.red)
+                Text(NSLocalizedString("recovery_banner_subtitle", comment: ""))
+                    .font(.caption)
+                    .foregroundStyle(Color(.secondaryLabel))
+                Button { showingRecoverySetup = true } label: {
+                    Text(NSLocalizedString("recovery_setup_action", comment: ""))
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer()
+            Button {
+                recoveryBannerDismissed = true
+                UserDefaults.standard.set(true, forKey: "recovery_banner_dismissed")
+            } label: {
+                Image(systemName: "xmark")
+                    .imageScale(.small)
+                    .foregroundStyle(Color(.secondaryLabel))
+            }
+        }
+        .padding(14)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
     // MARK: - Profile Row
