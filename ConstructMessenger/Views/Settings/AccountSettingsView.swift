@@ -122,7 +122,7 @@ struct AccountSettingsView: View {
     // MARK: - CT Body
 
     private var ctBody: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: 30) {
             CTNavBar(
                 title: NSLocalizedString("account", comment: ""),
                 showBack: true,
@@ -131,7 +131,7 @@ struct AccountSettingsView: View {
             flatDivider(thick: true)
 
             ScrollView {
-                VStack(spacing: 0) {
+                VStack(spacing: 30) {
                     avatarHeader
                     flatDivider(thick: true)
                     identitySection
