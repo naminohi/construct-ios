@@ -430,15 +430,22 @@ struct _APButton: View {
     var isDestructive: Bool = false
     let action: () -> Void
 
+    private var bgColor: Color {
+        if !isEnabled { return Color(.systemFill) }
+        return isDestructive ? Color(.systemRed) : Color.accentColor
+    }
+
     var body: some View {
         Button(action: action) {
             Text(label)
                 .font(.body.weight(.semibold))
+                .foregroundStyle(isEnabled ? Color.white : Color(.secondaryLabel))
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 4)
+                .padding(.vertical, 14)
+                .background(bgColor)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
         }
-        .buttonStyle(.borderedProminent)
-        .tint(isDestructive ? .red : .accentColor)
+        .buttonStyle(.plain)
         .disabled(!isEnabled)
         .padding(.horizontal, 16)
     }

@@ -323,18 +323,31 @@ struct AccountSettingsView: View {
     private var appleAvatarHeader: some View {
         @Bindable var viewModel = viewModel
         return VStack(spacing: 10) {
-            let initials: String = {
-                let name = viewModel.displayName.isEmpty ? viewModel.userId : viewModel.displayName
-                let parts = name.split(separator: " ")
-                if parts.count >= 2 { return String(parts[0].prefix(1) + parts[1].prefix(1)).uppercased() }
-                return String(name.prefix(2)).uppercased()
-            }()
+            let name = viewModel.displayName.isEmpty ? viewModel.userId : viewModel.displayName
+            let parts = name.split(separator: " ")
+            let initials: String = parts.count >= 2
+                ? String(parts[0].prefix(1) + parts[1].prefix(1)).uppercased()
+                : String(name.prefix(2)).uppercased()
             let img: Image? = viewModel.profileImage.map { Image(uiImage: $0) }
-            CTHexAvatar(initials: initials, image: img, size: .large)
-                .onTapGesture {
-                    if viewModel.profileImage != nil { showingAvatarViewer = true }
-                    else { showingImagePicker = true }
+
+            ZStack {
+                if let img {
+                    img.resizable().scaledToFill()
+                        .frame(width: 72, height: 72)
+                        .clipShape(Circle())
+                } else {
+                    Circle().fill(Color(.systemGray4))
+                    Text(initials.isEmpty ? "?" : initials)
+                        .font(.system(size: 28, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Color(.secondaryLabel))
                 }
+            }
+            .frame(width: 72, height: 72)
+            .onTapGesture {
+                if viewModel.profileImage != nil { showingAvatarViewer = true }
+                else { showingImagePicker = true }
+            }
+
             VStack(spacing: 4) {
                 if !viewModel.displayName.isEmpty {
                     Text(viewModel.displayName)

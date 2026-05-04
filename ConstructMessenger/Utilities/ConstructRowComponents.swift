@@ -367,14 +367,14 @@ struct ConstructSection<Content: View>: View {
     @Environment(\.designStyle) private var designStyle
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             if let header {
                 Text(header.uppercased())
                     .font(designStyle == .apple ? .footnote : CTFont.bold(10))
                     .foregroundStyle(Color(.secondaryLabel))
                     .tracking(designStyle == .apple ? 0.5 : 1.5)
                     .padding(.horizontal, 20)
-                    .padding(.bottom, 6)
+                    .padding(.bottom, 8)
             }
 
             VStack(spacing: 0) {
