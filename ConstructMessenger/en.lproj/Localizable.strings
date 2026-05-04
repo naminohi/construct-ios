@@ -125,6 +125,10 @@
 "automatic" = "Automatic";
 "light" = "Light";
 "dark" = "Dark";
+"design_style" = "Design Style";
+"design_terminal" = "Terminal";
+"design_apple" = "Apple HIG";
+"design_style_footer" = "Terminal: ASCII aesthetic with JetBrains Mono. Apple HIG: standard iOS look with SF Symbols.";
 
 // MARK: - Settings -> Network
 "connected" = "Connected";

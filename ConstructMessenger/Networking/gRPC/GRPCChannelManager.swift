@@ -42,6 +42,7 @@ final class GRPCChannelManager: Sendable {
         UserDefaults.standard.set(host, forKey: Self.customHostKey)
         UserDefaults.standard.set(port, forKey: Self.customPortKey)
         invalidatePersistentClient()
+        invalidateQUICClient()
         NotificationCenter.default.post(name: .grpcServerChanged, object: nil)
     }
 
@@ -49,6 +50,7 @@ final class GRPCChannelManager: Sendable {
         UserDefaults.standard.removeObject(forKey: Self.customHostKey)
         UserDefaults.standard.removeObject(forKey: Self.customPortKey)
         invalidatePersistentClient()
+        invalidateQUICClient()
         NotificationCenter.default.post(name: .grpcServerChanged, object: nil)
     }
 
@@ -189,8 +191,9 @@ final class GRPCChannelManager: Sendable {
             queue: .main
         ) { [weak self] _ in
             guard let self else { return }
-            Log.info("🔌 Network path changed — invalidating persistent gRPC connection", category: "gRPC")
+            Log.info("🔌 Network path changed — invalidating gRPC connections", category: "gRPC")
             self.invalidatePersistentClient()
+            self.invalidateQUICClient()
         }
     }
 
@@ -202,14 +205,26 @@ final class GRPCChannelManager: Sendable {
     // task runs in the background.  Subsequent RPCs reuse the established connection
     // with zero handshake overhead.
     //
-    // The persistent connection is invalidated (and recreated on the next RPC) when:
+    // Two persistent connections are maintained:
+    //   _conn     — TCP/HTTP-2, used for streaming RPCs (MessageStream, SignalStream)
+    //               and as the fallback for all unary RPCs. Follows ICE routing.
+    //   _quicConn — QUIC/HTTP-3, used as the fast path for unary RPCs on iOS 26+.
+    //               Always direct (bypasses ICE). nil on iOS < 26 or when QUIC is off.
+    //
+    // Both connections are invalidated (and recreated on the next RPC) when:
     //   • the routing config changes  (ICE enabled/disabled, custom server, etc.)
     //   • the underlying transport throws a fatal error
 
     private struct PersistentConn: @unchecked Sendable {
-        let client: GRPCClient<HTTP2ClientTransport.TransportServices>
+        let client: GRPCClient<ConstructTransport>
         let task:   Task<Void, Never>
-        let key:    String   // routing identity — "ice:<port>" or "direct:<host>:<port>"
+        let key:    String   // routing identity — "ice:<port>", "direct:<host>:<port>", or "quic:<host>:<port>"
+        // Set to false (under _connLock) the moment runConnections() exits for any reason.
+        // acquirePersistentClient() checks this flag to avoid returning a client whose
+        // transport is stopped — calling execute() on such a client triggers the
+        // assertionFailure in GRPCStreamStateMachine ("Client is closed: can't send metadata.")
+        // in debug builds and throws InvalidState in release builds.
+        var isRunning: Bool = true
     }
 
     // nonisolated(unsafe) is correct here: all mutations are serialised through _connLock.
@@ -221,6 +236,22 @@ final class GRPCChannelManager: Sendable {
     // races with a not-yet-started runConnections() call.
     private nonisolated(unsafe) var _connGeneration: UInt64 = 0
     private let _connLock = NSLock()
+
+    // QUIC persistent connection — unary RPCs only (iOS 26+).
+    // Streaming RPCs (MessageStream, SignalStream bidi) always use _conn (TCP) to avoid
+    // the NWQUICRequestWriter buffering deadlock: the writer buffers the entire body until
+    // finish() is called, which for a long-lived bidi stream never happens.
+    // Protected by _connLock (same lock as _conn — no nesting risk, separate call sites).
+    private nonisolated(unsafe) var _quicConn: PersistentConn?
+
+    // QUIC circuit breaker: after quicCircuitBreakerThreshold consecutive invalidations,
+    // QUIC is suppressed for quicCooldownDuration seconds. Prevents a tight reconnect
+    // loop when the server-side H3 control stream (stream ID 3) is consistently rejected.
+    // All fields are protected by _connLock.
+    private nonisolated(unsafe) var _quicConsecutiveFailures: Int = 0
+    private nonisolated(unsafe) var _quicCooldownUntil: Date? = nil
+    private static let quicCircuitBreakerThreshold = 3
+    private static let quicCooldownDuration: TimeInterval = 120.0
 
     // In-memory ICE cooldown state.
     // Written by recordICEFailure/clearICECooldownState; read by isICEOnCooldownInternal.
@@ -244,16 +275,18 @@ final class GRPCChannelManager: Sendable {
         return "direct:\(currentHost):\(currentPort)"
     }
 
+    private func quicRoutingKey() -> String { "quic:\(currentHost):443" }
+
     /// Exposes the current routing key for debug metrics and logging.
     var currentRoutingKey: String { routingKey() }
 
     /// Returns a reusable persistent client, creating/replacing it when routing changes.
-    func acquirePersistentClient() throws -> GRPCClient<HTTP2ClientTransport.TransportServices> {
+    func acquirePersistentClient() throws -> GRPCClient<ConstructTransport> {
         _connLock.lock()
         defer { _connLock.unlock() }
 
         let key = routingKey()
-        if let conn = _conn, conn.key == key, !conn.task.isCancelled {
+        if let conn = _conn, conn.key == key, conn.isRunning {
             return conn.client
         }
 
@@ -286,8 +319,15 @@ final class GRPCChannelManager: Sendable {
                 // Normal shutdown.
             } catch {
                 Log.error("⚠️ Persistent gRPC connection closed: \(error)", category: "GRPCChannel")
-                self.invalidatePersistentClient()
             }
+            // Mark dead under the lock BEFORE calling invalidate. This closes the TOCTOU
+            // race window between runConnections() returning and _conn being nilled:
+            // acquirePersistentClient() checks isRunning, so it will never return this
+            // dead client even if invalidatePersistentClientIfGeneration hasn't run yet.
+            self._connLock.withLock {
+                if self._connGeneration == gen { self._conn?.isRunning = false }
+            }
+            self.invalidatePersistentClientIfGeneration(gen)
         }
         _conn = PersistentConn(client: client, task: task, key: key)
         Log.debug("🔌 Persistent gRPC connection created (key=\(key) gen=\(gen))", category: "GRPCChannel")
@@ -330,9 +370,9 @@ final class GRPCChannelManager: Sendable {
 
     /// Returns the shared persistent channel, creating it if needed.
     /// Long-lived streaming RPCs (MessageStream) should use this instead of makeClient()
-    /// so the HTTP/2 connection is NOT torn down on every stream reconnect.
+    /// so the HTTP/2 or QUIC connection is NOT torn down on every stream reconnect.
     /// The stream itself can close/reopen freely; the channel stays alive.
-    func acquireChannel() throws -> GRPCClient<HTTP2ClientTransport.TransportServices> {
+    func acquireChannel() throws -> GRPCClient<ConstructTransport> {
         try acquirePersistentClient()
     }
 
@@ -343,10 +383,11 @@ final class GRPCChannelManager: Sendable {
         _connLock.withLock { _connGeneration }
     }
 
-    /// Creates a new `GRPCClient` with TLS transport.
+    /// Creates a new `GRPCClient` with TCP/TLS transport (ICE or direct).
+    /// Streaming RPCs and unary fallback both use this path.
+    /// QUIC/HTTP-3 is handled separately via `acquireQUICClient()`.
     /// Caller is responsible for running the client via `runConnections()` in a Task.
-    func makeClient() throws -> GRPCClient<HTTP2ClientTransport.TransportServices> {
-        // ICE mode: connect to local proxy with plaintext, proxy handles obfs4 to relay
+    func makeClient() throws -> GRPCClient<ConstructTransport> {
         if let icePort = iceProxyPort() {
             Log.info("🧊 gRPC via ICE proxy → 127.0.0.1:\(icePort)", category: "gRPC")
             let transport = try HTTP2ClientTransport.TransportServices(
@@ -365,7 +406,7 @@ final class GRPCChannelManager: Sendable {
                     )
                 }
             )
-            return GRPCClient(transport: transport, interceptors: [AuthInterceptor()])
+            return GRPCClient(transport: ConstructTransport(tcp: transport), interceptors: [AuthInterceptor()])
         }
 
         let host = currentHost
@@ -394,14 +435,82 @@ final class GRPCChannelManager: Sendable {
         )
 
         return GRPCClient(
-            transport: transport,
+            transport: ConstructTransport(tcp: transport),
             interceptors: [AuthInterceptor()]
         )
     }
 
+    /// Returns the persistent QUIC/HTTP-3 client for **unary** RPCs, creating it if needed.
+    ///
+    /// Returns nil when QUIC is disabled (`FeatureFlags.useQUICTransport == false`),
+    /// when running on iOS < 26, or when the QUIC circuit breaker is open (too many
+    /// consecutive failures within the cooldown window).
+    /// Streaming RPCs must NOT use this client — they use `acquireChannel()` (TCP).
+    func acquireQUICClient() -> GRPCClient<ConstructTransport>? {
+        guard FeatureFlags.useQUICTransport else { return nil }
+        guard #available(iOS 26, *) else { return nil }
+
+        _connLock.lock()
+        defer { _connLock.unlock() }
+
+        // Circuit breaker: suppress QUIC while cooldown is active.
+        if let cooldownUntil = _quicCooldownUntil {
+            if Date() < cooldownUntil { return nil }
+            _quicCooldownUntil = nil
+            Log.info("⚡ QUIC circuit breaker reset — retrying QUIC", category: "GRPCChannel")
+        }
+
+        let key = quicRoutingKey()
+        if let conn = _quicConn, conn.key == key, conn.isRunning {
+            return conn.client
+        }
+
+        _quicConn?.client.beginGracefulShutdown()
+        _quicConn = nil
+
+        let host = currentHost
+        Log.debug("🔌 gRPC creating QUIC channel → \(host):443", category: "gRPC")
+        let quic = NWQUICGRPCTransport(host: host, port: 443)
+        let client = GRPCClient(transport: ConstructTransport(quic: quic), interceptors: [AuthInterceptor()])
+
+        let task = Task.detached { [weak self] in
+            do {
+                try await client.runConnections()
+            } catch is CancellationError { }
+            catch {
+                Log.error("⚠️ Persistent QUIC connection closed: \(error)", category: "GRPCChannel")
+            }
+            // Mark dead so acquireQUICClient() never returns this stopped client.
+            self?._connLock.withLock { self?._quicConn?.isRunning = false }
+            self?.invalidateQUICClient()
+        }
+        _quicConn = PersistentConn(client: client, task: task, key: key)
+        Log.debug("🔌 Persistent QUIC connection created (key=\(key))", category: "GRPCChannel")
+        return client
+    }
+
+    /// Tears down the QUIC persistent connection gracefully.
+    /// Tracks consecutive failures: after `quicCircuitBreakerThreshold` failures,
+    /// opens the circuit breaker and suppresses QUIC for `quicCooldownDuration` seconds.
+    func invalidateQUICClient() {
+        _connLock.lock()
+        defer { _connLock.unlock() }
+        guard _quicConn != nil else { return }
+        _quicConn?.client.beginGracefulShutdown()
+        _quicConn = nil
+        _quicConsecutiveFailures += 1
+        if _quicConsecutiveFailures >= Self.quicCircuitBreakerThreshold {
+            _quicCooldownUntil = Date().addingTimeInterval(Self.quicCooldownDuration)
+            Log.info("⚡ QUIC circuit breaker opened after \(_quicConsecutiveFailures) failures — suppressed for \(Int(Self.quicCooldownDuration))s", category: "GRPCChannel")
+            _quicConsecutiveFailures = 0
+        } else {
+            Log.debug("🔌 QUIC connection invalidated (failures: \(_quicConsecutiveFailures)/\(Self.quicCircuitBreakerThreshold))", category: "GRPCChannel")
+        }
+    }
+
     /// Creates a one-shot gRPC client targeting a local ICE proxy port over plaintext.
     /// Used for the ICE legs of a happy-eyeballs 3-way race.
-    func makeICEClient(port: UInt16) throws -> GRPCClient<HTTP2ClientTransport.TransportServices> {
+    func makeICEClient(port: UInt16) throws -> GRPCClient<ConstructTransport> {
         let transport = try HTTP2ClientTransport.TransportServices(
             target: .ipv4(address: "127.0.0.1", port: Int(port)),
             transportSecurity: .plaintext,
@@ -416,7 +525,7 @@ final class GRPCChannelManager: Sendable {
                 )
             }
         )
-        return GRPCClient(transport: transport, interceptors: [AuthInterceptor()])
+        return GRPCClient(transport: ConstructTransport(tcp: transport), interceptors: [AuthInterceptor()])
     }
 
     /// Execute a gRPC operation with automatic retry, auth refresh, and ICE failover.
@@ -428,7 +537,7 @@ final class GRPCChannelManager: Sendable {
         /// Default is `false` — transport-level cleanup is handled by `runConnections()` and relay
         /// rotation. Only set `true` for interactive flows where you want immediate channel teardown.
         invalidatesConnectionOnFailure: Bool = false,
-        _ operation: @Sendable @escaping (GRPCClient<HTTP2ClientTransport.TransportServices>) async throws -> Result
+        _ operation: @Sendable @escaping (GRPCClient<ConstructTransport>) async throws -> Result
     ) async throws -> Result {
         try await GRPCCallExecutor.shared.performRPC(
             timeout: timeout,

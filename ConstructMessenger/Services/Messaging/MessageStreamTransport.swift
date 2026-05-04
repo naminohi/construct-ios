@@ -247,6 +247,24 @@ extension MessageStreamManager {
                 } else {
                     Log.info("🧊 Routing unchanged (\(routingKeyAfter)) — keeping persistent client, retrying on same connection", category: "MessageStream")
                 }
+
+                // Drain the cancelled stream task before returning to connectLoop.
+                // connectLoop calls openStream() again immediately (no delay on this path).
+                // If the old stream task's cancellation is still in-flight, a new
+                // client.messageStream() call starts while grpc-swift's NIO pipeline is
+                // still tearing down the previous stream. This races the GRPCStreamStateMachine
+                // into the "clientClosed: can't send metadata" state — an assertionFailure in
+                // debug builds (fatalError in logs) and InvalidState throw in release builds.
+                // AsyncStream.AsyncIterator.next() responds to task cancellation via
+                // withTaskCancellationHandler, so the producer exits promptly once the task
+                // is cancelled; 200ms is a conservative ceiling.
+                await withTaskGroup(of: Void.self) { group in
+                    group.addTask { _ = await streamTask.result }
+                    group.addTask { try? await Task.sleep(for: .milliseconds(200)) }
+                    _ = await group.next()
+                    group.cancelAll()
+                }
+
                 // Immediate retry: propagate an error to exit openStream() and let connectLoop retry.
                 throw RPCError(code: .unavailable, message: "Stream open timed out — retrying with ICE")
             }
@@ -257,7 +275,7 @@ extension MessageStreamManager {
     }
 
     nonisolated func runMessageStream(
-        client: Shared_Proto_Services_V1_MessagingService.Client<HTTP2ClientTransport.TransportServices>,
+        client: Shared_Proto_Services_V1_MessagingService.Client<ConstructTransport>,
         request: StreamingClientRequest<Shared_Proto_Services_V1_MessageStreamRequest>,
         incomingContinuation: AsyncStream<StreamEvent>.Continuation,
         metricsLabel: String

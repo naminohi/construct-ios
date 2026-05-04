@@ -317,7 +317,7 @@ final class CryptoIntegrationTests: XCTestCase {
         XCTAssertEqual(decrypted1, plaintext)
 
         // Second init (should overwrite session)
-        let encrypted2 = try alice.encryptMessage(contactId: "bob", plaintext: "Second message")
+        let _ = try alice.encryptMessage(contactId: "bob", plaintext: "Second message")
 
         // Note: In real implementation, you might want to prevent re-initialization
         // For now, we just test that it doesn't crash

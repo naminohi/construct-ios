@@ -46,20 +46,13 @@ struct Construct_MessengerApp: App {
                 StorageMigrationService.shared.migrateIfNeeded(
                     context: PersistenceController.shared.container.viewContext
                 )
-                // Start ICE proxy if user has it enabled — async to allow .well-known cert fetch
+                // IceProxyManager: start ICE proxy if user has it enabled — async to allow .well-known cert fetch
                 await IceProxyManager.shared.startIfEnabled()
                 // One-time migration: upload Kyber SPK for users registered before PQC launch.
                 // Returns immediately if already done (UserDefaults flag). Remove in a future version.
                 if authViewModel.isAuthenticated,
                    let deviceId = KeychainManager.shared.loadDeviceID() {
                     await PQCKeyManager.migrateIfNeeded(deviceId: deviceId)
-                }
-                // Start ConstructEngine (parallel run — old gRPC services remain active).
-                // Engine runs its own QUIC/H3 connection alongside legacy gRPC stream.
-                do {
-                    try EngineAdapter.shared.start()
-                } catch {
-                    Log.error("❌ EngineAdapter failed to start: \(error)", category: "Engine")
                 }
             }
         }

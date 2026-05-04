@@ -149,11 +149,11 @@ final class PerformanceBenchmarks: XCTestCase {
 
         // Establish Bob's session via msgNum=0
         let init0 = try alice.core.encryptMessage(contactId: bob.userId, plaintext: Data("__init__".utf8))
-        let init0Padded = MessagePadding.padCiphertext(Data(init0.content))
+        // Pass raw ciphertext — padding is wire-format only; Rust crypto expects unpadded bytes.
         let firstMsg = BinaryFirstMessage(
             ephemeralPublicKey: init0.ephemeralPublicKey,
             messageNumber: init0.messageNumber,
-            content: [UInt8](init0Padded),
+            content: init0.content,
             oneTimePrekeyId: init0.oneTimePrekeyId
         )
         _ = try bob.core.initReceivingSession(

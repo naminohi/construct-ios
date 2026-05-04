@@ -9,6 +9,7 @@ import SwiftUI
 
 struct AppearanceSettingsView: View {
     @AppStorage("appTheme") private var appTheme: AppTheme = .dark
+    @AppStorage("designStyle") private var designStyle: DesignStyle = .terminal
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -64,10 +65,43 @@ struct AppearanceSettingsView: View {
                         .foregroundStyle(Color.CT.textDim)
                         .padding(.horizontal, 20)
                 }
+
+                // MARK: Design Style section
+                VStack(alignment: .leading, spacing: 6) {
+                    ConstructSection(header: NSLocalizedString("design_style", comment: "")) {
+                        ForEach(Array(DesignStyle.allCases.enumerated()), id: \.element) { index, style in
+                            if index > 0 { ConstructRowDivider(indent: 52) }
+                            Button {
+                                designStyle = style
+                            } label: {
+                                HStack(spacing: 14) {
+                                    CTRowIcon(style.asciiIcon, color: Color.CT.accent)
+                                    Text(LocalizedStringKey(style.localizationKey))
+                                        .font(CTFont.bold(16))
+                                        .foregroundStyle(Color.CT.text)
+                                    Spacer()
+                                    if designStyle == style {
+                                        Text("[✓]")
+                                            .font(CTFont.bold(14))
+                                            .foregroundStyle(Color.CT.accent)
+                                    }
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 14)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    Text(LocalizedStringKey("design_style_footer"))
+                        .font(CTFont.regular(11))
+                        .foregroundStyle(Color.CT.textDim)
+                        .padding(.horizontal, 20)
+                }
             }
             .padding(.vertical, 20)
         }
-        .background(Color.CT.bg.ignoresSafeArea())
+        .ctBackground()
         #if os(iOS)
         .toolbar(.hidden, for: .navigationBar)
         #endif

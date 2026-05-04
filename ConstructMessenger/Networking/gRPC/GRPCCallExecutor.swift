@@ -1,6 +1,5 @@
 import Foundation
 import GRPCCore
-import GRPCNIOTransportHTTP2
 
 /// Executes gRPC RPCs with retry, auth refresh, client-side timeout, and ICE failover.
 ///
@@ -19,10 +18,35 @@ final class GRPCCallExecutor: Sendable {
         timeout: TimeInterval? = nil,
         allowAuthRetry: Bool = true,
         invalidatesConnectionOnFailure: Bool = false,
-        _ operation: @Sendable @escaping (GRPCClient<HTTP2ClientTransport.TransportServices>) async throws -> Result
+        _ operation: @Sendable @escaping (GRPCClient<ConstructTransport>) async throws -> Result
     ) async throws -> Result {
         let cm = GRPCChannelManager.shared
         var lastError: Error?
+
+        // QUIC fast path — iOS 26+ unary path.
+        // Streaming RPCs never reach performRPC(); they use acquireChannel() directly.
+        // Falls through to the TCP retry loop on any failure:
+        //   • RPCError  → request reached the server, transport is healthy; TCP handles auth retry.
+        //   • Other     → transport failure; QUIC session is invalidated before falling through.
+        if let quicClient = cm.acquireQUICClient() {
+            do {
+                return try await executeOnPersistentClient(
+                    client: quicClient,
+                    timeout: timeout,
+                    operation: operation
+                )
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let rpcErr as RPCError {
+                // The request reached the server — QUIC transport is healthy, don't invalidate.
+                lastError = rpcErr
+            } catch {
+                // Transport-level failure — invalidate QUIC, TCP path will retry.
+                Log.info("⚠️ QUIC transport failure — falling back to TCP: \(error)", category: "gRPC")
+                cm.invalidateQUICClient()
+                lastError = error
+            }
+        }
 
         for attempt in 0..<3 {
             let usingICE = cm.iceProxyPort() != nil
@@ -43,7 +67,7 @@ final class GRPCCallExecutor: Sendable {
             // ------------------------------------------------------------------
             let usingPersistent: Bool
             var capturedGen: UInt64 = 0
-            let client: GRPCClient<HTTP2ClientTransport.TransportServices>
+            let client: GRPCClient<ConstructTransport>
             if let pc = try? cm.acquirePersistentClient() {
                 client = pc
                 usingPersistent = true
@@ -110,10 +134,10 @@ final class GRPCCallExecutor: Sendable {
     // MARK: - Execution (timeout enforcement)
 
     private func executeWithTimeout<Result: Sendable>(
-        client: GRPCClient<HTTP2ClientTransport.TransportServices>,
+        client: GRPCClient<ConstructTransport>,
         usingPersistent: Bool,
         timeout: TimeInterval?,
-        operation: @Sendable @escaping (GRPCClient<HTTP2ClientTransport.TransportServices>) async throws -> Result
+        operation: @Sendable @escaping (GRPCClient<ConstructTransport>) async throws -> Result
     ) async throws -> Result {
         if usingPersistent {
             return try await executeOnPersistentClient(client: client, timeout: timeout, operation: operation)
@@ -125,9 +149,9 @@ final class GRPCCallExecutor: Sendable {
     /// Runs `operation` on a persistent client. `runConnections()` is already running in the
     /// background; we only need to enforce the client-side deadline.
     private func executeOnPersistentClient<Result: Sendable>(
-        client: GRPCClient<HTTP2ClientTransport.TransportServices>,
+        client: GRPCClient<ConstructTransport>,
         timeout: TimeInterval?,
-        operation: @Sendable @escaping (GRPCClient<HTTP2ClientTransport.TransportServices>) async throws -> Result
+        operation: @Sendable @escaping (GRPCClient<ConstructTransport>) async throws -> Result
     ) async throws -> Result {
         guard let timeout else { return try await operation(client) }
 
@@ -156,9 +180,9 @@ final class GRPCCallExecutor: Sendable {
     /// Runs `operation` on a per-call client by co-running with `runConnections()` so a transport
     /// failure surfaces immediately instead of hanging until the server timeout.
     private func executeOnPerCallClient<Result: Sendable>(
-        client: GRPCClient<HTTP2ClientTransport.TransportServices>,
+        client: GRPCClient<ConstructTransport>,
         timeout: TimeInterval?,
-        operation: @Sendable @escaping (GRPCClient<HTTP2ClientTransport.TransportServices>) async throws -> Result
+        operation: @Sendable @escaping (GRPCClient<ConstructTransport>) async throws -> Result
     ) async throws -> Result {
         try await withThrowingTaskGroup(of: Result?.self) { group in
             group.addTask {
@@ -214,7 +238,7 @@ final class GRPCCallExecutor: Sendable {
         usingPersistent: Bool,
         capturedGen: UInt64,
         invalidatesConnectionOnFailure: Bool,
-        client: GRPCClient<HTTP2ClientTransport.TransportServices>
+        client: GRPCClient<ConstructTransport>
     ) {
         if usingPersistent {
             // Only invalidate if routing hasn't changed since this RPC started.

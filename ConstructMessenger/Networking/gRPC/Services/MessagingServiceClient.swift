@@ -199,7 +199,7 @@ final class MessagingServiceClient: Sendable {
     }
 
     static func getPendingMessagesPage(
-        grpcClient: GRPCClient<HTTP2ClientTransport.TransportServices>,
+        grpcClient: GRPCClient<ConstructTransport>,
         sinceCursor: String? = nil,
         limit: Int32 = 50
     ) async throws -> PendingMessagesResult {

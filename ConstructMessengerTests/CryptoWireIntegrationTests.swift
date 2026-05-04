@@ -280,7 +280,7 @@ final class CryptoWireIntegrationTests: XCTestCase {
         try alice.initSenderSession(to: bob.userId, recipientBundle: bobBundle)
 
         let comp = try alice.encryptRaw("Hello", to: bob.userId)
-        var wirePayload = try alice.encodeWire(comp)
+        let wirePayload = try alice.encodeWire(comp)
 
         _ = try bob.initReceiverSession(from: alice.userId, senderBundle: aliceBundle, wirePayload: wirePayload)
 

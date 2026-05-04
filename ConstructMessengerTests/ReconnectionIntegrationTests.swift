@@ -88,7 +88,7 @@ private final class ReconnPeer {
     }
 
     func wipeSession(to contactId: String) {
-        try? core.removeSession(contactId: contactId)
+        _ = core.removeSession(contactId: contactId)
     }
 
     func hasSession(to contactId: String) -> Bool {
@@ -338,3 +338,4 @@ final class ReconnectionIntegrationTests: XCTestCase {
         }
     }
 }
+

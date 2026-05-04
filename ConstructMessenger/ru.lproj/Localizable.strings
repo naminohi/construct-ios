@@ -339,6 +339,10 @@
 "dark" = "Тёмная";
 "automatic" = "Автоматически";
 "theme_footer" = "Выберите оформление. Автоматически — подстраивается под системные настройки.";
+"design_style" = "Стиль интерфейса";
+"design_terminal" = "Терминал";
+"design_apple" = "Apple HIG";
+"design_style_footer" = "Терминал: ASCII-эстетика с JetBrains Mono. Apple HIG: стандартный iOS-интерфейс с SF Symbols.";
 
 // Account deletion
 "delete_account_countdown" = "Удалить через %dс";
