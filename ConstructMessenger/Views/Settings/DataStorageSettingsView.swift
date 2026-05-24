@@ -26,6 +26,7 @@ struct DataStorageSettingsView: View {
     @State private var showClearConfirm = false
     
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.designStyle) private var designStyle
 
     // MARK: - Options
 
@@ -46,7 +47,16 @@ struct DataStorageSettingsView: View {
     ]
 
     var body: some View {
-            
+        if designStyle == .apple {
+            appleBody
+        } else {
+            ctBody
+        }
+    }
+
+    // MARK: - CT Body
+
+    private var ctBody: some View {
         ScrollView {
             VStack(spacing: 20) {
                 if showNavBar {
@@ -56,7 +66,7 @@ struct DataStorageSettingsView: View {
                         backAction: { dismiss() }
                     )
                 }
-                
+
                 // MARK: - Usage section
                 VStack(alignment: .leading, spacing: 6) {
                     ConstructSection(header: NSLocalizedString("storage_media_cache", comment: "").uppercased()) {
@@ -93,9 +103,9 @@ struct DataStorageSettingsView: View {
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 14)
-                        
+
                         ConstructRowDivider(indent: 16)
-                        
+
                         ConstructActionRow(
                             icon: "trash",
                             title: isClearing
@@ -114,7 +124,7 @@ struct DataStorageSettingsView: View {
                         .foregroundStyle(Color.CT.textDim)
                         .padding(.horizontal, 20)
                 }
-                
+
                 // MARK: - Quota section
                 VStack(alignment: .leading, spacing: 6) {
                     ConstructSection(header: NSLocalizedString("storage_limit", comment: "").uppercased()) {
@@ -133,7 +143,7 @@ struct DataStorageSettingsView: View {
                         .foregroundStyle(Color.CT.textDim)
                         .padding(.horizontal, 20)
                 }
-                
+
                 // MARK: - Auto-eviction section
                 VStack(alignment: .leading, spacing: 6) {
                     ConstructSection(header: NSLocalizedString("storage_auto_clear", comment: "").uppercased()) {
@@ -166,11 +176,135 @@ struct DataStorageSettingsView: View {
         #if os(iOS)
         .toolbar(.hidden, for: .navigationBar)
         #endif
-        
         .task { cacheSize = MediaManager.shared.diskCacheSize() }
         .confirmationDialog("storage_clear_confirm_title",
                             isPresented: $showClearConfirm,
                             titleVisibility: .visible) {
+            Button("storage_clear_media_cache", role: .destructive) {
+                Task { await clearCache() }
+            }
+            Button("cancel", role: .cancel) {}
+        } message: {
+            Text("storage_clear_confirm_message")
+        }
+    }
+
+    // MARK: - Apple Body
+
+    private var appleBody: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                // Usage
+                ConstructSection {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Label(LocalizedStringKey("media_cache"), systemImage: "photo.on.rectangle.angled")
+                                .font(.body)
+                            Spacer()
+                            Text(formatBytes(cacheSize))
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        if maxDiskCacheBytesRaw > 0 {
+                            let fraction = min(Double(cacheSize) / Double(maxDiskCacheBytesRaw), 1.0)
+                            GeometryReader { geo in
+                                ZStack(alignment: .leading) {
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .fill(Color(.systemFill))
+                                        .frame(height: 4)
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .fill(fraction > 0.85 ? Color.orange : Color.accentColor)
+                                        .frame(width: geo.size.width * fraction, height: 4)
+                                        .animation(.easeInOut(duration: 0.4), value: fraction)
+                                }
+                            }
+                            .frame(height: 6)
+                            Text(String(format: NSLocalizedString("storage_of_quota", comment: ""),
+                                        formatBytes(cacheSize), formatBytes(Int64(maxDiskCacheBytesRaw))))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+
+                    ConstructRowDivider(indent: 16)
+
+                    ConstructActionRow(
+                        icon: "trash",
+                        title: isClearing
+                            ? LocalizedStringKey("storage_clearing")
+                            : LocalizedStringKey("storage_clear_media_cache"),
+                        role: .destructive,
+                        isLoading: isClearing
+                    ) {
+                        showClearConfirm = true
+                    }
+                    .disabled(isClearing || cacheSize == 0)
+                    .opacity((isClearing || cacheSize == 0) ? 0.5 : 1.0)
+                }
+
+                Text(LocalizedStringKey("storage_media_cache_footer"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 8)
+
+                // Quota
+                ConstructSection {
+                    HStack {
+                        Label(LocalizedStringKey("storage_limit"), systemImage: "internaldrive")
+                        Spacer()
+                        Picker("", selection: $maxDiskCacheBytesRaw) {
+                            ForEach(quotaOptions, id: \.bytes) { option in
+                                Text(option.label).tag(option.bytes)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                }
+
+                Text(LocalizedStringKey(maxDiskCacheBytesRaw == 0 ? "storage_no_limit_footer" : "storage_limit_footer"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 8)
+
+                // Auto-eviction
+                ConstructSection {
+                    HStack {
+                        Label(LocalizedStringKey("storage_auto_clear"), systemImage: "clock.arrow.2.circlepath")
+                        Spacer()
+                        Picker("", selection: $evictAfterDays) {
+                            ForEach(evictOptions, id: \.days) { option in
+                                Text(option.label).tag(option.days)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                }
+
+                Text(LocalizedStringKey("storage_auto_clear_footer"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 8)
+            }
+            .padding(.bottom, 32)
+        }
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .navigationTitle(NSLocalizedString("data_and_storage", comment: ""))
+        .navigationBarTitleDisplayMode(.large)
+        .task { cacheSize = MediaManager.shared.diskCacheSize() }
+        .alert("storage_clear_confirm_title",
+               isPresented: $showClearConfirm) {
             Button("storage_clear_media_cache", role: .destructive) {
                 Task { await clearCache() }
             }

@@ -13,24 +13,67 @@ import SwiftUI
 struct ConnectionStatusIndicator: View {
     var connectionManager = ConnectionStatusManager.shared
     @ObservedObject var iceProxy = IceProxyManager.shared
+    @Environment(\.designStyle) private var designStyle
 
     @State private var textOpacity: Double = 1
     @State private var visible: Bool = true
     @State private var hideTask: Task<Void, Never>? = nil
 
     var body: some View {
-        Group {
-            if visible {
-                Text(labelText)
-                    .opacity(textOpacity)
+        switch designStyle {
+        case .terminal:
+            Group {
+                if visible {
+                    Text(labelText)
+                        .opacity(textOpacity)
+                }
             }
+            .font(CTFont.regular(11))
+            .foregroundStyle(labelColor)
+            .animation(.easeInOut(duration: 0.5), value: connectionManager.connectionStatus)
+            .onAppear { handleStatusChange(connectionManager.connectionStatus) }
+            .onChange(of: connectionManager.connectionStatus) { _, newStatus in
+                handleStatusChange(newStatus)
+            }
+        case .apple:
+            appleStatus
+                .animation(.easeInOut(duration: 0.5), value: connectionManager.connectionStatus)
+                .onAppear { handleStatusChange(connectionManager.connectionStatus) }
+                .onChange(of: connectionManager.connectionStatus) { _, newStatus in
+                    handleStatusChange(newStatus)
+                }
         }
-        .font(CTFont.regular(11))
-        .foregroundStyle(labelColor)
-        .animation(.easeInOut(duration: 0.5), value: connectionManager.connectionStatus)
-        .onAppear { handleStatusChange(connectionManager.connectionStatus) }
-        .onChange(of: connectionManager.connectionStatus) { _, newStatus in
-            handleStatusChange(newStatus)
+    }
+
+    @ViewBuilder
+    private var appleStatus: some View {
+        if visible {
+            Text(appleLabel)
+                .font(.caption)
+                .foregroundStyle(appleColor)
+                .opacity(textOpacity)
+        }
+    }
+
+    private var appleLabel: String {
+        switch connectionManager.connectionStatus {
+        case .connected:   return trafficLabel
+        case .connecting, .unknown: return "\(trafficLabel) · \(NSLocalizedString("connecting", comment: ""))…"
+        case .disconnected: return NSLocalizedString("offline", comment: "").uppercased()
+        }
+    }
+
+    private var appleColor: Color {
+        switch connectionManager.connectionStatus {
+        case .connected:
+            switch iceProxy.currentTrafficPath {
+            case .direct:               return Color(.secondaryLabel)
+            case .icePrimary, .iceWebTunnel: return Color.accentColor
+            case .iceRelay:             return Color(.tertiaryLabel)
+            case .iceCooldown, .iceConnecting: return Color(.secondaryLabel)
+            }
+        case .connecting, .unknown:     return Color(.secondaryLabel)
+        case .disconnected:             return .red
         }
     }
 

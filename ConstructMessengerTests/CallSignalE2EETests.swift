@@ -335,7 +335,7 @@ final class CallSignalE2EETests: XCTestCase {
 
         // Exchange a few regular messages first (advances DR ratchet)
         let aliceBundle = try alice.exportBundle()
-        let bobBundle   = try bob.exportBundle()
+        let _ = try bob.exportBundle()
         _ = aliceBundle // used in session init above
 
         // Bob → Alice: reply after session init (Bob has been the receiver so far)

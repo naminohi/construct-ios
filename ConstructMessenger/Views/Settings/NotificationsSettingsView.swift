@@ -14,6 +14,7 @@ import UserNotifications
 struct NotificationsSettingsView: View {
     // MARK: - Notification Settings
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.designStyle) private var designStyle
     @AppStorage("notificationsEnabled") private var notificationsEnabled: Bool = true
     @AppStorage("showMessageNotifications") private var showMessageNotifications: Bool = true
     @AppStorage("notificationPreviewType") private var notificationPreviewType: NotificationPreviewType = .nameAndMessage
@@ -26,6 +27,17 @@ struct NotificationsSettingsView: View {
     @State private var showingSystemSettings = false
 
     var body: some View {
+        Group {
+            if designStyle == .apple { appleBody } else { ctBody }
+        }
+        .onAppear {
+            checkNotificationAuthorization()
+        }
+    }
+
+    // MARK: - CT Body
+
+    private var ctBody: some View {
         VStack(spacing: 0) {
             CTNavBar(
                 title: NSLocalizedString("notifications", comment: ""),
@@ -221,14 +233,221 @@ struct NotificationsSettingsView: View {
             .toolbar(.hidden, for: .navigationBar)
             #endif
         }
-        .onAppear {
-            checkNotificationAuthorization()
-        }
         }
         .background(Color.CT.bg.ignoresSafeArea())
     }
 
+    // MARK: - Apple Body
+
+    private var appleBody: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                // MARK: - General Notifications
+                VStack(alignment: .leading, spacing: 6) {
+                    ConstructSection(header: NSLocalizedString("notifications", comment: "")) {
+                        HStack {
+                            Label(LocalizedStringKey("enable_notifications"), systemImage: "bell.fill")
+                                .font(.body)
+                            Spacer()
+                            Toggle("", isOn: $notificationsEnabled)
+                                .labelsHidden()
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 13)
+                        .background(Color(.secondarySystemGroupedBackground))
+                    }
+                    Text(LocalizedStringKey("notifications_footer"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 20)
+                }
+
+                // MARK: - System Permission Status
+                VStack(alignment: .leading, spacing: 6) {
+                    ConstructSection(header: NSLocalizedString("system_notification_settings", comment: "")) {
+                        HStack {
+                            Label {
+                                Text(LocalizedStringKey("status"))
+                            } icon: {
+                                Image(systemName: appleStatusSFSymbol)
+                                    .foregroundStyle(appleStatusColor)
+                            }
+                            .font(.body)
+                            Spacer()
+                            Text(statusText)
+                                .font(.subheadline)
+                                .foregroundStyle(appleStatusColor)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 13)
+                        .background(Color(.secondarySystemGroupedBackground))
+
+                        if authorizationStatus == .denied {
+                            ConstructRowDivider(indent: 52)
+                            Button(action: openSystemSettings) {
+                                HStack {
+                                    Label(LocalizedStringKey("open_system_settings"), systemImage: "gear")
+                                        .font(.body)
+                                    Spacer()
+                                    Image(systemName: "arrow.up.right.square")
+                                        .imageScale(.small)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 13)
+                                .background(Color(.secondarySystemGroupedBackground))
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        } else if authorizationStatus == .notDetermined {
+                            ConstructRowDivider(indent: 52)
+                            Button(action: requestNotificationPermission) {
+                                HStack {
+                                    Label(LocalizedStringKey("grant_permission"), systemImage: "bell.badge.fill")
+                                        .font(.body)
+                                        .foregroundStyle(.tint)
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 13)
+                                .background(Color(.secondarySystemGroupedBackground))
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    Text(authorizationStatus == .denied
+                         ? LocalizedStringKey("notification_permissions_required")
+                         : LocalizedStringKey("system_settings_footer"))
+                        .font(.caption)
+                        .foregroundStyle(authorizationStatus == .denied ? Color.orange : Color.secondary)
+                        .padding(.horizontal, 20)
+                }
+
+                // MARK: - Message Notifications
+                if notificationsEnabled {
+                    ConstructSection(header: NSLocalizedString("MESSAGE_NOTIFICATIONS", comment: "")) {
+                        HStack {
+                            Label(LocalizedStringKey("show_message_notifications"), systemImage: "message.fill")
+                                .font(.body)
+                            Spacer()
+                            Toggle("", isOn: $showMessageNotifications)
+                                .labelsHidden()
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 13)
+                        .background(Color(.secondarySystemGroupedBackground))
+
+                        ConstructRowDivider(indent: 52)
+
+                        HStack {
+                            Label(LocalizedStringKey("notification_sound"), systemImage: "speaker.wave.2.fill")
+                                .font(.body)
+                            Spacer()
+                            Toggle("", isOn: $notificationSound)
+                                .labelsHidden()
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 13)
+                        .background(Color(.secondarySystemGroupedBackground))
+
+                        ConstructRowDivider(indent: 52)
+
+                        HStack {
+                            Label(LocalizedStringKey("vibration"), systemImage: "hand.tap.fill")
+                                .font(.body)
+                            Spacer()
+                            Toggle("", isOn: $notificationVibration)
+                                .labelsHidden()
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 13)
+                        .background(Color(.secondarySystemGroupedBackground))
+                    }
+
+                    // MARK: - Push Notifications
+                    #if targetEnvironment(macCatalyst)
+                    ConstructSection(header: NSLocalizedString("PUSH_NOTIFICATIONS", comment: "")) {
+                        HStack {
+                            Label(LocalizedStringKey("push_not_available_mac"), systemImage: "app.badge.fill")
+                                .font(.body)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 13)
+                        .background(Color(.secondarySystemGroupedBackground))
+                    }
+                    #else
+                    VStack(alignment: .leading, spacing: 6) {
+                        ConstructSection(header: NSLocalizedString("PUSH_NOTIFICATIONS", comment: "")) {
+                            HStack {
+                                Label(LocalizedStringKey("enable_push_notifications"), systemImage: "app.badge.fill")
+                                    .font(.body)
+                                Spacer()
+                                Toggle("", isOn: $pushNotificationsEnabled)
+                                    .labelsHidden()
+                                    .disabled(authorizationStatus != .authorized)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 13)
+                            .background(Color(.secondarySystemGroupedBackground))
+
+                            ConstructRowDivider(indent: 52)
+
+                            HStack(spacing: 12) {
+                                Image(systemName: "lock.shield.fill")
+                                    .font(.system(size: 17))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 22)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(LocalizedStringKey("push_privacy_notice"))
+                                        .font(.body)
+                                    Text(LocalizedStringKey("push_privacy_notice_text"))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Spacer()
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 13)
+                            .background(Color(.secondarySystemGroupedBackground))
+                        }
+                        Text(LocalizedStringKey("push_notifications_footer"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 20)
+                    }
+                    #endif
+                }
+            }
+            .padding(.vertical, 20)
+        }
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .navigationTitle(NSLocalizedString("notifications", comment: ""))
+        .navigationBarTitleDisplayMode(.large)
+    }
+
     // MARK: - Computed Properties
+    private var appleStatusSFSymbol: String {
+        switch authorizationStatus {
+        case .authorized, .provisional, .ephemeral: return "checkmark.circle.fill"
+        case .denied: return "xmark.circle.fill"
+        case .notDetermined: return "questionmark.circle.fill"
+        @unknown default: return "questionmark.circle.fill"
+        }
+    }
+
+    private var appleStatusColor: Color {
+        switch authorizationStatus {
+        case .authorized, .provisional, .ephemeral: return .green
+        case .denied: return .red
+        case .notDetermined: return .orange
+        @unknown default: return Color(.secondaryLabel)
+        }
+    }
+
     private var statusIcon: String {
         switch authorizationStatus {
         case .authorized:

@@ -46,7 +46,7 @@ struct Construct_MessengerApp: App {
                 StorageMigrationService.shared.migrateIfNeeded(
                     context: PersistenceController.shared.container.viewContext
                 )
-                // Start ICE proxy if user has it enabled — async to allow .well-known cert fetch
+                // IceProxyManager: start ICE proxy if user has it enabled — async to allow .well-known cert fetch
                 await IceProxyManager.shared.startIfEnabled()
                 // One-time migration: upload Kyber SPK for users registered before PQC launch.
                 // Returns immediately if already done (UserDefaults flag). Remove in a future version.

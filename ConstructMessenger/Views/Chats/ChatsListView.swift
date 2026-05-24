@@ -13,6 +13,7 @@ struct ChatsListView: View {
     private var chats: FetchedResults<Chat>
 
     @Environment(ChatsViewModel.self) private var chatsViewModel
+    @Environment(\.designStyle) private var designStyle
     @State private var showingQRScanner = false
     @State private var navigationPath = NavigationPath()
     @State private var showingDrafts = false
@@ -99,55 +100,102 @@ struct ChatsListView: View {
     // MARK: - Search Bar
 
     private var searchBar: some View {
-        HStack(spacing: 6) {
-            Text("[")
-                .font(CTFont.regular(13))
-                .foregroundColor(Color.CT.textDim)
-            TextField("", text: $searchQuery, prompt: Text("search_")
-                .font(CTFont.regular(13))
-                .foregroundColor(Color.CT.textDim))
-                .font(CTFont.regular(13))
-                .foregroundColor(Color.CT.text)
-                .autocorrectionDisabled()
-                #if os(iOS)
-                .textInputAutocapitalization(.never)
-                #endif
-                .tint(Color.CT.accent)
-            if !searchQuery.isEmpty {
-                Button { searchQuery = "" } label: {
-                    Text("×")
+        Group {
+            if designStyle == .apple {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(Color(.tertiaryLabel))
+                    TextField(NSLocalizedString("search", comment: ""), text: $searchQuery)
+                        .autocorrectionDisabled()
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        #endif
+                    if !searchQuery.isEmpty {
+                        Button { searchQuery = "" } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(Color(.tertiaryLabel))
+                        }
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+            } else {
+                HStack(spacing: 6) {
+                    Text("[")
                         .font(CTFont.regular(13))
                         .foregroundColor(Color.CT.textDim)
+                    TextField("", text: $searchQuery, prompt: Text("search_")
+                        .font(CTFont.regular(13))
+                        .foregroundColor(Color.CT.textDim))
+                        .font(CTFont.regular(13))
+                        .foregroundColor(Color.CT.text)
+                        .autocorrectionDisabled()
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        #endif
+                        .tint(Color.CT.accent)
+                    if !searchQuery.isEmpty {
+                        Button { searchQuery = "" } label: {
+                            Text("×")
+                                .font(CTFont.regular(13))
+                                .foregroundColor(Color.CT.textDim)
+                        }
+                    } else {
+                        Text("]")
+                            .font(CTFont.regular(13))
+                            .foregroundColor(Color.CT.textDim)
+                    }
                 }
-            } else {
-                Text("]")
-                    .font(CTFont.regular(13))
-                    .foregroundColor(Color.CT.textDim)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(Color.CT.bgMsg)
+                .ctBorderBottom()
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .background(Color.CT.bgMsg)
-        .ctBorderBottom()
     }
 
     // MARK: - Nav Bar
 
     private var navBar: some View {
-        HStack(spacing: 10) {
-            ConnectionStatusIndicator()
-            Spacer()
-            #if os(iOS)
-            Button { showingQRScanner = true } label: {
-                Text(CTSymbol.scan)
-                    .font(CTFont.bold(14))
-                    .foregroundColor(Color.CT.accent)
+        Group {
+            if designStyle == .apple {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        
+                        ConnectionStatusIndicator()
+                    }
+                    Spacer()
+                    #if os(iOS)
+                    Button { showingQRScanner = true } label: {
+                        Image(systemName: "qrcode.viewfinder")
+                            .imageScale(.large)
+                    }
+                    #endif
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 4)
+            } else {
+                HStack(spacing: 10) {
+                    ConnectionStatusIndicator()
+                    Spacer()
+                    #if os(iOS)
+                    Button { showingQRScanner = true } label: {
+                        Text(CTSymbol.scan)
+                            .font(CTFont.bold(14))
+                            .foregroundColor(Color.CT.accent)
+                    }
+                    #endif
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 11)
+                .ctBorderBottom()
             }
-            #endif
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 11)
-        .ctBorderBottom()
     }
 
     // MARK: - Chat List
@@ -176,8 +224,8 @@ struct ChatsListView: View {
                     ChatRowView(chat: chat)
                 }
                 .buttonStyle(.plain)
-                .listRowBackground(Color.CT.bg)
-                .listRowSeparatorTint(Color.CT.noise)
+                .listRowBackground(designStyle == .apple ? nil : Color.CT.bg)
+                .listRowSeparatorTint(designStyle == .apple ? nil : Color.CT.noise)
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                     Button(role: .destructive) {
                         Task { await chatsViewModel.deleteChatWithEndSession(chat: chat) }
@@ -192,7 +240,7 @@ struct ChatsListView: View {
                             systemImage: chat.unreadCount > 0 ? "envelope.open" : "envelope.badge"
                         )
                     }
-                    .tint(Color.CT.accentDim)
+                    .tint(designStyle == .apple ? .accentColor : Color.CT.accentDim)
                 }
                 .swipeActions(edge: .leading, allowsFullSwipe: true) {
                     Button {
@@ -203,7 +251,7 @@ struct ChatsListView: View {
                             systemImage: chat.isPinned ? "pin.slash" : "pin"
                         )
                     }
-                    .tint(Color.CT.textDim)
+                    .tint(designStyle == .apple ? .gray : Color.CT.textDim)
                 }
             }
         }
@@ -214,7 +262,7 @@ struct ChatsListView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
-        .background(Color.CT.bg)
+        .background(designStyle == .apple ? Color(.systemGroupedBackground) : Color.CT.bg)
     }
 
     // MARK: - Actions

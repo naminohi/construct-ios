@@ -213,16 +213,14 @@ enum CTSymbol {
 // MARK: - CTRowIcon
 
 /// A fixed-width icon column for use in list rows (settings, devices, etc).
-/// Handles the lineLimit + fixedSize + frame pattern that prevents CT bracket
-/// symbols from wrapping across lines in narrow containers.
-///
-/// Usage:
-///   CTRowIcon(CTSymbol.biometric)
-///   CTRowIcon(CTSymbol.key, color: .CT.accent)
+/// .terminal: JetBrains Mono bracket symbol.
+/// .apple: SF Symbol image.
 struct CTRowIcon: View {
     let symbol: String
     var color: Color  = Color.CT.textDim
     var size: CGFloat = 14
+
+    @Environment(\.designStyle) private var designStyle
 
     init(_ symbol: String, color: Color = Color.CT.textDim, size: CGFloat = 14) {
         self.symbol = symbol
@@ -231,12 +229,17 @@ struct CTRowIcon: View {
     }
 
     var body: some View {
-        Text(symbol)
-            .font(CTFont.bold(size))
-            .foregroundStyle(color)
-            .lineLimit(1)
-            .fixedSize()                     // measure natural width — never truncate
-            .frame(minWidth: 36, alignment: .leading)
+        switch designStyle {
+        case .terminal:
+            Text(symbol)
+                .font(CTFont.bold(size))
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .fixedSize()
+                .frame(minWidth: 36, alignment: .leading)
+        case .apple:
+            _APRowIcon(symbol: symbol, color: color, size: size)
+        }
     }
 }
 
@@ -263,8 +266,9 @@ struct CTHexAvatar: View {
     var initials: String
     var image: Image? = nil
     var size: AvatarSize = .medium
-    /// Seed for deterministic color (pass userId or username). Defaults to initials.
     var colorSeed: String? = nil
+
+    @Environment(\.designStyle) private var designStyle
 
     enum AvatarSize: CGFloat {
         case small  = 32
@@ -278,26 +282,31 @@ struct CTHexAvatar: View {
     }
 
     var body: some View {
-        ZStack {
-            if let image {
-                image
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: size.rawValue, height: size.rawValue)
-                    .clipShape(CTHexShape())
-                CTHexShape()
-                    .stroke(accentColor, lineWidth: 1)
-            } else {
-                CTHexShape()
-                    .fill(accentColor.opacity(0.18))
-                CTHexShape()
-                    .stroke(accentColor, lineWidth: 1)
-                Text(String(initials.prefix(2)).uppercased())
-                    .font(CTFont.bold(size.rawValue * 0.28))
-                    .foregroundColor(accentColor)
+        switch designStyle {
+        case .terminal:
+            ZStack {
+                if let image {
+                    image
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: size.rawValue, height: size.rawValue)
+                        .clipShape(CTHexShape())
+                    CTHexShape()
+                        .stroke(accentColor, lineWidth: 1)
+                } else {
+                    CTHexShape()
+                        .fill(accentColor.opacity(0.18))
+                    CTHexShape()
+                        .stroke(accentColor, lineWidth: 1)
+                    Text(String(initials.prefix(2)).uppercased())
+                        .font(CTFont.bold(size.rawValue * 0.28))
+                        .foregroundColor(accentColor)
+                }
             }
+            .frame(width: size.rawValue, height: size.rawValue)
+        case .apple:
+            _APHexAvatar(initials: initials, image: image, size: size, colorSeed: colorSeed)
         }
-        .frame(width: size.rawValue, height: size.rawValue)
     }
 }
 
@@ -360,32 +369,39 @@ struct CTNoise: View {
 
 // MARK: - Mode Selector (tri-state segmented control)
 
-/// A CT-styled segmented control for selecting between modes.
-/// No rounded corners, accent color on selected segment, ASCII aesthetic.
+/// .terminal: CT-styled no-rounded-corners segmented control.
+/// .apple: native Picker(.segmented).
 struct CTModeSelector<T: Hashable>: View {
     @Binding var selection: T
     let options: [T]
     let labels: [T: String]
 
+    @Environment(\.designStyle) private var designStyle
+
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(options, id: \.self) { option in
-                let isSelected = selection == option
-                Button {
-                    selection = option
-                } label: {
-                    Text(labels[option] ?? "")
-                        .font(CTFont.regular(12))
-                        .foregroundColor(isSelected ? Color.CT.bg : Color.CT.textDim)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
-                        .background(isSelected ? Color.CT.accent : Color.clear)
+        switch designStyle {
+        case .terminal:
+            HStack(spacing: 0) {
+                ForEach(options, id: \.self) { option in
+                    let isSelected = selection == option
+                    Button {
+                        selection = option
+                    } label: {
+                        Text(labels[option] ?? "")
+                            .font(CTFont.regular(12))
+                            .foregroundColor(isSelected ? Color.CT.bg : Color.CT.textDim)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
+                            .background(isSelected ? Color.CT.accent : Color.clear)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
+            .overlay(Rectangle().stroke(Color.CT.accent.opacity(0.4), lineWidth: 0.5))
+            .frame(width: 180)
+        case .apple:
+            _APModeSelector(selection: $selection, options: options, labels: labels)
         }
-        .overlay(Rectangle().stroke(Color.CT.accent.opacity(0.4), lineWidth: 0.5))
-        .frame(width: 180)
     }
 }
 
@@ -395,31 +411,43 @@ struct CTSep: View {
     enum Style { case thin, thick }
     var style: Style = .thin
 
+    @Environment(\.designStyle) private var designStyle
+
     var body: some View {
-        Text(style == .thin ? CTSymbol.thin() : CTSymbol.thick())
-            .font(CTFont.regular(10))
-            .foregroundColor(Color.CT.noise)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 12)
+        switch designStyle {
+        case .terminal:
+            Text(style == .thin ? CTSymbol.thin() : CTSymbol.thick())
+                .font(CTFont.regular(10))
+                .foregroundColor(Color.CT.noise)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+        case .apple:
+            _APSep(style: style == .thin ? .thin : .thick)
+        }
     }
 }
-
-// MARK: - System Message  (> text)
 
 struct CTSystemMessage: View {
     let text: String
 
+    @Environment(\.designStyle) private var designStyle
+
     var body: some View {
-        HStack(spacing: 6) {
-            Text(">")
-                .font(CTFont.bold(12))
-                .foregroundColor(Color.CT.accentDim)
-            Text(text)
-                .font(CTFont.regular(12))
-                .foregroundColor(Color.CT.accentDim)
+        switch designStyle {
+        case .terminal:
+            HStack(spacing: 6) {
+                Text(">")
+                    .font(CTFont.bold(12))
+                    .foregroundColor(Color.CT.accentDim)
+                Text(text)
+                    .font(CTFont.regular(12))
+                    .foregroundColor(Color.CT.accentDim)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 2)
+        case .apple:
+            _APSystemMessage(text: text)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 2)
     }
 }
 
@@ -433,31 +461,49 @@ struct CTNavBar: View {
     var backAction: (() -> Void)?     = nil
     var trailingAction: (() -> Void)? = nil
 
+    @Environment(\.designStyle) private var designStyle
+
     var body: some View {
-        HStack(spacing: 10) {
-            if showBack {
-                Button(action: { backAction?() }) {
-                    Text(CTSymbol.back)
-                        .font(CTFont.bold(14))
-                        .foregroundColor(Color.CT.accent)
+        switch designStyle {
+        case .terminal:
+            HStack(spacing: 10) {
+                if showBack {
+                    Button(action: { backAction?() }) {
+                        Text(CTSymbol.back)
+                            .font(CTFont.bold(14))
+                            .foregroundColor(Color.CT.accent)
+                    }
+                }
+                Text(title.uppercased())
+                    .font(CTFont.bold(13))
+                    .foregroundColor(Color.CT.text)
+                    .tracking(4)
+                Spacer()
+                if let sym = trailingSymbol {
+                    Button(action: { trailingAction?() }) {
+                        Text(sym)
+                            .font(CTFont.regular(13))
+                            .foregroundColor(trailingColor)
+                    }
                 }
             }
-            Text(title.uppercased())
-                .font(CTFont.bold(13))
-                .foregroundColor(Color.CT.text)
-                .tracking(4)
-            Spacer()
-            if let sym = trailingSymbol {
-                Button(action: { trailingAction?() }) {
-                    Text(sym)
-                        .font(CTFont.regular(13))
-                        .foregroundColor(trailingColor)
-                }
-            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 11)
+            .ctBorderBottom()
+        case .apple:
+            _APNavBar(
+                title: title,
+                showBack: showBack,
+                trailingSymbol: trailingSymbol,
+                trailingColor: trailingColor,
+                backAction: backAction,
+                trailingAction: trailingAction
+            )
+            // Always suppress the system NavigationStack bar when using a custom bar.
+            // This is applied from inside the component so it works regardless of
+            // whether the parent view sets .toolbar(.hidden) explicitly.
+            .toolbar(.hidden, for: .navigationBar)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 11)
-        .ctBorderBottom()
     }
 }
 
@@ -471,6 +517,8 @@ struct CTTabItem {
 struct CTTabBar: View {
     @Binding var selected: Int
     var items: [CTTabItem]
+
+    @Environment(\.designStyle) private var designStyle
 
     /// Convenience initialiser with default 3-tab layout (chats / synaps / settings).
     init(selected: Binding<Int>, items: [CTTabItem] = CTTabBar.defaultItems) {
@@ -487,24 +535,29 @@ struct CTTabBar: View {
     }
 
     var body: some View {
-        HStack {
-            ForEach(items.indices, id: \.self) { i in
-                Spacer()
-                Button(action: { selected = i }) {
-                    VStack(spacing: 2) {
-                        Text(items[i].symbol)
-                            .font(selected == i ? CTFont.bold(13) : CTFont.regular(13))
-                            .foregroundColor(selected == i ? Color.CT.accent : Color.CT.textDim)
-                        Text(selected == i ? "> \(items[i].label)" : items[i].label)
-                            .font(selected == i ? CTFont.bold(9) : CTFont.regular(9))
-                            .foregroundColor(selected == i ? Color.CT.accent : Color.CT.textDim)
+        switch designStyle {
+        case .terminal:
+            HStack {
+                ForEach(items.indices, id: \.self) { i in
+                    Spacer()
+                    Button(action: { selected = i }) {
+                        VStack(spacing: 2) {
+                            Text(items[i].symbol)
+                                .font(selected == i ? CTFont.bold(13) : CTFont.regular(13))
+                                .foregroundColor(selected == i ? Color.CT.accent : Color.CT.textDim)
+                            Text(selected == i ? "> \(items[i].label)" : items[i].label)
+                                .font(selected == i ? CTFont.bold(9) : CTFont.regular(9))
+                                .foregroundColor(selected == i ? Color.CT.accent : Color.CT.textDim)
+                        }
                     }
+                    Spacer()
                 }
-                Spacer()
             }
+            .padding(.vertical, 10)
+            .ctBorderTop()
+        case .apple:
+            _APTabBar(selected: $selected, items: items)
         }
-        .padding(.vertical, 10)
-        .ctBorderTop()
     }
 }
 
@@ -514,47 +567,76 @@ struct CTSettingsSectionHeader: View {
     let title: String
     var color: Color = Color.CT.accentDim
 
+    @Environment(\.designStyle) private var designStyle
+
     var body: some View {
-        HStack(spacing: 6) {
-            Text(">")
-                .font(CTFont.bold(11))
-                .foregroundColor(color)
-            Text(title.uppercased())
-                .font(CTFont.bold(11))
-                .foregroundColor(color)
-            Spacer()
+        switch designStyle {
+        case .terminal:
+            HStack(spacing: 6) {
+                Text(">")
+                    .font(CTFont.bold(11))
+                    .foregroundColor(color)
+                Text(title.uppercased())
+                    .font(CTFont.bold(11))
+                    .foregroundColor(color)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 16)
+            .padding(.bottom, 4)
+        case .apple:
+            _APSettingsSectionHeader(title: title, color: color)
         }
-        .padding(.horizontal, 12)
-        .padding(.top, 16)
-        .padding(.bottom, 4)
     }
 }
 
 struct CTSettingsRow: View {
     let label: String
-    let value: String
+    var value: String       = CTSymbol.forward
     var labelColor: Color   = Color.CT.textDim
     var valueColor: Color   = Color.CT.text
     var isAction: Bool      = false
     var isDestructive: Bool = false
+    /// SF Symbol name or CT symbol (e.g. "[lock]") — shown only in Apple mode.
+    var icon: String?       = nil
+    /// Optional subtitle shown below the label in Apple mode.
+    var subtitle: String?   = nil
+    var subtitleColor: Color = Color(.secondaryLabel)
+
+    @Environment(\.designStyle) private var designStyle
 
     var body: some View {
-        HStack(spacing: 0) {
-            Text(label)
-                .font(CTFont.regular(13))
-                .foregroundColor(isDestructive ? Color.CT.danger : labelColor)
-                .frame(width: 150, alignment: .leading)
-            Spacer(minLength: 8)
-            Text(value)
-                .font(isAction ? CTFont.bold(13) : CTFont.regular(13))
-                .foregroundColor(
-                    isDestructive ? Color.CT.danger :
-                    isAction      ? Color.CT.accent : valueColor
-                )
-                .frame(maxWidth: .infinity, alignment: .trailing)
+        switch designStyle {
+        case .terminal:
+            HStack(spacing: 0) {
+                Text(label)
+                    .font(CTFont.regular(13))
+                    .foregroundColor(isDestructive ? Color.CT.danger : labelColor)
+                    .frame(width: 150, alignment: .leading)
+                Spacer(minLength: 8)
+                Text(value)
+                    .font(isAction ? CTFont.bold(13) : CTFont.regular(13))
+                    .foregroundColor(
+                        isDestructive ? Color.CT.danger :
+                        isAction      ? Color.CT.accent : valueColor
+                    )
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+        case .apple:
+            _APSettingsRow(
+                label: label,
+                value: value,
+                icon: icon,
+                subtitle: subtitle,
+                subtitleColor: subtitleColor,
+                labelColor: labelColor,
+                valueColor: valueColor,
+                isAction: isAction,
+                isDestructive: isDestructive
+            )
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
     }
 }
 
@@ -566,24 +648,31 @@ struct CTTextField: View {
     var isSecure: Bool = false
     var alignment: TextAlignment = .leading
 
+    @Environment(\.designStyle) private var designStyle
+
     var body: some View {
-        Group {
-            if isSecure {
-                SecureField(placeholder, text: $text)
-            } else {
-                TextField(placeholder, text: $text)
+        switch designStyle {
+        case .terminal:
+            Group {
+                if isSecure {
+                    SecureField(placeholder, text: $text)
+                } else {
+                    TextField(placeholder, text: $text)
+                }
             }
+            .font(CTFont.regular(14))
+            .foregroundColor(Color.CT.text)
+            .multilineTextAlignment(alignment)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 11)
+            .background(Color.CT.bgMsg)
+            .overlay(Rectangle().stroke(Color.CT.noise, lineWidth: 0.5))
+            #if os(macOS)
+            .textFieldStyle(.plain)
+            #endif
+        case .apple:
+            _APTextField(placeholder: placeholder, text: $text, isSecure: isSecure, alignment: alignment)
         }
-        .font(CTFont.regular(14))
-        .foregroundColor(Color.CT.text)
-        .multilineTextAlignment(alignment)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 11)
-        .background(Color.CT.bgMsg)
-        .overlay(Rectangle().stroke(Color.CT.noise, lineWidth: 0.5))
-        #if os(macOS)
-        .textFieldStyle(.plain)
-        #endif
     }
 }
 
@@ -591,48 +680,60 @@ struct CTTextField: View {
 
 struct CTButton: View {
     let label: String
-    var isEnabled: Bool    = true
+    var isEnabled: Bool     = true
     var isDestructive: Bool = false
     let action: () -> Void
 
-    var fgColor: Color {
+    @Environment(\.designStyle) private var designStyle
+
+    var body: some View {
+        switch designStyle {
+        case .terminal:
+            Button(action: action) {
+                Text(label)
+                    .font(CTFont.bold(13))
+                    .foregroundColor(terminalFgColor)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(terminalBgColor)
+                    .overlay(
+                        Rectangle()
+                            .stroke(isEnabled ? Color.clear : Color.CT.noise, lineWidth: 0.5)
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(!isEnabled)
+        case .apple:
+            _APButton(label: label, isEnabled: isEnabled, isDestructive: isDestructive, action: action)
+        }
+    }
+
+    private var terminalFgColor: Color {
         guard isEnabled else { return Color.CT.textDim }
         return isDestructive ? .white : Color.CT.bg
     }
 
-    var bgColor: Color {
+    private var terminalBgColor: Color {
         guard isEnabled else { return Color(dark: 0x1C1C1C, light: 0xD8D8D8) }
         return isDestructive ? Color.CT.danger : Color.CT.accent
     }
-
-    var body: some View {
-        Button(action: action) {
-            Text(label)
-                .font(CTFont.bold(13))
-                .foregroundColor(fgColor)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-                .background(bgColor)
-                .overlay(
-                    Rectangle()
-                        .stroke(isEnabled ? Color.clear : Color.CT.noise, lineWidth: 0.5)
-                )
-        }
-        .buttonStyle(.plain)
-        .disabled(!isEnabled)
-    }
 }
 
-// MARK: - CT Background View (adapts noise opacity to theme)
+// MARK: - CT Background View (adapts noise opacity and design style)
 
 private struct _CTBackground: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.designStyle) private var designStyle
 
     var body: some View {
-        ZStack {
-            Color.CT.bg.ignoresSafeArea()
-            // Lower noise opacity in light mode so characters remain barely visible.
-            CTNoise(opacity: colorScheme == .dark ? 0.10 : 0.06).ignoresSafeArea()
+        switch designStyle {
+        case .terminal:
+            ZStack {
+                Color.CT.bg.ignoresSafeArea()
+                CTNoise(opacity: colorScheme == .dark ? 0.10 : 0.06).ignoresSafeArea()
+            }
+        case .apple:
+            _APBackground()
         }
     }
 }

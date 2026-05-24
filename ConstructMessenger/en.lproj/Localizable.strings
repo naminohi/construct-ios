@@ -125,6 +125,17 @@
 "automatic" = "Automatic";
 "light" = "Light";
 "dark" = "Dark";
+"design_style" = "Design Style";
+"design_terminal" = "Terminal";
+"design_apple" = "Apple HIG";
+"design_style_footer" = "Terminal: ASCII aesthetic with JetBrains Mono. Apple HIG: standard iOS look with SF Symbols.";
+"tab_chats_full" = "Chats";
+"tab_synaps_full" = "Synaps";
+"tab_calls_full" = "Calls";
+"tab_settings_full" = "Settings";
+"status_enabled" = "enabled";
+"status_disabled" = "disabled";
+"recovery_setup_action" = "Set Up";
 
 // MARK: - Settings -> Network
 "connected" = "Connected";
@@ -220,6 +231,7 @@
 "user_not_found" = "User not found";
 "failed_to_encode_profile" = "Failed to encode profile";
 "search_messages" = "Search messages";
+"results" = "results";
 "select" = "Select";
 "select_messages" = "Select Messages";
 "delete_selected" = "Delete Selected";
@@ -546,6 +558,8 @@
 "flood_alert_body" = "Sent %d messages in a short time. Notifications suppressed.";
 "flood_banner_title" = "Too many messages";
 "flood_banner_subtitle" = "Notifications from this contact are paused. Review and decide.";
+"flood_banner_allow" = "Allow";
+"flood_banner_block" = "Block";
 "lockdown_mode" = "Lockdown Mode";
 "lockdown_active_since" = "Active since %@";
 "lockdown_mode_hint" = "Only contacts added before activation receive notifications. New senders are silently saved — you can review them anytime.";
@@ -831,3 +845,10 @@
 "tab_chats" = "MSG";
 "tab_synaps" = "SYN";
 "tab_settings" = "CFG";
+
+/* Engine background push notifications */
+"notification.new_message.title" = "New message";
+"notification.new_message.body" = "You have a new encrypted message.";
+
+/* Apple design nav back button */
+"back" = "Back";

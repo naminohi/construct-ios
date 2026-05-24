@@ -248,6 +248,31 @@ struct FeatureFlags {
     static let enableOfflineQueue = true
     static let enablePushNotifications = false // Пока не реализовано
     static let maxMessageRetryAttempts = 3
+
+    // Parallel-run flag: when true, outgoing messages are routed through ConstructEngine
+    // instead of (and not in addition to) the legacy OutboundMessagePipeline path.
+    // Enable in ce-p2ios-parallel to validate engine send path; disable for cutover prep.
+    // NOTE: requires UDP 443 open on AMS VPS (ufw allow 443/udp) — QUIC handshake will
+    // time out otherwise, and messages will be lost (engine payload ≠ OutgoingWirePayloadStore).
+    static let useEngineForSend = false
+
+    /// When true, gRPC **unary** RPCs use QUIC/HTTP-3 as a fast path on iOS 26+,
+    /// falling back to TCP/HTTP-2 on any transport failure.
+    /// Streaming RPCs (`MessageStream`, `SignalStream` bidi) always use TCP regardless
+    /// of this flag — routing them through QUIC would cause a `NWQUICRequestWriter`
+    /// buffering deadlock (the writer buffers the full request body until `finish()`,
+    /// which for a long-lived bidi stream is never called).
+    ///
+    /// iOS 26+ path (`QUICNativeSession`):
+    ///   - Sessions are pooled via `QUICNativeSessionPool` (one `NetworkConnection<QUIC>` per
+    ///     host:port for the process lifetime), preventing the POSIX 12 / ENOMEM crash loop
+    ///     that occurs when each reconnect burns a new QUIC connection-group listener slot.
+    ///   - Managed by `GRPCChannelManager._quicConn`; independent of the TCP `_conn`.
+    ///
+    /// iOS < 26: QUIC is never attempted; all RPCs use TCP/HTTP-2 exclusively.
+    ///
+    /// Debug UI: Settings → Developer → Transport Protocol (orange label per design system).
+    static let useQUICTransport: Bool = true
 }
 
 // MARK: - Traffic Protection Configuration

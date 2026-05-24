@@ -15,6 +15,7 @@ struct MessageBubbleRegularView: View {
     /// Observed so the view re-renders when deliveryStatusRaw (or any @NSManaged property) changes.
     /// NSManagedObject conforms to ObservableObject via KVO, so SwiftUI subscribes automatically.
     @ObservedObject var message: Message
+    @Environment(\.designStyle) private var designStyle
 
     let isLastInGroup: Bool
     let isSelected: Bool
@@ -39,9 +40,17 @@ struct MessageBubbleRegularView: View {
                 Button {
                     onSelect?(message)
                 } label: {
-                    Text(isSelected ? "[✓]" : "[○]")
-                        .font(CTFont.bold(14))
-                        .foregroundColor(isSelected ? Color.CT.accent : Color.CT.textDim)
+                    if designStyle == .apple {
+                        if isSelected {
+                            Image(systemName: "checkmark.circle.fill").foregroundStyle(.tint)
+                        } else {
+                            Image(systemName: "circle").foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text(isSelected ? "[✓]" : "[○]")
+                            .font(CTFont.bold(14))
+                            .foregroundColor(isSelected ? Color.CT.accent : Color.CT.textDim)
+                    }
                 }
                 .buttonStyle(.plain)
             }
@@ -101,7 +110,9 @@ struct MessageBubbleRegularView: View {
                             } else {
                                 LinkDetectingText(
                                     text,
-                                    color: message.isSentByMe ? .white : Color.CT.text
+                                    color: designStyle == .apple
+                                        ? (message.isSentByMe ? .white : Color.primary)
+                                        : (message.isSentByMe ? .white : Color.CT.text)
                                 )
                             }
                         }
@@ -110,16 +121,29 @@ struct MessageBubbleRegularView: View {
                         .padding(.bottom, 8)
                     }
                     .background(
-                        CTMessageBubbleTheme.regularBackground(
-                            isSentByMe: message.isSentByMe,
-                            isSelected: isSelected
-                        )
+                        designStyle == .apple
+                            ? appleMessageBackground
+                            : CTMessageBubbleTheme.regularBackground(
+                                isSentByMe: message.isSentByMe,
+                                isSelected: isSelected
+                            )
                     )
-                    .clipShape(Rectangle())
+                    .clipShape(
+                        designStyle == .apple
+                            ? AnyShape(RoundedRectangle(cornerRadius: 18))
+                            : AnyShape(Rectangle())
+                    )
                     .overlay(
                         Group {
-                            if !message.isSentByMe {
-                                Rectangle().stroke(Color.CT.noise, lineWidth: 0.5)
+                            if designStyle == .apple {
+                                if isSelected {
+                                    RoundedRectangle(cornerRadius: 18)
+                                        .stroke(Color(.systemBlue), lineWidth: 2)
+                                }
+                            } else {
+                                if !message.isSentByMe {
+                                    Rectangle().stroke(Color.CT.noise, lineWidth: 0.5)
+                                }
                             }
                         }
                     )
@@ -222,9 +246,17 @@ struct MessageBubbleRegularView: View {
                 Button {
                     onSelect?(message)
                 } label: {
-                    Text(isSelected ? "[✓]" : "[○]")
-                        .font(CTFont.bold(14))
-                        .foregroundColor(isSelected ? Color.CT.accent : Color.CT.textDim)
+                    if designStyle == .apple {
+                        if isSelected {
+                            Image(systemName: "checkmark.circle.fill").foregroundStyle(.tint)
+                        } else {
+                            Image(systemName: "circle").foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text(isSelected ? "[✓]" : "[○]")
+                            .font(CTFont.bold(14))
+                            .foregroundColor(isSelected ? Color.CT.accent : Color.CT.textDim)
+                    }
                 }
                 .buttonStyle(.plain)
             }
@@ -233,38 +265,74 @@ struct MessageBubbleRegularView: View {
 
     @ViewBuilder
     private var deliveryStatusView: some View {
-        switch message.deliveryStatus {
-        case .sending:
-            Text("···")
-                .font(CTFont.regular(10))
-                .foregroundColor(Color.CT.textDim)
-
-        case .sent:
-            Text("·")
-                .font(CTFont.bold(10))
-                .foregroundColor(Color.CT.textDim)
-
-        case .delivered:
-            Text("[✓]")
-                .font(CTFont.regular(10))
-                .foregroundColor(Color.CT.accentDim)
-
-        case .queued:
-            Button { onRetry?(message) } label: {
-                Text("[q] retry")
+        if designStyle == .apple {
+            switch message.deliveryStatus {
+            case .sending:
+                Image(systemName: "clock")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            case .sent:
+                Image(systemName: "checkmark")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            case .delivered:
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.tint)
+            case .queued:
+                Button { onRetry?(message) } label: {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            case .failed:
+                Button { onRetry?(message) } label: {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                }
+                .buttonStyle(.plain)
+            }
+        } else {
+            switch message.deliveryStatus {
+            case .sending:
+                Text("···")
                     .font(CTFont.regular(10))
                     .foregroundColor(Color.CT.textDim)
-            }
-            .buttonStyle(.plain)
 
-        case .failed:
-            Button { onRetry?(message) } label: {
-                Text("[!] retry")
+            case .sent:
+                Text("·")
                     .font(CTFont.bold(10))
-                    .foregroundColor(Color.CT.danger)
+                    .foregroundColor(Color.CT.textDim)
+
+            case .delivered:
+                Text("[✓]")
+                    .font(CTFont.regular(10))
+                    .foregroundColor(Color.CT.accentDim)
+
+            case .queued:
+                Button { onRetry?(message) } label: {
+                    Text("[q] retry")
+                        .font(CTFont.regular(10))
+                        .foregroundColor(Color.CT.textDim)
+                }
+                .buttonStyle(.plain)
+
+            case .failed:
+                Button { onRetry?(message) } label: {
+                    Text("[!] retry")
+                        .font(CTFont.bold(10))
+                        .foregroundColor(Color.CT.danger)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
+    }
+
+    private var appleMessageBackground: Color {
+        if isSelected { return Color(.systemBlue).opacity(0.2) }
+        return message.isSentByMe ? Color(.systemBlue) : Color(.systemGray5)
     }
 
     @ViewBuilder
@@ -272,9 +340,15 @@ struct MessageBubbleRegularView: View {
         let hasReply = message.replyToMessageId != nil && !(message.replyToMessageId ?? "").isEmpty
         if hasReply {
             HStack(spacing: 4) {
-                Rectangle()
-                    .fill(Color.CT.accentDim)
-                    .frame(width: 2)
+                if designStyle == .apple {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color(.systemBlue))
+                        .frame(width: 3)
+                } else {
+                    Rectangle()
+                        .fill(Color.CT.accentDim)
+                        .frame(width: 2)
+                }
 
                 if let replyContent = message.replyToContent {
                     ReplyPreviewContent(
@@ -325,12 +399,21 @@ struct MessageBubbleRegularView: View {
     @ViewBuilder
     private var swipeIndicatorOverlay: some View {
         if swipeOffset > 10 {
-            Text("[←]")
-                .font(CTFont.bold(13))
-                .foregroundColor(Color.CT.accent)
-                .opacity(min(max(Double(swipeOffset / 40), 0), 1))
-                .offset(x: message.isSentByMe ? -swipeOffset - 8 : swipeOffset + 8)
-                .animation(.interactiveSpring(), value: swipeOffset)
+            if designStyle == .apple {
+                Image(systemName: "arrowshape.turn.up.left.fill")
+                    .font(.caption)
+                    .foregroundStyle(.tint)
+                    .opacity(min(max(Double(swipeOffset / 40), 0), 1))
+                    .offset(x: message.isSentByMe ? -swipeOffset - 8 : swipeOffset + 8)
+                    .animation(.interactiveSpring(), value: swipeOffset)
+            } else {
+                Text("[←]")
+                    .font(CTFont.bold(13))
+                    .foregroundColor(Color.CT.accent)
+                    .opacity(min(max(Double(swipeOffset / 40), 0), 1))
+                    .offset(x: message.isSentByMe ? -swipeOffset - 8 : swipeOffset + 8)
+                    .animation(.interactiveSpring(), value: swipeOffset)
+            }
         }
     }
 }

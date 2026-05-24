@@ -132,7 +132,6 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 
         // Race the fetch against a 27-second safety timeout so we always call
         // the completion handler before iOS's 30-second hard deadline.
-        // fetchPendingMessages → processOfflineMessages → showNewMessageNotification.
         Task {
             await withTaskGroup(of: Void.self) { group in
                 group.addTask {

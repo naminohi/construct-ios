@@ -215,6 +215,7 @@
 "user_not_found" = "Пользователь не найден";
 "failed_to_encode_profile" = "Не удалось закодировать профиль";
 "search_messages" = "Поиск сообщений";
+"results" = "результатов";
 "select" = "Выбрать";
 "select_messages" = "Выбрать сообщения";
 "delete_selected" = "Удалить выбранное";
@@ -339,6 +340,17 @@
 "dark" = "Тёмная";
 "automatic" = "Автоматически";
 "theme_footer" = "Выберите оформление. Автоматически — подстраивается под системные настройки.";
+"design_style" = "Стиль интерфейса";
+"design_terminal" = "Терминал";
+"design_apple" = "Apple HIG";
+"design_style_footer" = "Терминал: ASCII-эстетика с JetBrains Mono. Apple HIG: стандартный iOS-интерфейс с SF Symbols.";
+"tab_chats_full" = "Чаты";
+"tab_synaps_full" = "Синапсы";
+"tab_calls_full" = "Звонки";
+"tab_settings_full" = "Настройки";
+"status_enabled" = "включён";
+"status_disabled" = "выключен";
+"recovery_setup_action" = "Настроить";
 
 // Account deletion
 "delete_account_countdown" = "Удалить через %dс";
@@ -548,6 +560,8 @@
 "flood_alert_body" = "Отправил %d сообщений за короткое время. Уведомления приостановлены.";
 "flood_banner_title" = "Слишком много сообщений";
 "flood_banner_subtitle" = "Уведомления от этого контакта приостановлены. Просмотрите и решите.";
+"flood_banner_allow" = "Разрешить";
+"flood_banner_block" = "Заблокировать";
 "lockdown_mode" = "Режим защиты";
 "lockdown_active_since" = "Активен с %@";
 "lockdown_mode_hint" = "Только контакты добавленные до активации получают уведомления. Новые отправители сохраняются без уведомлений — вы можете просмотреть их в любой момент.";
@@ -841,3 +855,10 @@
 "tab_chats" = "СОБ";
 "tab_synaps" = "УЗЛ";
 "tab_settings" = "НСТ";
+
+/* Engine background push notifications */
+"notification.new_message.title" = "Новое сообщение";
+"notification.new_message.body" = "У вас новое зашифрованное сообщение.";
+
+/* Apple design nav back button */
+"back" = "Назад";

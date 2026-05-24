@@ -9,6 +9,7 @@ import SwiftUI
 
 struct OnboardingView: View {
     @Environment(AccountRecoveryViewModel.self) private var recoveryVM
+    @Environment(\.designStyle) private var designStyle
     #if os(macOS)
     @Environment(\.openSettings) private var openSettings
     #endif
@@ -114,16 +115,28 @@ struct OnboardingView: View {
 
                     HStack(spacing: 32) {
                         Button { showingRecovery = true } label: {
-                            Text("[restore →]")
-                                .font(CTFont.regular(13))
-                                .foregroundColor(Color.CT.accentDim)
+                            if designStyle == .apple {
+                                Text(NSLocalizedString("onboarding_restore", comment: ""))
+                                    .font(.body)
+                                    .foregroundStyle(.tint)
+                            } else {
+                                Text("[restore →]")
+                                    .font(CTFont.regular(13))
+                                    .foregroundColor(Color.CT.accentDim)
+                            }
                         }
                         .buttonStyle(.plain)
 
                         Button { showingDeviceLink = true } label: {
-                            Text("[link device →]")
-                                .font(CTFont.regular(13))
-                                .foregroundColor(Color.CT.textDim)
+                            if designStyle == .apple {
+                                Text(NSLocalizedString("onboarding_link_device", comment: ""))
+                                    .font(.body)
+                                    .foregroundStyle(Color(.secondaryLabel))
+                            } else {
+                                Text("[link device →]")
+                                    .font(CTFont.regular(13))
+                                    .foregroundColor(Color.CT.textDim)
+                            }
                         }
                         .buttonStyle(.plain)
                     }

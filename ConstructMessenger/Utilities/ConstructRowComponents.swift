@@ -27,43 +27,75 @@ enum ConstructRowRole {
 // MARK: - Action Row (button-style, full-width rounded card)
 
 /// A full-width tappable row styled according to `ConstructRowRole`.
-/// Used for actions inside profile cards, settings sections, etc.
+/// A full-width tappable row styled according to `ConstructRowRole`.
+/// .terminal: CT bordered card with ASCII icon.
+/// .apple: standard list button with SF Symbol icon.
 struct ConstructActionRow: View {
 
     let icon: String
     let title: LocalizedStringKey
     let role: ConstructRowRole
-    var badge: String? = nil          // optional trailing text badge (e.g. "soon")
-    var isLoading: Bool = false       // shows ProgressView instead of chevron when true
+    var badge: String? = nil
+    var isLoading: Bool = false
     let action: () -> Void
+
+    @Environment(\.designStyle) private var designStyle
 
     var body: some View {
         Button {
             guard role != .disabled, !isLoading else { return }
             action()
         } label: {
-            HStack(spacing: 12) {
-                ctIconView(icon, color: rowForeground)
-                    .frame(minWidth: 20, alignment: .center)
-
-                Text(title)
-                    .font(CTFont.bold(16))
-
-                Spacer()
-
-                if isLoading {
-                    ProgressView().scaleEffect(0.75)
-                } else if role == .disabled {
-                    badgeView(badge ?? "soon")
-                } else if let badge {
-                    badgeView(badge)
+            switch designStyle {
+            case .terminal:
+                HStack(spacing: 12) {
+                    ctIconView(icon, color: terminalForeground)
+                        .frame(minWidth: 20, alignment: .center)
+                    Text(title)
+                        .font(CTFont.bold(16))
+                    Spacer()
+                    if isLoading {
+                        ProgressView().scaleEffect(0.75)
+                    } else if role == .disabled {
+                        badgeView(badge ?? "soon")
+                    } else if let badge {
+                        badgeView(badge)
+                    }
                 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 13)
+                .background(terminalFill)
+                .overlay(Rectangle().strokeBorder(terminalBorder, lineWidth: 1))
+                .foregroundStyle(terminalForeground)
+            case .apple:
+                HStack(spacing: 14) {
+                    appleIconView(icon, color: appleForeground)
+                        .frame(minWidth: 22, alignment: .center)
+                    Text(title)
+                        .font(.body)
+                        .foregroundStyle(appleForeground)
+                    Spacer()
+                    if isLoading {
+                        ProgressView().scaleEffect(0.75)
+                    } else if role == .disabled {
+                        Text(badge ?? "soon")
+                            .font(.caption)
+                            .foregroundStyle(Color(.secondaryLabel))
+                    } else if let badge {
+                        Text(badge)
+                            .font(.caption)
+                            .foregroundStyle(Color(.secondaryLabel))
+                    } else if role != .secondary {
+                        Image(systemName: "chevron.right")
+                            .imageScale(.small)
+                            .foregroundStyle(Color(.tertiaryLabel))
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 13)
+                .background(Color(.secondarySystemGroupedBackground))
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 13)
-            .background(rowFill)
-            .overlay(Rectangle().strokeBorder(rowBorder, lineWidth: 1))
-            .foregroundStyle(rowForeground)
         }
         .buttonStyle(.plain)
         .disabled(role == .disabled || isLoading)
@@ -71,7 +103,6 @@ struct ConstructActionRow: View {
 
     // MARK: Private helpers
 
-    /// Renders ASCII label strings (e.g. "[!]") as Text; falls back to Image(systemName:) for SF Symbol names.
     @ViewBuilder
     private func ctIconView(_ icon: String, color: Color) -> some View {
         if icon.hasPrefix("[") || icon.hasPrefix("●") {
@@ -87,6 +118,26 @@ struct ConstructActionRow: View {
         }
     }
 
+    @ViewBuilder
+    private func appleIconView(_ icon: String, color: Color) -> some View {
+        let sf = hasSFSymbol(icon) ? sfSymbol(for: icon) : icon
+        if icon.hasPrefix("[") || icon.hasPrefix("●") {
+            if hasSFSymbol(icon) {
+                Image(systemName: sf)
+                    .font(.system(size: 17))
+                    .foregroundStyle(color)
+            } else {
+                Text(icon)
+                    .font(.system(size: 14))
+                    .foregroundStyle(color)
+            }
+        } else {
+            Image(systemName: sf)
+                .font(.system(size: 17))
+                .foregroundStyle(color)
+        }
+    }
+
     private func badgeView(_ text: String) -> some View {
         Text(text)
             .font(CTFont.regular(10))
@@ -95,7 +146,7 @@ struct ConstructActionRow: View {
             .background(Rectangle().fill(Color.CT.bgMsg))
     }
 
-    private var rowFill: Color {
+    private var terminalFill: Color {
         switch role {
         case .primary:     return Color.CT.accent.opacity(0.12)
         case .accent:      return Color.CT.accent.opacity(0.08)
@@ -104,7 +155,7 @@ struct ConstructActionRow: View {
         }
     }
 
-    private var rowBorder: Color {
+    private var terminalBorder: Color {
         switch role {
         case .primary:     return Color.CT.accent.opacity(0.35)
         case .accent:      return Color.CT.accent.opacity(0.25)
@@ -113,12 +164,20 @@ struct ConstructActionRow: View {
         }
     }
 
-    private var rowForeground: Color {
+    private var terminalForeground: Color {
         switch role {
         case .primary, .accent: return Color.CT.accent
         case .destructive:      return Color.red
         case .disabled:         return Color.CT.textDim
         case .secondary:        return Color.CT.text
+        }
+    }
+
+    private var appleForeground: Color {
+        switch role {
+        case .destructive: return .red
+        case .disabled:    return Color(.secondaryLabel)
+        default:           return .primary
         }
     }
 }
@@ -133,6 +192,8 @@ struct ConstructNavRow<Destination: View>: View {
     var iconColor: Color = Color.CT.accent
     let destination: Destination
 
+    @Environment(\.designStyle) private var designStyle
+
     var body: some View {
         NavigationLink(destination: destination) {
             rowContent
@@ -142,36 +203,60 @@ struct ConstructNavRow<Destination: View>: View {
 
     private var rowContent: some View {
         HStack(spacing: 14) {
-            navIconView(icon, color: iconColor)
+            iconView(icon, color: iconColor)
                 .frame(minWidth: 22, alignment: .center)
 
             Text(title)
-                .font(CTFont.bold(16))
-                .foregroundStyle(Color.CT.text)
+                .font(designStyle == .apple ? .body : CTFont.bold(16))
+                .foregroundStyle(designStyle == .apple ? Color.primary : Color.CT.text)
 
             Spacer()
 
-            Text("[→]")
-                .font(CTFont.regular(12))
-                .foregroundStyle(Color.CT.textDim)
+            switch designStyle {
+            case .terminal:
+                Text("[→]")
+                    .font(CTFont.regular(12))
+                    .foregroundStyle(Color.CT.textDim)
+            case .apple:
+                Image(systemName: "chevron.right")
+                    .imageScale(.small)
+                    .foregroundStyle(Color(.tertiaryLabel))
+            }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 14)
+        .padding(.vertical, designStyle == .apple ? 13 : 14)
+        .background(designStyle == .apple ? Color(.secondarySystemGroupedBackground) : Color.clear)
         .contentShape(Rectangle())
     }
 
     @ViewBuilder
-    private func navIconView(_ icon: String, color: Color) -> some View {
-        if icon.hasPrefix("[") || icon.hasPrefix("●") {
-            Text(icon)
-                .font(CTFont.regular(13))
-                .foregroundStyle(color)
-                .lineLimit(1)
-                .fixedSize()
+    private func iconView(_ icon: String, color: Color) -> some View {
+        if designStyle == .apple {
+            if hasSFSymbol(icon) {
+                Image(systemName: sfSymbol(for: icon))
+                    .font(.system(size: 17))
+                    .foregroundStyle(color == Color.CT.accent ? .accentColor : color)
+            } else if icon.hasPrefix("[") || icon.hasPrefix("●") {
+                Text(icon)
+                    .font(.system(size: 14))
+                    .foregroundStyle(color == Color.CT.accent ? .accentColor : color)
+            } else {
+                Image(systemName: icon)
+                    .font(.system(size: 17))
+                    .foregroundStyle(color == Color.CT.accent ? .accentColor : color)
+            }
         } else {
-            Image(systemName: icon)
-                .font(.system(size: 16))
-                .foregroundStyle(color)
+            if icon.hasPrefix("[") || icon.hasPrefix("●") {
+                Text(icon)
+                    .font(CTFont.regular(13))
+                    .foregroundStyle(color)
+                    .lineLimit(1)
+                    .fixedSize()
+            } else {
+                Image(systemName: icon)
+                    .font(.system(size: 16))
+                    .foregroundStyle(color)
+            }
         }
     }
 }
@@ -187,93 +272,128 @@ struct ConstructButtonRow: View {
     var showChevron: Bool = false
     let action: () -> Void
 
+    @Environment(\.designStyle) private var designStyle
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: 14) {
-                buttonIconView(icon, color: iconColor)
+                iconView(icon, color: iconColor)
                     .frame(minWidth: 22, alignment: .center)
 
                 Text(title)
-                    .font(CTFont.bold(16))
-                    .foregroundStyle(Color.CT.text)
+                    .font(designStyle == .apple ? .body : CTFont.bold(16))
+                    .foregroundStyle(designStyle == .apple ? Color.primary : Color.CT.text)
 
                 Spacer()
 
                 if showChevron {
-                    Text("[→]")
-                        .font(CTFont.regular(12))
-                        .foregroundStyle(Color.CT.textDim)
-                        .lineLimit(1)
-                        .fixedSize()
+                    switch designStyle {
+                    case .terminal:
+                        Text("[→]")
+                            .font(CTFont.regular(12))
+                            .foregroundStyle(Color.CT.textDim)
+                            .lineLimit(1)
+                            .fixedSize()
+                    case .apple:
+                        Image(systemName: "chevron.right")
+                            .imageScale(.small)
+                            .foregroundStyle(Color(.tertiaryLabel))
+                    }
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 14)
+            .padding(.vertical, designStyle == .apple ? 13 : 14)
+            .background(designStyle == .apple ? Color(.secondarySystemGroupedBackground) : Color.clear)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
     @ViewBuilder
-    private func buttonIconView(_ icon: String, color: Color) -> some View {
-        if icon.hasPrefix("[") || icon.hasPrefix("●") {
-            Text(icon)
-                .font(CTFont.regular(13))
-                .foregroundStyle(color)
-                .lineLimit(1)
-                .fixedSize()
+    private func iconView(_ icon: String, color: Color) -> some View {
+        if designStyle == .apple {
+            if hasSFSymbol(icon) {
+                Image(systemName: sfSymbol(for: icon))
+                    .font(.system(size: 17))
+                    .foregroundStyle(color == Color.CT.accent ? .accentColor : color)
+            } else if icon.hasPrefix("[") || icon.hasPrefix("●") {
+                Text(icon).font(.system(size: 14))
+                    .foregroundStyle(color == Color.CT.accent ? .accentColor : color)
+            } else {
+                Image(systemName: icon).font(.system(size: 17))
+                    .foregroundStyle(color == Color.CT.accent ? .accentColor : color)
+            }
         } else {
-            Image(systemName: icon)
-                .font(.system(size: 16))
-                .foregroundStyle(color)
+            if icon.hasPrefix("[") || icon.hasPrefix("●") {
+                Text(icon)
+                    .font(CTFont.regular(13))
+                    .foregroundStyle(color)
+                    .lineLimit(1)
+                    .fixedSize()
+            } else {
+                Image(systemName: icon)
+                    .font(.system(size: 16))
+                    .foregroundStyle(color)
+            }
         }
     }
 }
 
 // MARK: - Settings Row Divider
 
-/// Thin Construct-styled divider with standard left indent.
+/// Styled divider between rows.
 struct ConstructRowDivider: View {
     var indent: CGFloat = 54
 
+    @Environment(\.designStyle) private var designStyle
+
     var body: some View {
         Divider()
-            .overlay(Color.CT.noise)
+            .overlay(designStyle == .apple ? Color(.separator) : Color.CT.noise)
             .padding(.leading, indent)
     }
 }
 
 // MARK: - Settings Section Container
 
-/// Dark rounded card used as a settings section container.
+/// Section container.
+/// .terminal: dark card with CT border.
+/// .apple: grouped background card (no custom border).
 struct ConstructSection<Content: View>: View {
 
     var header: String? = nil
     @ViewBuilder var content: () -> Content
 
+    @Environment(\.designStyle) private var designStyle
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 10) {
             if let header {
                 Text(header.uppercased())
-                    .font(CTFont.bold(10))
-                    .foregroundStyle(Color.CT.textDim)
-                    .tracking(1.5)
+                    .font(designStyle == .apple ? .footnote : CTFont.bold(10))
+                    .foregroundStyle(Color(.secondaryLabel))
+                    .tracking(designStyle == .apple ? 0.5 : 1.5)
                     .padding(.horizontal, 20)
-                    .padding(.bottom, 6)
+                    .padding(.bottom, 8)
             }
 
             VStack(spacing: 0) {
                 content()
             }
             .background(
-                Rectangle()
-                    .fill(Color.CT.bgMsg)
-                    .overlay(
+                Group {
+                    switch designStyle {
+                    case .terminal:
                         Rectangle()
-                            .strokeBorder(Color.CT.noise, lineWidth: 1)
-                    )
+                            .fill(Color.CT.bgMsg)
+                            .overlay(Rectangle().strokeBorder(Color.CT.noise, lineWidth: 1))
+                    case .apple:
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color(.secondarySystemGroupedBackground))
+                    }
+                }
             )
-            .clipShape(Rectangle())
+            .clipShape(RoundedRectangle(cornerRadius: designStyle == .apple ? 12 : 0))
         }
         .padding(.horizontal, 16)
     }
