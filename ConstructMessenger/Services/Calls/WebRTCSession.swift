@@ -38,7 +38,7 @@ protocol WebRTCSessionProtocol: AnyObject {
     func close()
 }
 
-#if os(iOS) && canImport(WebRTC)
+#if canImport(WebRTC)
 import AVFoundation
 import WebRTC
 
@@ -101,7 +101,9 @@ final class WebRTCSession: NSObject, WebRTCSessionProtocol {
 
     func close() {
         peerConnection.close()
+        #if os(iOS)
         try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+        #endif
     }
 
     func setMuted(_ muted: Bool) {
@@ -109,8 +111,10 @@ final class WebRTCSession: NSObject, WebRTCSessionProtocol {
     }
 
     func setSpeaker(_ enabled: Bool) {
+        #if os(iOS)
         let session = AVAudioSession.sharedInstance()
         try? session.overrideOutputAudioPort(enabled ? .speaker : .none)
+        #endif
     }
 
     func createOffer() async throws -> String {
@@ -215,6 +219,7 @@ final class WebRTCSession: NSObject, WebRTCSessionProtocol {
     }
 
     private static func configureAudioSession() throws {
+        #if os(iOS)
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP])
         try? session.setPreferredSampleRate(NetworkTiming.Calls.audioPreferredSampleRateHz)
@@ -223,6 +228,8 @@ final class WebRTCSession: NSObject, WebRTCSessionProtocol {
         // Activation happens via CXProviderDelegate.provider(_:didActivate:audioSession:).
         // Calling setActive() here races with CallKit's own activation and throws
         // NSOSStatusErrorDomain 561017449 when a previous call's session is still tearing down.
+        #endif
+        // macOS: WebRTC handles audio device selection natively; no session configuration needed.
     }
 }
 
@@ -241,11 +248,11 @@ extension WebRTCSession: RTCPeerConnectionDelegate {
     nonisolated func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
 
     nonisolated func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {
-        Log.debug("📞 WebRTC signalingState → \(stateChanged.rawValue)", category: "Calls")
+        Log.debug("WebRTC signalingState → \(stateChanged.rawValue)", category: "Calls")
     }
 
     nonisolated func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
-        Log.info("📞 WebRTC iceConnectionState → \(newState.debugDescription)", category: "Calls")
+        Log.info("WebRTC iceConnectionState → \(newState.debugDescription)", category: "Calls")
         // `.disconnected` is transient on mobile (brief network hiccup, device lock, switch
         // between WiFi/cellular). Triggering teardown immediately cuts live calls unnecessarily.
         // Only `.failed` means ICE has exhausted all candidates and the call cannot continue.
@@ -257,11 +264,11 @@ extension WebRTCSession: RTCPeerConnectionDelegate {
     }
 
     nonisolated func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {
-        Log.debug("📞 WebRTC iceGatheringState → \(newState.debugDescription)", category: "Calls")
+        Log.debug("WebRTC iceGatheringState → \(newState.debugDescription)", category: "Calls")
     }
 
     nonisolated func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCPeerConnectionState) {
-        Log.info("📞 WebRTC peerConnectionState → \(newState.debugDescription)", category: "Calls")
+        Log.info("WebRTC peerConnectionState → \(newState.debugDescription)", category: "Calls")
         if newState == .failed {
             Task { @MainActor in
                 self.onConnectionFailed?()

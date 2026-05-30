@@ -12,7 +12,8 @@ import UniformTypeIdentifiers
 struct ChatView: View {
     @Environment(\.managedObjectContext) private var viewContext
     @Environment(\.dismiss) private var dismiss
-    @State private var viewModel: ChatViewModel  // ✅ FIX: State persists across view updates
+    @Environment(ChatsViewModel.self) private var chatsViewModel
+    @State private var viewModel: ChatViewModel
     @State private var scrollManager = ChatScrollManager()  // ✅ NEW: Isolated scroll management
     private var connectionManager = ConnectionStatusManager.shared
     @State private var messageText = ""
@@ -35,7 +36,7 @@ struct ChatView: View {
     @State private var isChatDropTargeted = false
 
     // Flood guard observer — updates when IncomingFloodGuard suppresses this chat's sender
-    @State private var floodGuard = IncomingFloodGuard.shared
+    @ObservedObject private var floodGuard = IncomingFloodGuard.shared
 
     // Key Transparency status for the contact in this chat
     @State private var contactKTStatus: KTStatus = .unverified
@@ -51,11 +52,13 @@ struct ChatView: View {
     // - scrollOffset
     // - dragOffset
 
-    init(chat: Chat, context: NSManagedObjectContext) {
-        _viewModel = State(wrappedValue: ChatViewModel(chat: chat, context: context))
+    init(chat: Chat, context: NSManagedObjectContext, sessionCoordinator: SessionCoordinator) {
+        _viewModel = State(wrappedValue: ChatViewModel(chat: chat, context: context, sessionCoordinator: sessionCoordinator))
     }
 
     var body: some View {
+        // Compute once per body pass to avoid repeated full-array filtering in render path.
+        let renderedMessages = filteredMessages
         VStack(spacing: 0) {
             chatNavBar
 
@@ -66,7 +69,7 @@ struct ChatView: View {
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         // Load more indicator at TOP of list (oldest messages)
-                        if viewModel.hasMoreMessages && !filteredMessages.isEmpty {
+                        if viewModel.hasMoreMessages && !renderedMessages.isEmpty {
                             HStack {
                                 Spacer()
                                 if viewModel.isLoadingMore {
@@ -93,11 +96,11 @@ struct ChatView: View {
                         }
 
                         // Messages in oldest-first order (ScrollView anchored to bottom via .defaultScrollAnchor)
-                        ForEach(Array(filteredMessages.enumerated()), id: \.element.id) { index, message in
+                        ForEach(Array(renderedMessages.enumerated()), id: \.element.id) { index, message in
                             VStack(spacing: 0) {
                                 MessageBubble(
                                     message: message,
-                                    isLastInGroup: message.isLastInGroup(at: index, in: filteredMessages),
+                                    isLastInGroup: message.isLastInGroup(at: index, in: renderedMessages),
                                     isSelected: selectedMessages.contains(message.id),
                                     isEditMode: isEditMode,
                                     onRetry: { msg in
@@ -134,9 +137,9 @@ struct ChatView: View {
                                 .id(message.id)
 
                                 // Add spacing after each message
-                                if index < filteredMessages.count - 1 {
+                                if index < renderedMessages.count - 1 {
                                     Spacer()
-                                        .frame(height: message.spacingAfterMessage(at: index, in: filteredMessages))
+                                        .frame(height: message.spacingAfterMessage(at: index, in: renderedMessages))
                                 }
                             }
                         }
@@ -166,7 +169,7 @@ struct ChatView: View {
                 }
                 .onChange(of: viewModel.messages.count) { _, count in
                     if AppConstants.enableDebugLogging {
-                        print("ChatView: messages count changed to \(count)")
+                        Log.info("ChatView: messages count changed to \(count)")
                     }
 
                     // Auto-scroll when new messages arrive — only if user is at the bottom.
@@ -239,12 +242,6 @@ struct ChatView: View {
             
             messageInputView
         }
-        // macOS: give the VStack deterministic size so NavigationSplitView's
-        // NSSplitView doesn't enter an infinite constraint-update loop when
-        // the TextField(axis:) resizes inside an NSHostingView.
-        #if os(macOS)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        #endif
         #if os(iOS)
         .toolbar(.hidden, for: .navigationBar)
         .toolbar(.hidden, for: .tabBar)
@@ -294,7 +291,7 @@ struct ChatView: View {
                     .padding(8)
             }
         }
-        .overlay(alignment: .top, content: searchOverlay)
+        .overlay(alignment: .top) { searchOverlay(resultCount: renderedMessages.count) }
         .sheet(isPresented: $showingUserProfile) {
             if let user = viewModel.chat.otherUser {
                 UserProfileView(
@@ -315,6 +312,7 @@ struct ChatView: View {
             .presentationDragIndicator(.visible)
         }
         .onAppear {
+            guard ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] != "1" else { return }
             markChatAsRead()
             viewModel.onViewAppear()
             loadContactKTStatus()
@@ -332,6 +330,7 @@ struct ChatView: View {
             loadContactKTStatus()
         }
         .onDisappear {
+            guard ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] != "1" else { return }
             // Изъян 7: cancel heartbeat scheduling when chat is closed.
             if let contactId = viewModel.chat.otherUser?.id, !contactId.isEmpty {
                 _ = try? CryptoManager.shared.handleOrchestratorEvent(
@@ -342,21 +341,10 @@ struct ChatView: View {
         }
         #if os(iOS)
         .fullScreenCover(item: $galleryStartItem) { item in
-            MediaGalleryViewer(
-                messages: mediaMessages,
-                initialMessageId: item.id,
-                isPresented: Binding(
-                    get: { galleryStartItem != nil },
-                    set: { if !$0 { galleryStartItem = nil } }
-                )
-            )
-        }
-        #else
-        .sheet(item: $galleryStartItem) { item in
-            MediaGalleryViewer(
-                messages: mediaMessages,
-                initialMessageId: item.id,
-                isPresented: Binding(
+                MediaGalleryViewer(
+                    messages: mediaMessages(in: renderedMessages),
+                    initialMessageId: item.id,
+                    isPresented: Binding(
                     get: { galleryStartItem != nil },
                     set: { if !$0 { galleryStartItem = nil } }
                 )
@@ -499,7 +487,7 @@ struct ChatView: View {
         )
         .disabled(isEditMode)
         .overlay(alignment: .bottomTrailing) {
-            // ✅ Scroll to bottom button (appears when scrolled far from newest)
+            // Scroll to bottom button (appears when scrolled far from newest)
             if scrollManager.shouldShowScrollToBottomButton && !isEditMode {
                 Button {
                     withAnimation(.easeOut(duration: 0.3)) {
@@ -509,25 +497,12 @@ struct ChatView: View {
                         scrollManager.shouldScrollToBottom = true
                     }
                 } label: {
-                    HStack(spacing: 6) {
-                        Text("↓")
-                            .font(CTFont.bold(14))
-                        Text(viewModel.chat.unreadCount > 0
-                             ? NSLocalizedString("new_messages", comment: "New messages below")
-                             : NSLocalizedString("scroll_to_bottom", comment: "Scroll back to latest messages"))
-                            .font(CTFont.regular(13))
-                    }
-                    .foregroundColor(Color.CT.accent)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(
-                        Rectangle()
-                            .fill(Color.CT.bgMsg)
-                            .overlay(Rectangle().strokeBorder(Color.CT.accent.opacity(0.5), lineWidth: 1))
-                    )
+                    Image(systemName: "chevron.down.circle.fill")
+                        .font(.system(size: 30))
+                        .foregroundColor(Color.CT.accent)
                 }
                 .padding(.trailing, 16)
-                .padding(.bottom, 80) // Above message input
+                .padding(.bottom, 160) // Above message input
                 .transition(.move(edge: .trailing).combined(with: .opacity))
                 .animation(.spring(response: 0.3, dampingFraction: 0.7), value: scrollManager.shouldShowScrollToBottomButton)
             }
@@ -539,8 +514,8 @@ struct ChatView: View {
     private var chatNavBar: some View {
         HStack(spacing: 10) {
             Button { dismiss() } label: {
-                Text(CTSymbol.back)
-                    .font(CTFont.bold(14))
+                Image(systemName: "chevron.backward.circle.fill")
+                    .font(.system(size: 22))
                     .foregroundColor(Color.CT.accent)
             }
 
@@ -582,27 +557,26 @@ struct ChatView: View {
                             hasVideo: false
                         ) }
                     } label: {
-                        Text(CTSymbol.tabCalls)
-                            .font(CTFont.bold(14))
+                        Image(systemName: "phone")
+                            .font(.system(size: CTLayout.navIconSizeLg, weight: .medium))
                             .foregroundColor(Color.CT.accent)
                     }
                 }
                 Button {
                     withAnimation { isSearchActive.toggle(); if !isSearchActive { searchText = "" } }
                 } label: {
-                    Text(isSearchActive ? CTSymbol.close : CTSymbol.search)
-                        .font(CTFont.bold(14))
+                    Image(systemName: isSearchActive ? "xmark" : "magnifyingglass")
+                        .font(.system(size: CTLayout.navIconSize, weight: .medium))
                         .foregroundColor(Color.CT.accent)
                 }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 11)
+        .padding(.horizontal, CTLayout.edgePad)
+        .frame(height: CTLayout.navBarHeight)
         .ctBorderBottom()
     }
 
-
-    /// KT badge shown in the nav bar.  `[✓]` when verified, `[!]` on key-change/failure, hidden otherwise.
+    /// KT badge shown in the nav bar. `[✓]` when verified, `[!]` on key-change/failure, hidden otherwise.
     @ViewBuilder private var ktBadge: some View {
         switch contactKTStatus {
         case .verified:
@@ -646,7 +620,7 @@ struct ChatView: View {
     }
     
     @ViewBuilder
-    private func searchOverlay() -> some View {
+    private func searchOverlay(resultCount: Int) -> some View {
         if isSearchActive {
             VStack(spacing: 0) {
                 HStack(spacing: 8) {
@@ -685,7 +659,7 @@ struct ChatView: View {
 
                 if !searchText.isEmpty {
                     HStack {
-                        Text("[\(filteredMessages.count) results]")
+                        Text("[\(resultCount) results]")
                             .font(CTFont.regular(12))
                             .foregroundStyle(Color.CT.textDim)
                         Spacer()
@@ -718,15 +692,11 @@ struct ChatView: View {
         }
     }
 
-    /// All media messages in this chat, in display order. Used by the gallery viewer.
-    /// Upload placeholders (with `_placeholder: true`) are excluded — they have no real URL.
-    private var mediaMessages: [Message] {
-        viewModel.messages.filter {
-            guard !$0.isDeleted, $0.managedObjectContext != nil else { return false }
-            if let mc = parseMediaContent(from: $0.displayText) {
-                return (mc.media["_placeholder"] as? Bool) != true
-            }
-            return false
+    /// All media messages in display order. Upload placeholders are excluded.
+    private func mediaMessages(in messages: [Message]) -> [Message] {
+        messages.filter {
+            guard let mc = parseMediaContent(from: $0.displayText) else { return false }
+            return (mc.media["_placeholder"] as? Bool) != true
         }
     }
 
@@ -761,12 +731,9 @@ struct ChatView: View {
 
     // ✅ REMOVED: Message grouping logic moved to Message+Grouping.swift extension
     
-    /// Hide keyboard
     private func hideKeyboard() {
         #if canImport(UIKit)
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-        #else
-        NSApp.keyWindow?.makeFirstResponder(nil)
         #endif
     }
 
@@ -815,8 +782,9 @@ struct ChatView: View {
 
     try? context.save()
 
+    let previewSessionCoordinator = SessionCoordinator()
     return NavigationStack {
-        ChatView(chat: chat, context: context)
+        ChatView(chat: chat, context: context, sessionCoordinator: previewSessionCoordinator)
             .environment(\.managedObjectContext, context)
     }
 }

@@ -212,7 +212,7 @@ struct ChatsSplitView: View {
             #endif
         } else if let chatId = selectedChatId,
            let chat = chats.first(where: { $0.id == chatId }) {
-            ChatView(chat: chat, context: viewContext)
+            ChatView(chat: chat, context: viewContext, sessionCoordinator: chatsViewModel.sessionCoordinator)
         } else {
             ContentUnavailableView(
                 String(localized: "select_chat"),
@@ -267,7 +267,7 @@ struct ChatsSplitView: View {
     }
 
     private func addContact(contactInfo: ContactInfo) {
-        if contactInfo.userId == SessionManager.shared.currentUserId {
+        if contactInfo.userId == AuthSessionManager.shared.currentUserId {
             showingDrafts = true
             return
         }

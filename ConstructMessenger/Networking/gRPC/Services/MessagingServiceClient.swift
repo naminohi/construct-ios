@@ -109,27 +109,27 @@ final class MessagingServiceClient: Sendable {
                 status = "sent"
                 retryable = true
                 errorCodeStr = ""
-                Log.info("✅ sendMessage sent attemptId=\(echoedAttemptId) messageId=\(response.messageID)", category: "MessagingServiceClient")
+                Log.info("sendMessage sent attemptId=\(echoedAttemptId) messageId=\(response.messageID)", category: "MessagingServiceClient")
             } else if errorCodeRaw == .blocked {
                 status = "blocked"
                 retryable = false
                 errorCodeStr = "blocked"
-                Log.error("🚫 Message blocked by server — attemptId=\(echoedAttemptId) messageId=\(response.messageID)", category: "MessagingServiceClient")
+                Log.error("Message blocked by server — attemptId=\(echoedAttemptId) messageId=\(response.messageID)", category: "MessagingServiceClient")
             } else if errorCodeRaw == .rateLimit {
                 status = "failed"
                 retryable = true
                 errorCodeStr = "rateLimit"
-                Log.error("⏳ Rate limited — attemptId=\(echoedAttemptId) retryAfterMs=\(retryAfterMs) messageId=\(response.messageID)", category: "MessagingServiceClient")
+                Log.error("Rate limited — attemptId=\(echoedAttemptId) retryAfterMs=\(retryAfterMs) messageId=\(response.messageID)", category: "MessagingServiceClient")
             } else if errorCodeRaw == .encryptionFailed {
                 status = "failed"
                 retryable = false
                 errorCodeStr = "encryptionFailed"
-                Log.error("🔐 Encryption rejected by server — attemptId=\(echoedAttemptId) messageId=\(response.messageID)", category: "MessagingServiceClient")
+                Log.error("Encryption rejected by server — attemptId=\(echoedAttemptId) messageId=\(response.messageID)", category: "MessagingServiceClient")
             } else {
                 status = "failed"
                 retryable = response.error.retryable
                 errorCodeStr = errorCodeRaw == .unspecified ? "" : "\(errorCodeRaw)"
-                Log.error("❌ sendMessage failed — attemptId=\(echoedAttemptId) errorCode=\(errorCodeRaw) retryable=\(retryable) messageId=\(response.messageID)", category: "MessagingServiceClient")
+                Log.error("sendMessage failed — attemptId=\(echoedAttemptId) errorCode=\(errorCodeRaw) retryable=\(retryable) messageId=\(response.messageID)", category: "MessagingServiceClient")
             }
 
             return SendMessageResponse(
@@ -146,13 +146,14 @@ final class MessagingServiceClient: Sendable {
     // MARK: - Send End Session (replaces MessagingAPI.sendEndSession)
 
     func sendEndSession(to recipientId: String, reason: String? = nil) async throws -> EndSessionResponse {
-        try await GRPCChannelManager.shared.performRPC(timeout: GRPCTimeouts.endSession) { grpcClient in
+        let myUserId = await MainActor.run { AuthSessionManager.shared.currentUserId } ?? ""
+        return try await GRPCChannelManager.shared.performRPC(timeout: GRPCTimeouts.endSession) { grpcClient in
             let msgClient = Shared_Proto_Services_V1_MessagingService.Client(wrapping: grpcClient)
 
             let messageId = UUID().uuidString
 
             var sender = Shared_Proto_Core_V1_UserId()
-            sender.userID = SessionManager.shared.currentUserId ?? ""
+            sender.userID = myUserId
 
             var recipient = Shared_Proto_Core_V1_UserId()
             recipient.userID = recipientId
@@ -221,11 +222,11 @@ final class MessagingServiceClient: Sendable {
             // (has a real payload, would be mis-classified by the END_SESSION size heuristic).
             if msg.contentType == .sessionResetInit {
                 guard let decoded = try? WirePayloadCoder.decode(msg.encryptedPayload) else {
-                    Log.debug("⚠️ Failed to decode SESSION_RESET_INIT payload \(msg.messageID) — queuing failed ACK", category: "MessagingServiceClient")
+                    Log.debug("Failed to decode SESSION_RESET_INIT payload \(msg.messageID) — queuing failed ACK", category: "MessagingServiceClient")
                     failed.append(FailedMessage(id: msg.messageID, senderId: msg.senderID))
                     return nil
                 }
-                Log.debug("🔄 SESSION_RESET_INIT pending from \(msg.senderID.prefix(8))… id=\(msg.messageID.prefix(8))…", category: "MessagingServiceClient")
+                Log.debug("SESSION_RESET_INIT pending from \(msg.senderID.prefix(8))… id=\(msg.messageID.prefix(8))…", category: "MessagingServiceClient")
                 return ChatMessage(
                     id: msg.messageID,
                     from: msg.senderID,
@@ -248,7 +249,7 @@ final class MessagingServiceClient: Sendable {
                 (!msg.encryptedPayload.isEmpty && msg.encryptedPayload.count < WirePayloadCoder.headerSize)
             if isEndSession {
                 let detected = msg.contentType == .sessionReset ? "contentType" : "sentinel payload (\(msg.encryptedPayload.count)b)"
-                Log.debug("🛑 END_SESSION pending from \(msg.senderID.prefix(8))… id=\(msg.messageID.prefix(8))… via \(detected)", category: "MessagingServiceClient")
+                Log.debug("END_SESSION pending from \(msg.senderID.prefix(8))… id=\(msg.messageID.prefix(8))… via \(detected)", category: "MessagingServiceClient")
                 return ChatMessage(
                     id: msg.messageID,
                     from: msg.senderID,
@@ -269,7 +270,7 @@ final class MessagingServiceClient: Sendable {
             // Leave them empty here — handleSenderSync will ACK and skip if unable to route.
             if msg.contentType == .senderSync {
                 guard let decoded = try? WirePayloadCoder.decode(msg.encryptedPayload) else {
-                    Log.debug("⚠️ Failed to decode SENDER_SYNC payload \(msg.messageID) — queuing failed ACK", category: "MessagingServiceClient")
+                    Log.debug("Failed to decode SENDER_SYNC payload \(msg.messageID) — queuing failed ACK", category: "MessagingServiceClient")
                     failed.append(FailedMessage(id: msg.messageID, senderId: msg.senderID))
                     return nil
                 }
@@ -312,7 +313,7 @@ final class MessagingServiceClient: Sendable {
                         sealedInnerData: sealedInner
                     )
                 }
-                Log.debug("⚠️ Failed to decode encrypted_payload for message \(msg.messageID) — queuing failed ACK", category: "MessagingServiceClient")
+                Log.debug("Failed to decode encrypted_payload for message \(msg.messageID) — queuing failed ACK", category: "MessagingServiceClient")
                 failed.append(FailedMessage(id: msg.messageID, senderId: msg.senderID))
                 return nil
             }
@@ -368,12 +369,12 @@ final class MessagingServiceClient: Sendable {
             request.newEncryptedContent = newEncryptedContent
             request.recipientUserID = recipientUserId
 
-            Log.debug("✏️ editMessage RPC → messageId=\(messageId.prefix(8))…", category: "MessagingServiceClient")
+            Log.debug("editMessage RPC → messageId=\(messageId.prefix(8))…", category: "MessagingServiceClient")
 
             let response = try await msgClient.editMessage(
                 request: .init(message: request)
             )
-            Log.info("✅ editMessage response: success=\(response.success) editCount=\(response.editCount)", category: "MessagingServiceClient")
+            Log.info("editMessage response: success=\(response.success) editCount=\(response.editCount)", category: "MessagingServiceClient")
             return response
         }
     }

@@ -94,21 +94,21 @@ class AuthViewModel {
         }
     }
     
-    // Subscribe to session invalidation from SessionManager
+    // Subscribe to session invalidation from AuthSessionManager
     private func setupSessionExpiredListener() {
         sessionExpiredTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
                 await withCheckedContinuation { continuation in
                     withObservationTracking {
-                        _ = SessionManager.shared.isSessionInvalidated
+                        _ = AuthSessionManager.shared.isSessionInvalidated
                     } onChange: {
                         continuation.resume()
                     }
                 }
                 guard !Task.isCancelled else { break }
-                if SessionManager.shared.isSessionInvalidated {
-                    SessionManager.shared.resetSessionInvalidated()
+                if AuthSessionManager.shared.isSessionInvalidated {
+                    AuthSessionManager.shared.resetSessionInvalidated()
                     await self.restoreOrAuthenticateDevice()
                 }
             }
@@ -134,8 +134,8 @@ class AuthViewModel {
             while !Task.isCancelled {
                 await withCheckedContinuation { continuation in
                     withObservationTracking {
-                        _ = SessionManager.shared.sessionToken
-                        _ = SessionManager.shared.sessionExpires
+                        _ = AuthSessionManager.shared.sessionToken
+                        _ = AuthSessionManager.shared.sessionExpires
                     } onChange: {
                         continuation.resume()
                     }
@@ -168,26 +168,26 @@ class AuthViewModel {
         restoreInFlight = true
         defer { restoreInFlight = false }
 
-        print("🔄 restoreOrAuthenticateDevice() called")
+        Log.info("restoreOrAuthenticateDevice() called")
         
         // Step 1: Try to restore existing session token
-        SessionManager.shared.loadSessionToken()
+        AuthSessionManager.shared.loadSessionToken()
 
         // Helper: recover userId from JWT payload when Keychain entry is missing.
         // The server embeds the user ID in the `sub` claim of every issued JWT.
         // Only touches userId — does NOT re-save tokens or overwrite session expiry.
         func recoverUserIdFromToken() -> String? {
-            guard let token = SessionManager.shared.sessionToken,
+            guard let token = AuthSessionManager.shared.sessionToken,
                   let uid = JWTUtils.extractUserId(from: token),
                   !uid.isEmpty else { return nil }
-            SessionManager.shared.updateUserId(uid)
-            Log.info("⚠️ [Auth] userId recovered from JWT sub claim and re-saved to Keychain: \(uid.prefix(8))...", category: "Auth")
+            AuthSessionManager.shared.updateUserId(uid)
+            Log.info("[Auth] userId recovered from JWT sub claim and re-saved to Keychain: \(uid.prefix(8))...", category: "Auth")
             return uid
         }
 
         // Resolve userId — prefer in-memory/Keychain, fall back to JWT extraction.
         func resolvedUserId() -> String? {
-            if let uid = SessionManager.shared.currentUserId { return uid }
+            if let uid = AuthSessionManager.shared.currentUserId { return uid }
             return recoverUserIdFromToken()
         }
 
@@ -200,19 +200,21 @@ class AuthViewModel {
             scheduleTokenRefresh()
             CryptoManager.shared.setLocalUserId(userId)
             loadUserFromCoreData(userId: userId)
-            // Fire SPK rotation immediately in background — rotateIfNeeded() is a
-            // no-op if the key is fresh, so this is safe to call on every launch.
+            #if !os(macOS)
+            // Engine manages SPK rotation on macOS.
             Task {
                 let deviceId = KeychainManager.shared.loadDeviceID() ?? ""
                 await PreKeyRotationService.shared.rotateIfNeeded(deviceId: deviceId)
             }
+            #endif
+            Task { await ServerKeyManager.shared.prefetch() }
         }
 
-        if let _ = SessionManager.shared.sessionToken,
+        if let _ = AuthSessionManager.shared.sessionToken,
            let userId = resolvedUserId(),
-           SessionManager.shared.isSessionValid {
+           AuthSessionManager.shared.isSessionValid {
             // We have session token - verify it's still valid
-            print("✅ Found session token for user: \(userId)")
+            Log.info("Found session token for user: \(userId)")
             if !CryptoManager.shared.isInitialized {
                 self.currentUserId = userId
                 self.isAuthenticated = true
@@ -231,11 +233,11 @@ class AuthViewModel {
 
         // Step 1.5: Token exists but is expired/near-expired — refresh using refresh token first.
         // This is faster and less error-prone than full device auth, and keeps the gRPC stream stable.
-        if SessionManager.shared.sessionToken != nil,
+        if AuthSessionManager.shared.sessionToken != nil,
            let userId = resolvedUserId(),
-           let refresh = SessionManager.shared.refreshToken {
+           let refresh = AuthSessionManager.shared.refreshToken {
             do {
-                Log.info("🔄 Session token expired — attempting refresh", category: "Auth")
+                Log.info("Session token expired — attempting refresh", category: "Auth")
                 let response = try await AuthServiceClient.shared.refreshToken(refreshToken: refresh)
 
                 let expiresIn: Int
@@ -247,7 +249,7 @@ class AuthViewModel {
 
                 // Preserve userId even if the refresh response doesn't include it.
                 let refreshedUserId = response.userId.isEmpty ? userId : response.userId
-                SessionManager.shared.saveTokens(
+                AuthSessionManager.shared.saveTokens(
                     accessToken: response.accessToken,
                     refreshToken: response.refreshToken,
                     expiresIn: expiresIn,
@@ -267,17 +269,17 @@ class AuthViewModel {
                     return
                 }
                 finishAuth(userId: userId)
-                Log.info("✅ Session refreshed successfully", category: "Auth")
+                Log.info("Session refreshed successfully", category: "Auth")
                 return
             } catch {
-                Log.error("❌ Session refresh failed, falling back to device auth: \(error)", category: "Auth")
+                Log.error("Session refresh failed, falling back to device auth: \(error)", category: "Auth")
             }
         }
         
         // Step 2: No session token - try device-based auth
         guard let deviceId = KeychainManager.shared.loadDeviceID(),
               let rawSigningKey = KeychainManager.shared.loadDeviceSigningKey() else {
-            print("❌ No device keys found - user needs to register")
+            Log.info("No device keys found - user needs to register")
             // Definitively mark as unregistered so ContentView routes to OnboardingView.
             // refreshDeviceKeyState() uses only deviceId (AfterFirstUnlock) which may have
             // been nil at init time; this async confirmation is the source of truth.
@@ -285,7 +287,7 @@ class AuthViewModel {
             return
         }
         
-        print("🔑 Device keys found - authenticating with device ID: \(deviceId)")
+        Log.info("Device keys found - authenticating with device ID: \(deviceId)")
         
         do {
             // Create signature: Sign("{device_id}{timestamp}") with Ed25519 — must match server format
@@ -301,7 +303,7 @@ class AuthViewModel {
             do {
                 signingKeyBytes = try CryptoManager.shared.exportSigningSecretKey()
             } catch {
-                Log.info("⚠️ [Auth] CryptoCore unavailable for signing — using raw Keychain key: \(error)", category: "Auth")
+                Log.info("[Auth] CryptoCore unavailable for signing — using raw Keychain key: \(error)", category: "Auth")
                 signingKeyBytes = [UInt8](rawSigningKey)
             }
             let privateKey = try Curve25519.Signing.PrivateKey(rawRepresentation: Data(signingKeyBytes))
@@ -323,19 +325,19 @@ class AuthViewModel {
                 expiresInSeconds = 3600
             }
             
-            SessionManager.shared.saveTokens(
+            AuthSessionManager.shared.saveTokens(
                 accessToken: response.accessToken,
                 refreshToken: response.refreshToken,
                 expiresIn: expiresInSeconds,
                 userId: response.userId
             )
             
-            IceProxyManager.shared.configureFromServer(cert: response.iceBridgeCert ?? "")
-            print("✅ Device-based authentication successful")
+            VeilProxyManager.shared.configureFromServer(cert: response.iceBridgeCert ?? "")
+            Log.info("Device-based authentication successful")
             finishAuth(userId: response.userId)
             
         } catch {
-            print("❌ Device authentication failed: \(error)")
+            Log.info("Device authentication failed: \(error)")
 
             // Only wipe device keys when the server explicitly rejects this device
             // (unauthenticated / permission-denied gRPC codes = device not registered).
@@ -356,7 +358,7 @@ class AuthViewModel {
                 let hasPendingBundle = PendingRegistrationStore.hasPendingBundle()
                 await MainActor.run {
                     if hasPendingBundle {
-                        Log.info("♻️ Device not registered yet — routing back to registration (pending bundle found)", category: "Auth")
+                        Log.info("Device not registered yet — routing back to registration (pending bundle found)", category: "Auth")
                         // Keep keys; RegistrationFlowView will pick them up and retry.
                         hasRegisteredDeviceKeys = false
                     } else {
@@ -366,7 +368,7 @@ class AuthViewModel {
                     }
                 }
             } else {
-                Log.error("⚠️ Device auth failed (transient error) — keeping keys: \(error)", category: "Auth")
+                Log.error("Device auth failed (transient error) — keeping keys: \(error)", category: "Auth")
             }
         }
     }
@@ -378,7 +380,7 @@ class AuthViewModel {
         }
     }
 
-    // ✅ FIXED: Monitor token expiration (single scheduled refresh)
+    // FIXED: Monitor token expiration (single scheduled refresh)
     private func startTokenRefreshMonitoring() {
         scheduleTokenRefresh()
     }
@@ -387,7 +389,7 @@ class AuthViewModel {
         tokenRefreshTimer?.invalidate()
 
         guard isAuthenticated else { return }
-        guard let expiresAt = SessionManager.shared.sessionExpires else { return }
+        guard let expiresAt = AuthSessionManager.shared.sessionExpires else { return }
 
         let now = Date()
         let refreshTime = expiresAt.addingTimeInterval(-300) // refresh 5 minutes early
@@ -395,7 +397,7 @@ class AuthViewModel {
 
         tokenRefreshTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
             Task { @MainActor in
-                Log.info("⚠️ Token refresh timer fired", category: "Auth")
+                Log.info("Token refresh timer fired", category: "Auth")
                 await self?.refreshAccessToken()
             }
         }
@@ -403,8 +405,8 @@ class AuthViewModel {
     
     /// Refresh access token automatically
     private func refreshAccessToken() async {
-        guard let refreshToken = SessionManager.shared.refreshToken else {
-            Log.error("❌ No refresh token available - forcing logout", category: "Auth")
+        guard let refreshToken = AuthSessionManager.shared.refreshToken else {
+            Log.error("No refresh token available - forcing logout", category: "Auth")
             await MainActor.run {
                 handleSessionExpired()
             }
@@ -412,7 +414,7 @@ class AuthViewModel {
         }
         
         do {
-            Log.info("🔄 Attempting to refresh access token", category: "Auth")
+            Log.info("Attempting to refresh access token", category: "Auth")
             
             let response = try await AuthServiceClient.shared.refreshToken(refreshToken: refreshToken)
             
@@ -424,18 +426,18 @@ class AuthViewModel {
                 } else {
                     expiresIn = response.expiresIn ?? 3600
                 }
-                SessionManager.shared.saveTokens(
+                AuthSessionManager.shared.saveTokens(
                     accessToken: response.accessToken,
                     refreshToken: response.refreshToken,
                     expiresIn: expiresIn
                 )
                 
-                Log.info("✅ Access token refreshed successfully (expires in: \(expiresIn / 60) min)", category: "Auth")
+                Log.info("Access token refreshed successfully (expires in: \(expiresIn / 60) min)", category: "Auth")
                 self.scheduleTokenRefresh()
             }
             
         } catch {
-            Log.error("❌ Token refresh failed: \(error.localizedDescription)", category: "Auth")
+            Log.error("Token refresh failed: \(error.localizedDescription)", category: "Auth")
             
             // If refresh fails, logout user
             await MainActor.run {
@@ -462,7 +464,7 @@ class AuthViewModel {
     ///   2. Recover with seed phrase — preserves userId, generates new device keys
     ///   3. Create new account — explicit user choice, then we wipe and re-register
     private func handleLostDeviceKeys(userId: String, reason: String) {
-        Log.error("⚠️ [Auth] Device keys unavailable — showing recovery screen. Reason: \(reason). userId: \(userId.prefix(8))", category: "Auth")
+        Log.error("[Auth] Device keys unavailable — showing recovery screen. Reason: \(reason). userId: \(userId.prefix(8))", category: "Auth")
         // kSecAttrAccessibleWhenUnlockedThisDeviceOnly items are inaccessible when the
         // device is locked and the app is woken by a push notification. This is a transient
         // condition — the keys haven't been wiped; they just can't be read right now.
@@ -470,7 +472,7 @@ class AuthViewModel {
         // retried when the user brings the app to the foreground.
         #if canImport(UIKit)
         guard UIApplication.shared.applicationState != .background else {
-            Log.info("⚠️ [Auth] Keys inaccessible in background (device locked) — deferring recovery to foreground", category: "Auth")
+            Log.info("[Auth] Keys inaccessible in background (device locked) — deferring recovery to foreground", category: "Auth")
             return
         }
         #endif
@@ -483,10 +485,10 @@ class AuthViewModel {
         guard let userId = currentUserId else { return }
         CryptoManager.shared.setLocalUserId(userId)
         if CryptoManager.shared.isInitialized {
-            Log.info("✅ [Auth] Keys recovered on retry — core initialized", category: "Auth")
+            Log.info("[Auth] Keys recovered on retry — core initialized", category: "Auth")
             deviceKeysUnavailable = false
         } else {
-            Log.error("❌ [Auth] Keys still unavailable on retry", category: "Auth")
+            Log.error("[Auth] Keys still unavailable on retry", category: "Auth")
         }
     }
 
@@ -494,9 +496,9 @@ class AuthViewModel {
     /// Wipes ALL local crypto state so the user goes through fresh onboarding.
     /// Core Data (message history, contacts) is intentionally preserved.
     func wipeAndReregister() {
-        Log.info("🗑️ [Auth] User chose to wipe and re-register", category: "Auth")
+        Log.info("[Auth] User chose to wipe and re-register", category: "Auth")
         cancelTimeouts()
-        SessionManager.shared.clearSession()
+        AuthSessionManager.shared.clearSession()
 
         // Nullify in-memory cores before Keychain deletions so no stale reference survives.
         CryptoManager.shared.deleteAllCryptoKeys()
@@ -519,10 +521,10 @@ class AuthViewModel {
     func logout() {
         Task {
             await SessionCoordinator().sendEndSessionToAllContacts(reason: "logout")
-            Log.info("✅ END_SESSION sent to all contacts on logout", category: "Auth")
+            Log.info("END_SESSION sent to all contacts on logout", category: "Auth")
             
             // 1. Logout via gRPC
-            if SessionManager.shared.sessionToken != nil {
+            if AuthSessionManager.shared.sessionToken != nil {
                 do {
                     try await AuthServiceClient.shared.logout()
                 } catch {
@@ -533,18 +535,21 @@ class AuthViewModel {
             
             await MainActor.run {
                 self.cancelTimeouts()
-                SessionManager.shared.clearSession()
+                AuthSessionManager.shared.clearSession()
                 UserDefaults.standard.removeObject(forKey: "recovery_is_setup")
                 UserDefaults.standard.removeObject(forKey: "recovery_banner_dismissed")
-                
+                KeychainManager.shared.deleteAllContactRequestMappings()
+                UserDefaults.standard.removeObject(forKey: "cr_pending_nav_user_ids")
+
                 // Note: We keep the username in Keychain for convenience on next login
                 // If you want to clear it, uncomment the line below:
                 // KeychainManager.shared.deleteLastUsername()
-                
+
                 self.isAuthenticated = false
                 self.currentUserId = nil
-                self.currentUser = nil  // ✅ REFACTOR Phase 1.2
+                self.currentUser = nil  // REFACTOR Phase 1.2
             }
+            await MediaSendCache.shared.clear()
         }
     }
 
@@ -552,17 +557,17 @@ class AuthViewModel {
     /// then performs local logout. Use when a device may have been compromised.
     func logoutAllDevices() {
         Task {
-            if SessionManager.shared.sessionToken != nil {
+            if AuthSessionManager.shared.sessionToken != nil {
                 do {
                     try await AuthServiceClient.shared.logout(allDevices: true)
-                    Log.info("✅ Signed out of all devices", category: "Auth")
+                    Log.info("Signed out of all devices", category: "Auth")
                 } catch {
                     Log.error("logoutAllDevices API call failed: \(error.localizedDescription)", category: "Auth")
                 }
             }
             await MainActor.run {
                 self.cancelTimeouts()
-                SessionManager.shared.clearSession()
+                AuthSessionManager.shared.clearSession()
                 UserDefaults.standard.removeObject(forKey: "recovery_is_setup")
                 UserDefaults.standard.removeObject(forKey: "recovery_banner_dismissed")
                 self.isAuthenticated = false
@@ -575,14 +580,14 @@ class AuthViewModel {
     func deleteAccount() {
         self.isLoading = true
         
-        Log.info("🗑️ Requesting account deletion", category: "AuthViewModel")
+        Log.info("Requesting account deletion", category: "AuthViewModel")
         
         Task {
             do {
                 try await self.deleteAccountWithDeviceSignature()
                 await MainActor.run { self.handleDeleteAccountSuccess() }
             } catch {
-                Log.error("🗑️ deleteAccount raw error: \(error)", category: "AuthViewModel")
+                Log.error("deleteAccount raw error: \(error)", category: "AuthViewModel")
                 await MainActor.run {
                     self.cancelTimeouts()
                     self.isLoading = false
@@ -605,14 +610,14 @@ class AuthViewModel {
     /// Deletes all local data without contacting the server.
     /// Used as a fallback when the server is unreachable (e.g. blocked by censorship).
     func deleteAccountLocally() {
-        Log.info("🗑️ Deleting account locally only (server unreachable)", category: "AuthViewModel")
+        Log.info("Deleting account locally only (server unreachable)", category: "AuthViewModel")
         handleDeleteAccountSuccess()
     }
 
     /// Called when duress PIN is entered on the lock screen.
     /// Immediately wipes all local data; attempts server deletion best-effort in background.
     func triggerDuressWipe() {
-        Log.info("🚨 Duress PIN triggered — initiating silent wipe", category: "AuthViewModel")
+        Log.info("Duress PIN triggered — initiating silent wipe", category: "AuthViewModel")
         Task {
             _ = try? await UserServiceClient.shared.deleteAccount(
                 confirmation: "DELETE",
@@ -657,7 +662,7 @@ class AuthViewModel {
             ErrorRouter.shared.report(.network(.connectionFailed), recovery: { [weak self] in
                 self?.restoreSession()
             })
-            print("⏱️ Session restore timeout - showing login screen")
+            Log.info("Session restore timeout - showing login screen")
         }
     }
 
@@ -671,38 +676,35 @@ class AuthViewModel {
     }
 
     // MARK: - State Updaters
-    // ✅ Using gRPC for all messaging (WebSocket removed)
+    // Using gRPC for all messaging
     private func handleAuthSuccess(userId: String, username: String, token: String, refreshToken: String, expires: Int64) {
-        // ✅ DEBUG: Log token before saving
-        Log.info("💾 Saving session tokens (access token length: \(token.count))", category: "Auth")
+        Log.info("Saving session tokens (access token length: \(token.count))", category: "Auth")
         
-        // ✅ NEW: Use saveTokens() method with expiresIn
         // Calculate expiresIn from expiresAt timestamp
         let expiresDate = Date(timeIntervalSince1970: TimeInterval(expires))
         let expiresIn = Int(expiresDate.timeIntervalSinceNow)
         
-        SessionManager.shared.saveTokens(
+        AuthSessionManager.shared.saveTokens(
             accessToken: token,
             refreshToken: refreshToken,
             expiresIn: max(expiresIn, 0),  // Don't clamp negative (already-expired) TTL to 1 hour
             userId: userId
         )
         
-        // ✅ DEBUG: Verify token was saved correctly
-        if let savedToken = SessionManager.shared.sessionToken {
+        if let savedToken = AuthSessionManager.shared.sessionToken {
             if savedToken == token {
-                Log.info("✅ Access token saved and verified correctly", category: "Auth")
+                Log.info("Access token saved and verified correctly", category: "Auth")
             } else {
-                Log.error("❌ Token mismatch! Original length: \(token.count), Saved length: \(savedToken.count)", category: "Auth")
+                Log.error("Token mismatch! Original length: \(token.count), Saved length: \(savedToken.count)", category: "Auth")
             }
         } else {
-            Log.error("❌ Token not found after saving!", category: "Auth")
+            Log.error("Token not found after saving!", category: "Auth")
         }
         
-        if SessionManager.shared.refreshToken != nil {
-            Log.info("✅ Refresh token saved successfully", category: "Auth")
+        if AuthSessionManager.shared.refreshToken != nil {
+            Log.info("Refresh token saved successfully", category: "Auth")
         } else {
-            Log.error("❌ Refresh token not saved!", category: "Auth")
+            Log.error("Refresh token not saved!", category: "Auth")
         }
         
         currentUserId = userId
@@ -719,45 +721,44 @@ class AuthViewModel {
             #if canImport(UIKit)
             let granted = await PushNotificationManager.shared.requestPermission()
             if granted {
-                Log.info("📱 Push notifications enabled for user", category: "Auth")
+                Log.info("Push notifications enabled for user", category: "Auth")
             } else {
-                Log.info("📱 Push notifications declined by user", category: "Auth")
+                Log.info("Push notifications declined by user", category: "Auth")
             }
             await PushNotificationManager.shared.ensureTokenRegistered()
             #endif
         }
         
-        // ✅ REMOVED: NotificationCenter - now using Combine reactive approach
         // Long polling will start automatically when sessionToken is published
     }
 
     private func handleConnectSuccess(userId: String, username: String) {
-        print("✅ ConnectSuccess received!")
-        print("   User ID: \(userId)")
-        print("   Username: \(username)")
+        Log.info("ConnectSuccess received!")
+        Log.info("   User ID: \(userId)")
+        Log.info("   Username: \(username)")
 
         currentUserId = userId
         isAuthenticated = true
         scheduleTokenRefresh()
 
-        // ✅ REFACTOR Phase 1.2: Load User entity and set currentUser
+        // Load User entity and set currentUser
         loadUserFromCoreData(userId: userId)
-        print("✅ User authenticated successfully")
+        Log.info("User authenticated successfully")
     }
     
     private func handleSessionExpired() {
-        SessionManager.shared.clearSession()
+        AuthSessionManager.shared.clearSession()
         self.isAuthenticated = false
         ErrorRouter.shared.report(.sessionExpired)
     }
     
     private func handleDeleteAccountSuccess() {
-        Log.info("✅ Account deletion successful", category: "AuthViewModel")
+        Log.info("Account deletion successful", category: "AuthViewModel")
         cancelTimeouts()
         self.isLoading = false
         
         // Clear all user data
-        SessionManager.shared.clearSession()
+        AuthSessionManager.shared.clearSession()
         CryptoManager.shared.deleteAllCryptoKeys()
         KeychainManager.shared.deleteDeviceKeys()
         
@@ -768,8 +769,8 @@ class AuthViewModel {
             "is_discoverable",
             "recovery_is_setup",
             "recovery_banner_dismissed",
-            UserDefaultsKey.iceEnabled.rawValue,
-            UserDefaultsKey.iceMode.rawValue,
+            UserDefaultsKey.veilEnabled.rawValue,
+            UserDefaultsKey.veilMode.rawValue,
             UserDefaultsKey.trafficProtectionEnabled.rawValue,
             UserDefaultsKey.backgroundFetchEnabled.rawValue,
             UserDefaultsKey.backgroundFetchIntervalMinutes.rawValue,
@@ -788,7 +789,7 @@ class AuthViewModel {
         let context = viewContext
         
         guard context.persistentStoreCoordinator != nil else {
-            Log.info("⚠️ Core Data persistent store coordinator not ready, skipping data deletion", category: "AuthViewModel")
+            Log.info("Core Data persistent store coordinator not ready, skipping data deletion", category: "AuthViewModel")
             isAuthenticated = false
             currentUserId = nil
             currentUser = nil
@@ -811,10 +812,10 @@ class AuthViewModel {
                     )
                 }
             } catch {
-                Log.error("❌ Failed to delete \(entityName) from CoreData: \(error)", category: "AuthViewModel")
+                Log.error("Failed to delete \(entityName) from CoreData: \(error)", category: "AuthViewModel")
             }
         }
-        Log.info("✅ All user data deleted from CoreData", category: "AuthViewModel")
+        Log.info("All user data deleted from CoreData", category: "AuthViewModel")
 
         // Reset auth state
         isAuthenticated = false
@@ -822,7 +823,7 @@ class AuthViewModel {
         currentUser = nil
         hasRegisteredDeviceKeys = false
 
-        Log.info("✅ Account deletion complete - user logged out", category: "AuthViewModel")
+        Log.info("Account deletion complete - user logged out", category: "AuthViewModel")
     }
     
     // MARK: - Core Data Integration
@@ -832,19 +833,19 @@ class AuthViewModel {
     ///   - userId: The user ID to load data for
     ///   - username: Optional username to update/set (from login response)
     private func loadUserFromCoreData(userId: String, username: String? = nil) {
-        // ✅ FIX: Check if persistent store coordinator is ready before accessing entities
+        // Check if persistent store coordinator is ready before accessing entities
         guard viewContext.persistentStoreCoordinator != nil else {
-            print("⚠️ Core Data persistent store coordinator not ready yet, skipping user load")
+            Log.info("Core Data persistent store coordinator not ready yet, skipping user load")
             return
         }
         
-        // ✅ SIMPLIFIED: No more multi-account filtering
+        // No more multi-account filtering
         let fetchRequest = User.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "id == %@", userId)
         
-        print("🔍 loadUserFromCoreData: Searching for userId: \(userId)")
+        Log.info("loadUserFromCoreData: Searching for userId: \(userId)")
         if let username = username {
-            print("   Username from parameter: \(username)")
+            Log.info("   Username from parameter: \(username)")
         }
         
         do {
@@ -853,12 +854,12 @@ class AuthViewModel {
             
             if let existingUser = try viewContext.fetch(fetchRequest).first {
                 user = existingUser
-                print("👤 Found existing user in Core Data: \(user.displayName)")
+                Log.info("Found existing user in Core Data: \(user.displayName)")
                 
-                // ✅ UPDATE: Update username if provided and different
+                // Update username if provided and different
                 if let newUsername = username, !newUsername.isEmpty {
                     if user.username.isEmpty || user.username != newUsername {
-                        print("🔄 Updating username: '\(user.username)' -> '\(newUsername)'")
+                        Log.info("Updating username: '\(user.username)' -> '\(newUsername)'")
                         let oldUsername = user.username
                         user.username = newUsername
                         // Also update displayName if it's empty or was same as old username
@@ -869,7 +870,7 @@ class AuthViewModel {
                     }
                 }
             } else {
-                print("✨ No user found, creating new user...")
+                Log.info("No user found, creating new user...")
                 // First login on this device, create a new User entity
                 user = User(context: viewContext)
                 user.id = userId
@@ -879,29 +880,29 @@ class AuthViewModel {
                 user.isBlocked = false
                 user.amISharingWith = false
                 needsSave = true
-                print("✨ Created new user in Core Data for ID: \(userId)")
-                print("   username: \(user.username)")
+                Log.info("Created new user in Core Data for ID: \(userId)")
+                Log.info("   username: \(user.username)")
             }
             
             // Save if needed
             if needsSave {
                 try viewContext.save()
-                print("💾 Saved user changes to Core Data")
+                Log.info("Saved user changes to Core Data")
             }
             
-            // ✅ REFACTOR Phase 1.2: Set currentUser - single source of truth!
+            // Set currentUser - single source of truth!
             self.currentUserId = user.id
             self.currentUser = user
             CryptoManager.shared.setLocalUserId(user.id)
-            SessionManager.shared.saveDisplayName(user.displayName.isEmpty ? (user.username.isEmpty ? "" : user.username) : user.displayName)
+            AuthSessionManager.shared.saveDisplayName(user.displayName.isEmpty ? (user.username.isEmpty ? "" : user.username) : user.displayName)
             
-            print("✅ Restored user data from Core Data:")
-            print("   userId: \(user.id)")
-            print("   username: \(user.username)")
-            print("   displayName: \(user.displayName)")
+            Log.info("Restored user data from Core Data:")
+            Log.info("   userId: \(user.id)")
+            Log.info("   username: \(user.username)")
+            Log.info("   displayName: \(user.displayName)")
             
         } catch {
-            print("❌ Failed to fetch or create user from Core Data: \(error)")
+            Log.info("Failed to fetch or create user from Core Data: \(error)")
         }
     }
 }

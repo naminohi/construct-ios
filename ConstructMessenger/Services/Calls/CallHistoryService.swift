@@ -5,6 +5,9 @@
 //  Persists call records to Core Data when calls end.
 //  Called from CallManager.endActiveCall.
 //
+//  macOS: calls not yet implemented, stub out to avoid linking CoreData call types.
+//
+#if os(iOS)
 
 import Foundation
 import CoreData
@@ -49,21 +52,16 @@ final class CallHistoryService {
 
     func deleteAll() {
         guard let ctx = context else { return }
-        ctx.perform {
-            // NSBatchDeleteRequest writes directly to the SQLite store and bypasses
-            // the in-memory context, so @FetchRequest observers would never see the
-            // change. Fetch result type .resultTypeObjectIDs + mergeChanges fixes this.
-            let req = NSFetchRequest<NSFetchRequestResult>(entityName: "CallRecord")
-            let batch = NSBatchDeleteRequest(fetchRequest: req)
-            batch.resultType = .resultTypeObjectIDs
-            guard let result = try? ctx.execute(batch) as? NSBatchDeleteResult,
-                  let ids = result.result as? [NSManagedObjectID] else {
-                return
-            }
-            NSManagedObjectContext.mergeChanges(
-                fromRemoteContextSave: [NSDeletedObjectsKey: ids],
-                into: [ctx]
-            )
+        do {
+            let records = try CTCallRecord.fetchRecent(limit: 10_000, in: ctx)
+            guard !records.isEmpty else { return }
+            records.forEach(ctx.delete)
+            try ctx.save()
+            Log.info("Deleted \(records.count) call history records", category: "CallHistory")
+        } catch {
+            Log.error("Failed to delete call history: \(error)", category: "CallHistory")
         }
     }
 }
+
+#endif // os(iOS)

@@ -1,11 +1,11 @@
 //
-//  IceCertFetcher.swift
+//  VeilCertFetcher.swift
 //  Construct Messenger
 //
 //  Fetches the ICE bridge cert and relay config from .well-known endpoints.
 //  Cert fallback chain (level 3):
-//    1. AuthTokensResponse (after login) → saved to Keychain by IceProxyManager
-//    2. Keychain cache                   → IceProxyManager.getIceBridgeCert()
+//    1. AuthTokensResponse (after login) → saved to Keychain by VeilProxyManager
+//    2. Keychain cache                   → VeilProxyManager.getIceBridgeCert()
 //    3. https://konstruct.cc/.well-known/ice-cert   ← this file
 //    4. Hardcoded in binary              → ICEConfig.hardcodedBridgeCert
 //
@@ -37,32 +37,43 @@ struct RelayInfo: Codable {
     /// nil → falls back to `sni`.
     let wtHostHeader: String?
     /// IAT mode pushed by server. Defaults to `.enabled` (1) when absent.
-    let iatMode: IceIATMode
+    let iatMode: VeilIATMode
+    /// Additional TLS SNI values to try for WebTunnel on this relay before falling back to obfs4.
+    /// Allows domain-fronting rotation without a binary update.
+    /// nil / empty → no SNI alternatives available.
+    let alternativeSNIs: [String]?
+    /// Unix timestamp when this relay's TLS certificate expires.
+    /// nil → expiry unknown (server hasn't pushed this data yet).
+    let certExpiresAt: Double?
 
     var addressWithPort: String { "\(addr):\(port)" }
 
     enum CodingKeys: String, CodingKey {
         case id, addr, port, domain, sni
-        case spkiSha256  = "spki_sha256"
-        case bridgeCert  = "bridge_cert"
-        case wtPath      = "wt_path"
-        case wtHostHeader = "wt_host_header"
-        case iatMode     = "iat_mode"
+        case spkiSha256      = "spki_sha256"
+        case bridgeCert      = "bridge_cert"
+        case wtPath          = "wt_path"
+        case wtHostHeader    = "wt_host_header"
+        case iatMode         = "iat_mode"
+        case alternativeSNIs = "alternative_snis"
+        case certExpiresAt   = "cert_expires_at"
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        id          = try c.decode(String.self,  forKey: .id)
-        addr        = try c.decode(String.self,  forKey: .addr)
-        port        = try c.decode(Int.self,     forKey: .port)
-        domain      = try c.decode(String.self,  forKey: .domain)
-        sni         = try c.decode(String.self,  forKey: .sni)
-        spkiSha256  = try c.decode(String.self,  forKey: .spkiSha256)
-        bridgeCert  = try c.decodeIfPresent(String.self, forKey: .bridgeCert)
-        wtPath      = try c.decodeIfPresent(String.self, forKey: .wtPath)
-        wtHostHeader = try c.decodeIfPresent(String.self, forKey: .wtHostHeader)
+        id              = try c.decode(String.self,  forKey: .id)
+        addr            = try c.decode(String.self,  forKey: .addr)
+        port            = try c.decode(Int.self,     forKey: .port)
+        domain          = try c.decode(String.self,  forKey: .domain)
+        sni             = try c.decode(String.self,  forKey: .sni)
+        spkiSha256      = try c.decode(String.self,  forKey: .spkiSha256)
+        bridgeCert      = try c.decodeIfPresent(String.self, forKey: .bridgeCert)
+        wtPath          = try c.decodeIfPresent(String.self, forKey: .wtPath)
+        wtHostHeader    = try c.decodeIfPresent(String.self, forKey: .wtHostHeader)
+        alternativeSNIs = try c.decodeIfPresent([String].self, forKey: .alternativeSNIs)
+        certExpiresAt   = try c.decodeIfPresent(Double.self, forKey: .certExpiresAt)
         let rawIat  = (try? c.decodeIfPresent(Int.self, forKey: .iatMode)) ?? nil
-        iatMode     = rawIat.flatMap { IceIATMode(rawValue: $0) } ?? .enabled
+        iatMode     = rawIat.flatMap { VeilIATMode(rawValue: $0) } ?? .enabled
     }
 
     func encode(to encoder: Encoder) throws {
@@ -73,16 +84,18 @@ struct RelayInfo: Codable {
         try c.encode(domain,       forKey: .domain)
         try c.encode(sni,          forKey: .sni)
         try c.encode(spkiSha256,   forKey: .spkiSha256)
-        try c.encodeIfPresent(bridgeCert,   forKey: .bridgeCert)
-        try c.encodeIfPresent(wtPath,       forKey: .wtPath)
-        try c.encodeIfPresent(wtHostHeader, forKey: .wtHostHeader)
-        try c.encode(iatMode.rawValue,      forKey: .iatMode)
+        try c.encodeIfPresent(bridgeCert,      forKey: .bridgeCert)
+        try c.encodeIfPresent(wtPath,          forKey: .wtPath)
+        try c.encodeIfPresent(wtHostHeader,    forKey: .wtHostHeader)
+        try c.encodeIfPresent(alternativeSNIs, forKey: .alternativeSNIs)
+        try c.encodeIfPresent(certExpiresAt,   forKey: .certExpiresAt)
+        try c.encode(iatMode.rawValue,         forKey: .iatMode)
     }
 }
 
 // MARK: - Private wire types
 
-private struct IceCertWellKnown: Decodable {
+private struct VeilCertWellKnown: Decodable {
     let cert: String
     let iatMode: Int
 
@@ -96,6 +109,16 @@ private struct ConstructServerWellKnown: Decodable {
     struct ICESection: Decodable {
         let primary: String?
         let relays: [RelayInfo]?
+        let relayRegions: [VEILRelayRegion]?
+        /// Relay IDs that have been retired. Clients with any of these as their
+        /// active relay should rotate immediately after fetching a fresh config.
+        let deprecatedIds: [String]?
+
+        enum CodingKeys: String, CodingKey {
+            case primary, relays
+            case relayRegions   = "relay_regions"
+            case deprecatedIds  = "deprecated_ids"
+        }
     }
     let version: String?
     let ice: ICESection?
@@ -133,13 +156,13 @@ private struct ConstructServerWellKnown: Decodable {
     }
 }
 
-// MARK: - IceCertFetcher
+// MARK: - VeilCertFetcher
 
-actor IceCertFetcher {
-    static let shared = IceCertFetcher()
+actor VeilCertFetcher {
+    static let shared = VeilCertFetcher()
     private init() {}
 
-    private let timeout: TimeInterval = NetworkTiming.ICE.certFetchTimeoutHTTPS
+    private let timeout: TimeInterval = NetworkTiming.VEIL.certFetchTimeoutHTTPS
 
     // MPTCP .handover: OS migrates in-flight requests to cellular when WiFi drops,
     // preventing cert/relay-config fetches from failing on interface transitions.
@@ -154,8 +177,18 @@ actor IceCertFetcher {
 
     // UserDefaults key for cached relay infos (JSON-encoded [RelayInfo])
     private static let cachedRelayInfosKey = "construct.ice_relay_infos"
+    /// UserDefaults key for deprecated relay IDs pushed by the server (JSON-encoded [String]).
+    private static let cachedDeprecatedIdsKey = "construct.ice_deprecated_relay_ids"
     /// UserDefaults key for cached server Ed25519 bundle-signing public key (raw Data, 32 bytes).
     static let cachedBundleSigningKeyKey = "construct.bundle_signing_key"
+
+    /// Returns the set of relay IDs the server has marked as deprecated.
+    /// Clients whose active relay's manifest ID appears in this set should rotate immediately.
+    static func cachedDeprecatedIdsSync() -> Set<String> {
+        guard let data = UserDefaults.standard.data(forKey: cachedDeprecatedIdsKey),
+              let ids = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+        return Set(ids)
+    }
 
     // MARK: - Bridge cert
 
@@ -171,15 +204,15 @@ actor IceCertFetcher {
         do {
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                Log.debug("🧊 ICE .well-known returned non-200", category: "ICE")
+                Log.debug("ICE .well-known returned non-200", category: "ICE")
                 return nil
             }
-            let parsed = try JSONDecoder().decode(IceCertWellKnown.self, from: data)
+            let parsed = try JSONDecoder().decode(VeilCertWellKnown.self, from: data)
             guard !parsed.cert.isEmpty else { return nil }
-            Log.info("🧊 ICE cert fetched via .well-known", category: "ICE")
+            Log.info("ICE cert fetched via .well-known", category: "ICE")
             return parsed.cert
         } catch {
-            Log.debug("🧊 ICE .well-known fetch error: \(error)", category: "ICE")
+            Log.debug("ICE .well-known fetch error: \(error)", category: "ICE")
             return nil
         }
     }
@@ -199,13 +232,13 @@ actor IceCertFetcher {
     func fetchAndCacheRelayConfig() async -> [RelayInfo]? {
         let mirrorURLs: [String] = [
             "https://\(ServerConfig.inviteHost)/.well-known/construct-server",
-            "https://raw.githubusercontent.com/maximeliseyev/construct-relay/main/.well-known/construct-server",
+            "https://raw.githubusercontent.com/konstruct-msg/construct-relay/main/.well-known/construct-server",
         ]
 
         if let relays = await fetchVerifiedRelayConfig(from: mirrorURLs) {
             return relays
         }
-        Log.debug("🧊 All construct-server mirrors failed — using cache", category: "ICE")
+        Log.debug("All construct-server mirrors failed — using cache", category: "ICE")
         return Self.cachedRelayInfosSync()
     }
 
@@ -220,11 +253,11 @@ actor IceCertFetcher {
                         request.cachePolicy = .reloadIgnoringLocalCacheData
                         let (data, response) = try await self.session.data(for: request)
                         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                            Log.debug("🧊 \(url.host ?? "") returned non-200", category: "ICE")
+                            Log.debug("\(url.host ?? "") returned non-200", category: "ICE")
                             return nil
                         }
                         guard try self.verifySignature(data) else {
-                            Log.error("🧊 \(url.host ?? "") signature invalid — ignoring", category: "ICE")
+                            Log.error("\(url.host ?? "") signature invalid — ignoring", category: "ICE")
                             return nil
                         }
                         let parsed = try JSONDecoder().decode(ConstructServerWellKnown.self, from: data)
@@ -239,12 +272,22 @@ actor IceCertFetcher {
                             UserDefaults.standard.set(keyData, forKey: Self.cachedBundleSigningKeyKey)
                         }
                         let addressList = relays.map(\.addressWithPort)
-                        UserDefaults.standard.set(addressList, forKey: ICEConfig.cachedRelayListKey)
+                        UserDefaults.standard.set(addressList, forKey: VEILConfig.cachedRelayListKey)
+                        if let regions = parsed.ice?.relayRegions,
+                           let regionsData = try? JSONEncoder().encode(regions) {
+                            UserDefaults.standard.set(regionsData, forKey: VEILConfig.cachedRelayRegionsKey)
+                        }
+                        // Persist deprecated relay IDs so loadStoredRelay() can evict stale cache.
+                        let deprecatedIds = parsed.ice?.deprecatedIds ?? []
+                        if let encodedDeprecated = try? JSONEncoder().encode(deprecatedIds) {
+                            UserDefaults.standard.set(encodedDeprecated, forKey: Self.cachedDeprecatedIdsKey)
+                        }
 
-                        Log.info("🧊 Relay config via \(url.host ?? "?"): \(relays.count) relay(s)", category: "ICE")
+                        let deprecatedNote = deprecatedIds.isEmpty ? "" : " (deprecated: \(deprecatedIds.joined(separator: ", ")))"
+                        Log.info("Relay config via \(url.host ?? "?"): \(relays.count) relay(s)\(deprecatedNote)", category: "ICE")
                         return relays
                     } catch {
-                        Log.debug("🧊 \(url.host ?? "") fetch error: \(error)", category: "ICE")
+                        Log.debug("\(url.host ?? "") fetch error: \(error)", category: "ICE")
                         return nil
                     }
                 }
@@ -286,7 +329,7 @@ actor IceCertFetcher {
            let cert = relay.bridgeCert, !cert.isEmpty {
             return cert
         }
-        return ICEConfig.hardcodedRelayCerts[address]
+        return VEILConfig.hardcodedRelayCerts[address]
     }
 
     /// Synchronous WebTunnel path lookup for non-async contexts.
@@ -297,7 +340,7 @@ actor IceCertFetcher {
            let path = relay.wtPath, !path.isEmpty {
             return path
         }
-        return ICEConfig.hardcodedRelayWTPaths[address]
+        return VEILConfig.hardcodedRelayWTPaths[address]
     }
 
     /// Synchronous WebTunnel Host header lookup for non-async contexts.
@@ -318,7 +361,7 @@ actor IceCertFetcher {
         relays.removeAll { $0.addressWithPort == address }
         if let encoded = try? JSONEncoder().encode(relays) {
             UserDefaults.standard.set(encoded, forKey: cachedRelayInfosKey)
-            Log.info("🧊 Evicted relay \(address) from SPKI cache", category: "ICE")
+            Log.info("Evicted relay \(address) from SPKI cache", category: "ICE")
         }
     }
 
@@ -327,12 +370,31 @@ actor IceCertFetcher {
         if let relay = cachedRelayInfosSync()?.first(where: { $0.addressWithPort == address }) {
             return relay.sni.isEmpty ? nil : relay.sni
         }
-        return ICEConfig.hardcodedRelaySNIs[address]
+        return VEILConfig.hardcodedRelaySNIs[address]
+    }
+
+    /// Synchronous alternative SNI list for non-async contexts.
+    /// Returns all alternative SNIs pushed by the server for this relay, or hardcoded fallback.
+    static func alternativeSNIsSync(for address: String) -> [String] {
+        if let relay = cachedRelayInfosSync()?.first(where: { $0.addressWithPort == address }),
+           let alts = relay.alternativeSNIs, !alts.isEmpty {
+            return alts
+        }
+        return VEILConfig.hardcodedRelayAlternativeSNIs[address] ?? []
+    }
+
+    /// TLS certificate expiry date for a relay, as reported by the server config.
+    /// Returns nil when the relay is not in cache or the server hasn't pushed expiry data.
+    static func certExpiresAtSync(for address: String) -> Date? {
+        guard let ts = cachedRelayInfosSync()?.first(where: { $0.addressWithPort == address })?.certExpiresAt else {
+            return nil
+        }
+        return Date(timeIntervalSince1970: ts)
     }
 
     /// IAT mode pushed by server for this relay. Returns nil when relay is not in cache
     /// (caller should fall back to `.enabled`).
-    static func iatModeSync(for address: String) -> IceIATMode? {
+    static func iatModeSync(for address: String) -> VeilIATMode? {
         cachedRelayInfosSync()?.first(where: { $0.addressWithPort == address })?.iatMode
     }
 
@@ -352,14 +414,14 @@ actor IceCertFetcher {
         guard var jsonObject = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let sigField = jsonObject["signature"] as? String,
               sigField.hasPrefix("ed25519:") else {
-            Log.debug("🧊 construct-server: missing or malformed signature field", category: "ICE")
+            Log.debug("construct-server: missing or malformed signature field", category: "ICE")
             return false
         }
 
         // 2. Extract base64url signature bytes
         let b64url = String(sigField.dropFirst("ed25519:".count))
         guard let sigData = Data(base64URLEncoded: b64url) else {
-            Log.debug("🧊 construct-server: failed to decode signature", category: "ICE")
+            Log.debug("construct-server: failed to decode signature", category: "ICE")
             return false
         }
 
@@ -371,8 +433,8 @@ actor IceCertFetcher {
         )
 
         // 4. Load public key
-        guard let pubKeyData = Data(hexString: ICEConfig.relayConfigSigningKey) else {
-            Log.error("🧊 relayConfigSigningKey is not valid hex", category: "ICE")
+        guard let pubKeyData = Data(hexString: VEILConfig.relayConfigSigningKey) else {
+            Log.error("relayConfigSigningKey is not valid hex", category: "ICE")
             return false
         }
         let publicKey = try Curve25519.Signing.PublicKey(rawRepresentation: pubKeyData)

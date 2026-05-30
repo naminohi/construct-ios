@@ -92,7 +92,7 @@ final class MultiDeviceSendCoordinator {
             }
         } catch {
             Log.info(
-                "⚠️ MultiDevice fan-out: bundle fetch failed for \(recipientUserId.prefix(8))…: \(error)",
+                "MultiDevice fan-out: bundle fetch failed for \(recipientUserId.prefix(8))…: \(error)",
                 category: "MultiDevice"
             )
         }
@@ -140,7 +140,7 @@ final class MultiDeviceSendCoordinator {
             }
         } catch {
             Log.info(
-                "⚠️ SenderSync: own-device fetch failed for \(senderUserId.prefix(8))…: \(error)",
+                "SenderSync: own-device fetch failed for \(senderUserId.prefix(8))…: \(error)",
                 category: "MultiDevice"
             )
         }
@@ -191,7 +191,7 @@ final class MultiDeviceSendCoordinator {
                 )
             }
 
-            let encPayload = try MessageRouter.shared.encryptOutgoing(
+            let encPayload = try OutboundSessionService.shared.encryptOutgoing(
                 plaintext: plaintext,
                 messageId: messageId,
                 recipientId: contactId
@@ -209,14 +209,14 @@ final class MultiDeviceSendCoordinator {
                 contentType: contentType
             )
 
-            CryptoManager.shared.saveSessionToKeychainPublic(for: contactId)
+            CryptoManager.shared.saveSessionToKeychain(for: contactId)
             Log.info(
-                "✅ MultiDevice[\(contentType == .senderSync ? "sync" : "fanout")]: sent to \(contactId.prefix(20))…",
+                "MultiDevice[\(contentType == .senderSync ? "sync" : "fanout")]: sent to \(contactId.prefix(20))…",
                 category: "MultiDevice"
             )
         } catch {
             Log.info(
-                "⚠️ MultiDevice: failed to send to \(contactId.prefix(20))…: \(error)",
+                "MultiDevice: failed to send to \(contactId.prefix(20))…: \(error)",
                 category: "MultiDevice"
             )
         }
@@ -229,17 +229,17 @@ final class MultiDeviceSendCoordinator {
     /// Each device receiving this notification should independently trigger a heal with the contact.
     /// Failures are non-fatal — best-effort delivery.
     func broadcastSessionReset(contactId: String) async {
-        guard let myId = SessionManager.shared.currentUserId, !myId.isEmpty else { return }
-        guard let myDeviceId = SessionManager.shared.currentDeviceId, !myDeviceId.isEmpty else { return }
+        guard let myId = AuthSessionManager.shared.currentUserId, !myId.isEmpty else { return }
+        guard let myDeviceId = AuthSessionManager.shared.currentDeviceId, !myDeviceId.isEmpty else { return }
         let ownDevices: [DeviceBundleData]
         do {
             ownDevices = try await fetchOwnOtherDevices(myUserId: myId, myDeviceId: myDeviceId)
         } catch {
-            Log.info("⚠️ broadcastSessionReset: failed to fetch own devices: \(error.localizedDescription)", category: "MultiDevice")
+            Log.info("broadcastSessionReset: failed to fetch own devices: \(error.localizedDescription)", category: "MultiDevice")
             return
         }
         guard !ownDevices.isEmpty else {
-            Log.debug("📡 No linked devices to notify of session reset with \(contactId.prefix(8))…", category: "MultiDevice")
+            Log.debug("No linked devices to notify of session reset with \(contactId.prefix(8))…", category: "MultiDevice")
             return
         }
         let resetPayload = "__session_reset_notify__\(contactId)__"
@@ -248,7 +248,7 @@ final class MultiDeviceSendCoordinator {
             let syncContactId = "\(myId):\(device.deviceId)"
             do {
                 guard CryptoManager.shared.hasSession(for: syncContactId) else { continue }
-                let payload = try MessageRouter.shared.encryptSessionControl(
+                let payload = try OutboundSessionService.shared.encryptSessionControl(
                     plaintext: resetPayload,
                     messageId: msgId,
                     recipientId: syncContactId
@@ -264,9 +264,9 @@ final class MultiDeviceSendCoordinator {
                     recipientDeviceId: device.deviceId,
                     contentType: .senderSync
                 )
-                Log.debug("📡 Session-reset notification sent to own device \(device.deviceId.prefix(8))…", category: "MultiDevice")
+                Log.debug("Session-reset notification sent to own device \(device.deviceId.prefix(8))…", category: "MultiDevice")
             } catch {
-                Log.info("⚠️ Session-reset notify failed for device \(device.deviceId.prefix(8))…: \(error.localizedDescription)", category: "MultiDevice")
+                Log.info("Session-reset notify failed for device \(device.deviceId.prefix(8))…: \(error.localizedDescription)", category: "MultiDevice")
             }
         }
     }

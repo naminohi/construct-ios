@@ -8,13 +8,19 @@
 import SwiftUI
 
 struct BackgroundFetchSettingsView: View {
+    private static let lastCheckFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter
+    }()
+
     // MARK: - State
     @Environment(\.dismiss) private var dismiss
     @AppStorage("backgroundFetchEnabled") private var isEnabled: Bool = true
     @State private var intervalMinutes: Int = BackgroundFetchConfig.defaultIntervalMinutes
     @State private var isLowPowerModeEnabled: Bool = false
     @State private var showingLowPowerModeAlert = false
-    private var fetchManager = BackgroundFetchManager.shared
+    @State private var fetchManager = BackgroundFetchManager.shared
 
     // MARK: - Body
     var body: some View {
@@ -25,115 +31,112 @@ struct BackgroundFetchSettingsView: View {
                 backAction: { dismiss() }
             )
             ScrollView {
-                VStack(spacing: 0) {
+                LazyVStack(spacing: 0) {
 
                     // MARK: - Enable/Disable section
                     CTSettingsSectionHeader(title: NSLocalizedString("enable_background_fetch", comment: "").uppercased())
-
-                    Button {
-                        if !isLowPowerModeEnabled {
-                            isEnabled.toggle()
-                            handleToggleChange(isEnabled)
-                        }
-                    } label: {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(LocalizedStringKey("enable_background_fetch"))
-                                    .font(CTFont.regular(13))
-                                    .foregroundColor(isLowPowerModeEnabled ? Color.CT.textDim.opacity(0.5) : Color.CT.text)
-                                if isLowPowerModeEnabled {
-                                    Text(LocalizedStringKey("background_fetch_low_power_mode_warning"))
-                                        .font(CTFont.regular(11))
-                                        .foregroundStyle(.orange)
-                                }
+                    CTSectionGroup {
+                        Button {
+                            if !isLowPowerModeEnabled {
+                                isEnabled.toggle()
+                                handleToggleChange(isEnabled)
                             }
-                            Spacer()
-                            Text(isEnabled && !isLowPowerModeEnabled ? "[■ ON]" : "[□ OFF]")
-                                .font(CTFont.bold(12))
-                                .foregroundColor(isEnabled && !isLowPowerModeEnabled ? Color.CT.accent : Color.CT.textDim)
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: BackgroundFetchSettingsLayout.warningSpacing) {
+                                    Text(LocalizedStringKey("enable_background_fetch"))
+                                        .font(CTFont.regular(13))
+                                        .foregroundColor(
+                                            isLowPowerModeEnabled
+                                            ? Color.CT.textDim.opacity(BackgroundFetchSettingsLayout.disabledRowOpacity)
+                                            : Color.CT.text
+                                        )
+                                    if isLowPowerModeEnabled {
+                                        Text(LocalizedStringKey("background_fetch_low_power_mode_warning"))
+                                            .font(CTFont.regular(11))
+                                            .foregroundStyle(.orange)
+                                    }
+                                }
+                                Spacer()
+                                Text(isEnabled && !isLowPowerModeEnabled ? "[■ ON]" : "[□ OFF]")
+                                    .font(CTFont.bold(12))
+                                    .foregroundColor(isEnabled && !isLowPowerModeEnabled ? Color.CT.accent : Color.CT.textDim)
+                            }
+                            .padding(.horizontal, BackgroundFetchSettingsLayout.rowHorizontalPadding)
+                            .padding(.vertical, BackgroundFetchSettingsLayout.rowVerticalPadding)
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 12)
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
 
-                    Text(LocalizedStringKey("background_fetch_footer"))
-                        .font(CTFont.regular(11))
-                        .foregroundStyle(Color.CT.textDim)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 8)
-                    CTSep()
+                    sectionFooter("background_fetch_footer")
 
                     // MARK: - Interval Settings section
                     if isEnabled && !isLowPowerModeEnabled {
                         CTSettingsSectionHeader(title: NSLocalizedString("background_fetch_interval_settings", comment: "").uppercased())
-                        VStack(alignment: .leading, spacing: 12) {
-                            intervalHeader
-                            intervalStepper
+                        CTSectionGroup {
+                            VStack(alignment: .leading, spacing: BackgroundFetchSettingsLayout.intervalSectionSpacing) {
+                                intervalHeader
+                                intervalStepper
+                            }
+                            .padding(.horizontal, BackgroundFetchSettingsLayout.rowHorizontalPadding)
+                            .padding(.vertical, BackgroundFetchSettingsLayout.rowVerticalPadding)
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 12)
-                        Text(LocalizedStringKey("background_fetch_interval_footer"))
-                            .font(CTFont.regular(11))
-                            .foregroundStyle(Color.CT.textDim)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 12)
-                            .padding(.bottom, 8)
-                        CTSep()
+                        sectionFooter("background_fetch_interval_footer")
                     }
 
                     // MARK: - Status section
                     CTSettingsSectionHeader(title: NSLocalizedString("status", comment: "").uppercased())
-                    HStack {
-                        Text(LocalizedStringKey("background_fetch_status"))
-                            .font(CTFont.regular(13))
-                            .foregroundColor(Color.CT.textDim)
-                        Spacer()
-                        Text(statusIcon)
-                            .font(CTFont.regular(13))
-                            .foregroundColor(statusColor)
-                        Text(statusText)
-                            .font(CTFont.regular(13))
-                            .foregroundColor(Color.CT.textDim)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 12)
-
-                    if let lastFetch = fetchManager.lastFetchDate {
-                        CTSep(style: .thin)
+                    CTSectionGroup {
                         HStack {
-                            Text(LocalizedStringKey("background_fetch_last_check"))
+                            Text(LocalizedStringKey("background_fetch_status"))
                                 .font(CTFont.regular(13))
                                 .foregroundColor(Color.CT.textDim)
                             Spacer()
-                            Text(formatLastCheckDate(lastFetch))
+                            Text(statusIcon)
+                                .font(CTFont.regular(13))
+                                .foregroundColor(statusColor)
+                            Text(statusText)
                                 .font(CTFont.regular(13))
                                 .foregroundColor(Color.CT.textDim)
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 12)
+                        .padding(.horizontal, BackgroundFetchSettingsLayout.rowHorizontalPadding)
+                        .padding(.vertical, BackgroundFetchSettingsLayout.rowVerticalPadding)
+
+                        if let lastFetch = fetchManager.lastFetchDate {
+                            CTSep(style: .thin)
+                            HStack {
+                                Text(LocalizedStringKey("background_fetch_last_check"))
+                                    .font(CTFont.regular(13))
+                                    .foregroundColor(Color.CT.textDim)
+                                Spacer()
+                                Text(formatLastCheckDate(lastFetch))
+                                    .font(CTFont.regular(13))
+                                    .foregroundColor(Color.CT.textDim)
+                            }
+                            .padding(.horizontal, BackgroundFetchSettingsLayout.rowHorizontalPadding)
+                            .padding(.vertical, BackgroundFetchSettingsLayout.rowVerticalPadding)
+                        }
                     }
-                    CTSep()
 
                     // MARK: - Low Power Mode Warning section
                     if isLowPowerModeEnabled {
                         CTSettingsSectionHeader(title: NSLocalizedString("background_fetch_energy_saving", comment: "").uppercased())
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(LocalizedStringKey("background_fetch_low_power_mode_title"))
-                                .font(CTFont.regular(13))
-                                .foregroundColor(Color.CT.textDim)
-                            Text(LocalizedStringKey("background_fetch_low_power_mode_description"))
-                                .font(CTFont.regular(11))
-                                .foregroundColor(Color.CT.textDim)
-                                .fixedSize(horizontal: false, vertical: true)
+                        CTSectionGroup {
+                            VStack(alignment: .leading, spacing: BackgroundFetchSettingsLayout.warningSpacing) {
+                                Text(LocalizedStringKey("background_fetch_low_power_mode_title"))
+                                    .font(CTFont.regular(13))
+                                    .foregroundColor(Color.CT.textDim)
+                                Text(LocalizedStringKey("background_fetch_low_power_mode_description"))
+                                    .font(CTFont.regular(11))
+                                    .foregroundColor(Color.CT.textDim)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .padding(.horizontal, BackgroundFetchSettingsLayout.rowHorizontalPadding)
+                            .padding(.vertical, BackgroundFetchSettingsLayout.rowVerticalPadding)
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 12)
-                        CTSep()
                     }
                 }
-                .padding(.vertical, 20)
+                .padding(.vertical, BackgroundFetchSettingsLayout.sectionVerticalPadding)
             }
         }
         .background(Color.CT.bg.ignoresSafeArea())
@@ -170,29 +173,38 @@ struct BackgroundFetchSettingsView: View {
     private var intervalStepper: some View {
         HStack(spacing: 0) {
             Button {
-                let newVal = max(BackgroundFetchConfig.minIntervalMinutes, intervalMinutes - 5)
+                let newVal = max(
+                    BackgroundFetchConfig.minIntervalMinutes,
+                    intervalMinutes - BackgroundFetchSettingsConfig.intervalStepMinutes
+                )
                 if newVal != intervalMinutes {
                     intervalMinutes = newVal
                     handleIntervalChange(newVal)
                 }
             } label: {
-                Text("[-]")
-                    .font(CTFont.bold(13))
+                Image(systemName: "minus")
+                    .font(CTFont.bold(BackgroundFetchSettingsLayout.stepperButtonFontSize))
                     .foregroundColor(intervalMinutes > BackgroundFetchConfig.minIntervalMinutes ? Color.CT.accent : Color.CT.textDim)
-                    .frame(width: 44, height: 32)
+                    .frame(
+                        width: BackgroundFetchSettingsLayout.stepperButtonWidth,
+                        height: BackgroundFetchSettingsLayout.stepperButtonHeight
+                    )
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
             Rectangle()
                 .fill(Color.CT.noise)
-                .frame(width: 1, height: 24)
+                .frame(
+                    width: BackgroundFetchSettingsLayout.stepperDividerWidth,
+                    height: BackgroundFetchSettingsLayout.stepperDividerHeight
+                )
 
             Spacer()
 
             // Preset chips: 5 · 15 · 30 · 60
-            HStack(spacing: 8) {
-                ForEach([5, 15, 30, 60], id: \.self) { preset in
+            HStack(spacing: BackgroundFetchSettingsLayout.presetSpacing) {
+                ForEach(BackgroundFetchSettingsConfig.intervalPresets, id: \.self) { preset in
                     Button {
                         intervalMinutes = preset
                         handleIntervalChange(preset)
@@ -200,11 +212,14 @@ struct BackgroundFetchSettingsView: View {
                         Text("\(preset)")
                             .font(CTFont.regular(11))
                             .foregroundColor(intervalMinutes == preset ? Color.CT.accent : Color.CT.textDim)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
+                            .padding(.horizontal, BackgroundFetchSettingsLayout.presetHorizontalPadding)
+                            .padding(.vertical, BackgroundFetchSettingsLayout.presetVerticalPadding)
                             .overlay(
                                 Rectangle()
-                                    .stroke(intervalMinutes == preset ? Color.CT.accent : Color.CT.noise, lineWidth: 1)
+                                    .stroke(
+                                        intervalMinutes == preset ? Color.CT.accent : Color.CT.noise,
+                                        lineWidth: BackgroundFetchSettingsLayout.presetStrokeWidth
+                                    )
                             )
                     }
                     .buttonStyle(.plain)
@@ -215,26 +230,35 @@ struct BackgroundFetchSettingsView: View {
 
             Rectangle()
                 .fill(Color.CT.noise)
-                .frame(width: 1, height: 24)
+                .frame(
+                    width: BackgroundFetchSettingsLayout.stepperDividerWidth,
+                    height: BackgroundFetchSettingsLayout.stepperDividerHeight
+                )
 
             Button {
-                let newVal = min(BackgroundFetchConfig.maxIntervalMinutes, intervalMinutes + 5)
+                let newVal = min(
+                    BackgroundFetchConfig.maxIntervalMinutes,
+                    intervalMinutes + BackgroundFetchSettingsConfig.intervalStepMinutes
+                )
                 if newVal != intervalMinutes {
                     intervalMinutes = newVal
                     handleIntervalChange(newVal)
                 }
             } label: {
-                Text("[+]")
-                    .font(CTFont.bold(13))
+                Image(systemName: "plus")
+                    .font(CTFont.bold(BackgroundFetchSettingsLayout.stepperButtonFontSize))
                     .foregroundColor(intervalMinutes < BackgroundFetchConfig.maxIntervalMinutes ? Color.CT.accent : Color.CT.textDim)
-                    .frame(width: 44, height: 32)
+                    .frame(
+                        width: BackgroundFetchSettingsLayout.stepperButtonWidth,
+                        height: BackgroundFetchSettingsLayout.stepperButtonHeight
+                    )
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
         }
         .overlay(
             Rectangle()
-                .stroke(Color.CT.noise, lineWidth: 1)
+                .stroke(Color.CT.noise, lineWidth: BackgroundFetchSettingsLayout.stepperBorderStrokeWidth)
         )
     }
 
@@ -286,9 +310,17 @@ struct BackgroundFetchSettingsView: View {
     }
 
     private func formatLastCheckDate(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .full
-        return formatter.localizedString(for: date, relativeTo: Date())
+        Self.lastCheckFormatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    @ViewBuilder
+    private func sectionFooter(_ key: String) -> some View {
+        Text(LocalizedStringKey(key))
+            .font(CTFont.regular(11))
+            .foregroundStyle(Color.CT.textDim)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, BackgroundFetchSettingsLayout.rowHorizontalPadding)
+            .padding(.bottom, BackgroundFetchSettingsLayout.footerBottomPadding)
     }
 }
 

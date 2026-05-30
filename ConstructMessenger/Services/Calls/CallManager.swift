@@ -1,9 +1,12 @@
+// swiftlint:disable file_length
 //
 //  CallManager.swift
 //  Construct Messenger
 //
 //  Minimal scaffolding for calls (signaling + PushKit + CallKit).
 //  Full WebRTC implementation will be layered in later.
+//
+//  macOS uses CallManagerStub.swift instead.
 //
 
 import Foundation
@@ -102,7 +105,7 @@ final class CallManager {
             Task { @MainActor in self?.answer(callUUID: uuid) }
         }
         CallKitProvider.shared.onEnd = { [weak self] uuid in
-            Task { @MainActor in self?.end(callUUID: uuid) }
+            Task { @MainActor in self?.end(callUUID: uuid, fromCallKit: true) }
         }
         CallKitProvider.shared.onAudioActivated = { [weak self] in
             Task { @MainActor in
@@ -131,7 +134,7 @@ final class CallManager {
 
     func startOutgoingCall(to userId: String, displayName: String, hasVideo: Bool = false) async {
         guard CallsFeature.isEnabled else {
-            Log.info("📞 Calls disabled — ignoring outgoing call request", category: "Calls")
+            Log.info("Calls disabled — ignoring outgoing call request", category: "Calls")
             return
         }
 
@@ -163,21 +166,21 @@ final class CallManager {
             let initResp = try await SignalingServiceClient.shared.initiateCall(
                 callId: callId,
                 calleeUserId: userId,
-                callerName: SessionManager.shared.currentDisplayName,
+                callerName: AuthSessionManager.shared.currentDisplayName,
                 hasVideo: hasVideo
             )
             // calleeOnline=false is normal: idle users never have a signal stream open.
             // The server sends a VoIP push to wake the callee in this case.
             // Continue the call regardless — it will ring until the callee answers or
             // the server TTL expires (server sends an error signal when the call times out).
-            Log.info("📞 InitiateCall: calleeOnline=\(initResp.calleeOnline) (call_id=\(callId.prefix(8))…)", category: "Calls")
+            Log.info("InitiateCall: calleeOnline=\(initResp.calleeOnline) (call_id=\(callId.prefix(8))…)", category: "Calls")
 
             let turn = try? await SignalingServiceClient.shared.getTurnCredentials(callId: callId)
             if let turn {
                 active?.turn = turn
-                Log.info("📞 TURN credentials ready for outgoing call (call_id=\(callId.prefix(8))…)", category: "Calls")
+                Log.info("TURN credentials ready for outgoing call (call_id=\(callId.prefix(8))…)", category: "Calls")
             } else {
-                Log.info("📞 TURN unavailable — proceeding STUN-only (call_id=\(callId.prefix(8))…)", category: "Calls")
+                Log.info("TURN unavailable — proceeding STUN-only (call_id=\(callId.prefix(8))…)", category: "Calls")
             }
 
             try openStreamIfNeeded()
@@ -185,7 +188,7 @@ final class CallManager {
             try ensureWebRTC(role: .caller)
             try await sendOffer(toUserId: userId)
         } catch {
-            Log.error("📞 Outgoing call setup failed: \(error)", category: "Calls")
+            Log.error("Outgoing call setup failed: \(error)", category: "Calls")
             if let rpcError = error as? RPCError, rpcError.code == .permissionDenied {
                 lastError = NSLocalizedString("call_error_not_contacts", comment: "")
             }
@@ -197,7 +200,7 @@ final class CallManager {
 
     private func handleIncomingPush(_ payload: [AnyHashable: Any], reportedUUID: UUID) {
         guard CallsFeature.isEnabled else {
-            Log.info("📞 Calls disabled — ignoring incoming VoIP push", category: "Calls")
+            Log.info("Calls disabled — ignoring incoming VoIP push", category: "Calls")
             return
         }
 
@@ -206,7 +209,7 @@ final class CallManager {
         if active != nil {
             switch state {
             case .active, .connecting, .dialing, .ringing:
-                Log.info("📞 Busy — declining second incoming push (uuid=\(reportedUUID.uuidString.prefix(8))…)", category: "Calls")
+                Log.info("Busy — declining second incoming push (uuid=\(reportedUUID.uuidString.prefix(8))…)", category: "Calls")
                 #if os(iOS)
                 // PushKit already reported this to CallKit synchronously; tell it the call ended.
                 CallKitProvider.shared.reportCallEnded(uuid: reportedUUID)
@@ -261,7 +264,7 @@ final class CallManager {
 
     func answer(callUUID: UUID) {
         guard let active, active.session.uuid == callUUID else {
-            Log.info("📞 Answer for unknown call uuid=\(callUUID.uuidString.prefix(8))…", category: "Calls")
+            Log.info("Answer for unknown call uuid=\(callUUID.uuidString.prefix(8))…", category: "Calls")
             return
         }
         guard case .incoming = active.session.direction else { return }
@@ -277,9 +280,9 @@ final class CallManager {
                 let turn = try? await SignalingServiceClient.shared.getTurnCredentials(callId: active.session.id)
                 if let turn {
                     self.active?.turn = turn
-                    Log.info("📞 TURN ready for incoming call", category: "Calls")
+                    Log.info("TURN ready for incoming call", category: "Calls")
                 } else {
-                    Log.info("📞 TURN unavailable — proceeding STUN-only (incoming)", category: "Calls")
+                    Log.info("TURN unavailable — proceeding STUN-only (incoming)", category: "Calls")
                 }
                 try self.ensureWebRTC(role: .callee)
 
@@ -291,12 +294,12 @@ final class CallManager {
                     }
                     try await webrtc.setRemoteOffer(sdp: pendingSdp)
                     self.active?.pendingRemoteOfferSdp = nil
-                    Log.info("📞 Applied pending E2EE offer SDP", category: "Calls")
+                    Log.info("Applied pending E2EE offer SDP", category: "Calls")
 
                     // Drain ICE candidates that arrived before the offer was applied.
                     let buffered = self.active?.pendingIceCandidates ?? []
                     if !buffered.isEmpty {
-                        Log.info("📞 Draining \(buffered.count) buffered ICE candidate(s)", category: "Calls")
+                        Log.info("Draining \(buffered.count) buffered ICE candidate(s)", category: "Calls")
                         for ice in buffered {
                             try? await webrtc.addRemoteIceCandidate(ice)
                         }
@@ -310,7 +313,7 @@ final class CallManager {
                     sendAnswer(sdp: answerSdp)
                     self.active?.answeredAt = Date()
                     self.state = .active(active.session)
-                    Log.info("📞 E2EE incoming call answered: SDP exchanged", category: "Calls")
+                    Log.info("E2EE incoming call answered: SDP exchanged", category: "Calls")
                     #if os(iOS)
                     CallKitProvider.shared.reportOutgoingCallConnected(uuid: active.session.uuid)
                     #endif
@@ -324,7 +327,7 @@ final class CallManager {
                 try openStreamIfNeeded()
                 sendRinging()
             } catch {
-                Log.error("📞 Failed to accept call: \(error)", category: "Calls")
+                Log.error("Failed to accept call: \(error)", category: "Calls")
                 endActiveCall(reason: .local("Accept failed"))
             }
         }
@@ -360,9 +363,16 @@ final class CallManager {
         active?.webrtc?.setSpeaker(enabled)
     }
 
-    func end(callUUID: UUID) {
+    /// End the call identified by `callUUID`.
+    ///
+    /// - Parameter fromCallKit: Pass `true` when called from the `CXEndCallAction`
+    ///   delegate (`onEnd` callback) — CallKit already knows the call is ending, so
+    ///   no `requestEndCall` is needed. Pass `false` (default) when called from in-app
+    ///   UI (End/Decline buttons), which requires us to tell CallKit via
+    ///   `requestEndCall` so the lock-screen call UI is dismissed.
+    func end(callUUID: UUID, fromCallKit: Bool = false) {
         guard let active, active.session.uuid == callUUID else {
-            Log.info("📞 End for unknown call uuid=\(callUUID.uuidString.prefix(8))…", category: "Calls")
+            Log.info("End for unknown call uuid=\(callUUID.uuidString.prefix(8))…", category: "Calls")
             return
         }
 
@@ -373,14 +383,25 @@ final class CallManager {
             reason = .normal
         }
 
+        let wasRegisteredWithCallKit = active.callKitRegistered
+
         Task {
             do {
                 try openStreamIfNeeded()
                 sendHangup(reason: reason)
             } catch {
-                Log.error("📞 Failed to send hangup: \(error)", category: "Calls")
+                Log.error("Failed to send hangup: \(error)", category: "Calls")
             }
             endActiveCall(reason: .hangup(reason), reportToCallKit: false)
+            #if os(iOS)
+            // When the user ends the call from within the app, CallKit still thinks the
+            // call is active. Requesting CXEndCallAction via the call controller causes
+            // CallKit to dismiss the lock-screen call UI. The resulting onEnd callback
+            // will call end() again, but active will be nil by then, so it's a no-op.
+            if !fromCallKit && wasRegisteredWithCallKit {
+                await CallKitProvider.shared.requestEndCall(uuid: callUUID)
+            }
+            #endif
         }
     }
 
@@ -422,14 +443,14 @@ final class CallManager {
                 }
 
                 PerformanceMetrics.shared.end(.callSignalOpenStart, endEvent: .callSignalOpenEnd, label: metricsLabel)
-                Log.info("📞 Signaling stream accepted (call_id=\(metricsLabel)…)", category: "Calls")
+                Log.info("Signaling stream accepted (call_id=\(metricsLabel)…)", category: "Calls")
             } catch is AcceptTimeout {
                 PerformanceMetrics.shared.cancelStart(.callSignalOpenStart, label: metricsLabel)
-                Log.info("🧊 Signaling stream open timed out — attempting ICE fast-failover (call_id=\(metricsLabel)…)", category: "Calls")
+                Log.info("Signaling stream open timed out — attempting ICE fast-failover (call_id=\(metricsLabel)…)", category: "Calls")
 
                 // If ICE is running but on cooldown, clear cooldown: direct path is likely blocked.
-                if IceProxyManager.shared.isRunning, IceProxyManager.shared.isOnCooldown {
-                    IceProxyManager.shared.clearCooldown()
+                if VeilProxyManager.shared.isRunning, VeilProxyManager.shared.isOnCooldown {
+                    VeilProxyManager.shared.clearCooldown()
                 }
 
                 // Only restart if this stream is still the active one.
@@ -438,10 +459,10 @@ final class CallManager {
                 active.stream = nil
                 active.streamRetryCount += 1
                 if active.streamRetryCount <= ActiveCall.maxStreamRetries {
-                    Log.info("📞 Retrying signal stream (attempt \(active.streamRetryCount)/\(ActiveCall.maxStreamRetries))", category: "Calls")
+                    Log.info("Retrying signal stream (attempt \(active.streamRetryCount)/\(ActiveCall.maxStreamRetries))", category: "Calls")
                     try? self.openStreamIfNeeded()
                 } else {
-                    Log.error("📞 Signal stream failed after \(ActiveCall.maxStreamRetries) retries — falling back to E2EE-only mode", category: "Calls")
+                    Log.error("Signal stream failed after \(ActiveCall.maxStreamRetries) retries — falling back to E2EE-only mode", category: "Calls")
                 }
             } catch is CancellationError {
                 PerformanceMetrics.shared.cancelStart(.callSignalOpenStart, label: metricsLabel)
@@ -480,13 +501,13 @@ final class CallManager {
             await MainActor.run { [weak self, weak active] in
                 guard let self, let active else { return }
                 if self.active === active, active.stream === stream {
-                    Log.error("📞 Signaling stream closed unexpectedly", category: "Calls")
+                    Log.error("Signaling stream closed unexpectedly", category: "Calls")
                     self.endActiveCall(reason: .local("Signal stream closed"))
                 }
             }
         }
 
-        Log.info("📞 Signaling stream connecting (call_id=\(active.session.id.prefix(8))…)", category: "Calls")
+        Log.info("Signaling stream connecting (call_id=\(active.session.id.prefix(8))…)", category: "Calls")
     }
 
     private func handleSignalResponse(_ response: Shared_Proto_Signaling_V1_SignalResponse, for session: CallSession) {
@@ -494,7 +515,7 @@ final class CallManager {
         case .pong:
             break
         case .error(let error):
-            Log.error("📞 Signaling error: code=\(error.code) msg=\(error.message)", category: "Calls")
+            Log.error("Signaling error: code=\(error.code) msg=\(error.message)", category: "Calls")
             switch error.code {
             case .rateLimited:
                 // ICE candidate was dropped server-side; WebRTC will retransmit or use other candidates.
@@ -508,7 +529,7 @@ final class CallManager {
             // (device is online, no PushKit wake needed). Report to CallKit directly.
             guard CallsFeature.isEnabled else { return }
             if case .idle = state {
-                Log.info("📞 IncomingCallNotification received (call_id=\(call.callID.prefix(8))…)", category: "Calls")
+                Log.info("IncomingCallNotification received (call_id=\(call.callID.prefix(8))…)", category: "Calls")
                 #if os(iOS)
                 let reportedUUID = CallKitProvider.shared.reportIncomingCall(
                     callId: call.callID,
@@ -521,6 +542,16 @@ final class CallManager {
                     "caller_id": call.callerID
                 ]
                 handleIncomingPush(payload, reportedUUID: reportedUUID)
+                #else
+                // macOS: no PushKit/CallKit; show incoming call UI directly.
+                let session = CallSession(
+                    id: call.callID,
+                    uuid: UUID(),
+                    peerUserId: call.callerID,
+                    peerName: call.callerName,
+                    direction: .incoming
+                )
+                begin(session: session, initialState: .incoming(session))
                 #endif
             }
         case .signal(let s):
@@ -530,10 +561,10 @@ final class CallManager {
                     await self.handleRemoteOffer(offer, for: session)
                 }
             case .ringing(let r):
-                Log.info("📞 Ringing device=\(r.deviceID.prefix(8))…", category: "Calls")
+                Log.info("Ringing device=\(r.deviceID.prefix(8))…", category: "Calls")
                 state = .ringing(session)
             case .busy:
-                Log.info("📞 Busy", category: "Calls")
+                Log.info("Busy", category: "Calls")
                 endActiveCall(reason: .hangup(.busy))
             case .answer(let answer):
                 Task { @MainActor in
@@ -548,7 +579,7 @@ final class CallManager {
                     await self.handleRemoteIceCandidateBatch(batch, for: session)
                 }
             case .hangup(let h):
-                Log.info("📞 Hangup reason=\(h.reason)", category: "Calls")
+                Log.info("Hangup reason=\(h.reason)", category: "Calls")
                 endActiveCall(reason: .hangup(h.reason))
             default:
                 break
@@ -599,12 +630,14 @@ final class CallManager {
             if case .ended = self.state { self.state = .idle }
         }
 
+        #if os(iOS)
         CallHistoryService.shared.record(
             session: session,
             status: historyStatus,
             startedAt: startedAt,
             durationSeconds: duration
         )
+        #endif
 
         #if os(iOS)
         if reportToCallKit && wasRegisteredWithCallKit {
@@ -635,7 +668,7 @@ final class CallManager {
         } else {
             // Stream not available (E2EE-only call path) — send hangup via DR-encrypted message.
             sendCallSignalProto(sig, to: active.session.peerUserId)
-            Log.info("📞 Hangup sent via E2EE (no stream) to \(active.session.peerUserId.prefix(8))…", category: "Calls")
+            Log.info("Hangup sent via E2EE (no stream) to \(active.session.peerUserId.prefix(8))…", category: "Calls")
         }
     }
 
@@ -654,12 +687,12 @@ final class CallManager {
         webrtc.onConnectionFailed = { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
-                Log.error("📞 WebRTC connection failed — ending call", category: "Calls")
+                Log.error("WebRTC connection failed — ending call", category: "Calls")
                 self.endActiveCall(reason: .local("ICE connection failed"))
             }
         }
         active.webrtc = webrtc
-        Log.info("📞 WebRTC session created (role=\(role), turn=\(active.turn != nil ? "yes" : "STUN-only"))", category: "Calls")
+        Log.info("WebRTC session created (role=\(role), turn=\(active.turn != nil ? "yes" : "STUN-only"))", category: "Calls")
     }
 
     private func handleRemoteOffer(_ offer: Shared_Proto_Signaling_V1_CallOffer, for session: CallSession) async {
@@ -680,7 +713,7 @@ final class CallManager {
             state = .active(session)
             PerformanceMetrics.shared.end(.callSetupStart, endEvent: .callSetupEnd, label: String(session.id.prefix(8)))
         } catch {
-            Log.error("📞 Failed to handle offer: \(error)", category: "Calls")
+            Log.error("Failed to handle offer: \(error)", category: "Calls")
             endActiveCall(reason: .local("Offer handling failed"))
         }
     }
@@ -698,7 +731,7 @@ final class CallManager {
             CallKitProvider.shared.reportOutgoingCallConnected(uuid: session.uuid)
             #endif
         } catch {
-            Log.error("📞 Failed to handle answer: \(error)", category: "Calls")
+            Log.error("Failed to handle answer: \(error)", category: "Calls")
             endActiveCall(reason: .local("Answer handling failed"))
         }
     }
@@ -711,7 +744,7 @@ final class CallManager {
             let ice = WebRTCIceCandidate(sdp: candidateSdp, sdpMid: c.sdpMid, sdpMLineIndex: Int32(c.sdpMLineIndex))
             try await active.webrtc?.addRemoteIceCandidate(ice)
         } catch {
-            Log.error("📞 Failed to add ICE candidate: \(error)", category: "Calls")
+            Log.error("Failed to add ICE candidate: \(error)", category: "Calls")
         }
     }
 
@@ -729,11 +762,11 @@ final class CallManager {
     /// which is handled by `MessageRouter.executeRustActions`.
     private func sendCallSignalProto(_ signal: Shared_Proto_Signaling_V1_WebRTCSignal, to peerUserId: String) {
         guard let protoData = try? signal.serializedData() else {
-            Log.error("📞 Failed to serialize WebRTCSignal proto", category: "Calls")
+            Log.error("Failed to serialize WebRTCSignal proto", category: "Calls")
             return
         }
         guard CryptoManager.shared.orchestratorCore != nil else {
-            Log.error("📞 No orchestratorCore — cannot send call signal", category: "Calls")
+            Log.error("No orchestratorCore — cannot send call signal", category: "Calls")
             return
         }
         let messageId = UUID().uuidString
@@ -749,7 +782,7 @@ final class CallManager {
             for action in actions {
                 switch action {
                 case .sendEncryptedMessage(let to, let payload, let msgId, _):
-                    let currentUserId = SessionManager.shared.currentUserId ?? ""
+                    let currentUserId = AuthSessionManager.shared.currentUserId ?? ""
                     Task {
                         do {
                             _ = try await MessagingServiceClient.shared.sendMessage(
@@ -762,26 +795,26 @@ final class CallManager {
                                 senderDeviceId: Self.currentDeviceId(),
                                 contentType: .callSignal
                             )
-                            Log.info("📞 WebRTCSignal sent via Rust E2EE to=\(to.prefix(8))… callId=\(signal.callID.prefix(8))…", category: "Calls")
+                            Log.info("WebRTCSignal sent via Rust E2EE to=\(to.prefix(8))… callId=\(signal.callID.prefix(8))…", category: "Calls")
                         } catch {
-                            Log.error("📞 Failed to send WebRTCSignal: \(error)", category: "Calls")
+                            Log.error("Failed to send WebRTCSignal: \(error)", category: "Calls")
                         }
                     }
                 case .saveSessionToSecureStore(let key, _):
                     // Persist updated session state after Rust encrypt.
                     if key.hasPrefix("session_") {
                         let contactId = String(key.dropFirst("session_".count))
-                        CryptoManager.shared.saveSessionToKeychainPublic(for: contactId)
+                        CryptoManager.shared.saveSessionToKeychain(for: contactId)
                         CryptoManager.shared.saveOrchestratorStateCFE()
                     }
                 case .notifyError(let code, let msg):
-                    Log.error("📞 Rust call signal error [\(code)]: \(msg)", category: "Calls")
+                    Log.error("Rust call signal error [\(code)]: \(msg)", category: "Calls")
                 default:
                     break
                 }
             }
         } catch {
-            Log.error("📞 Rust handleEvent(outgoingCallSignal) failed: \(error)", category: "Calls")
+            Log.error("Rust handleEvent(outgoingCallSignal) failed: \(error)", category: "Calls")
         }
     }
 
@@ -792,7 +825,7 @@ final class CallManager {
 
     /// Handle a decrypted `WebRTCSignal` proto received via MessagingService.
     func handleCallSignalProto(from senderUserId: String, signal: Shared_Proto_Signaling_V1_WebRTCSignal) {
-        Log.info("📞 handleCallSignalProto type=\(signal.signal.map { "\($0)" } ?? "none") from=\(senderUserId.prefix(8))… callId=\(signal.callID.prefix(8))…", category: "Calls")
+        Log.info("handleCallSignalProto type=\(signal.signal.map { "\($0)" } ?? "none") from=\(senderUserId.prefix(8))… callId=\(signal.callID.prefix(8))…", category: "Calls")
 
         switch signal.signal {
         case .offer(let offer):
@@ -804,7 +837,7 @@ final class CallManager {
             let sdp = answer.sdp
             Task {
                 do {
-                    Log.info("📞 Received E2EE answer SDP, setting remote description", category: "Calls")
+                    Log.info("Received E2EE answer SDP, setting remote description", category: "Calls")
                     try await active.webrtc?.setRemoteAnswer(sdp: sdp)
                     await MainActor.run { [weak self] in
                         guard let self, let active = self.active, active.session.id == signal.callID else { return }
@@ -812,7 +845,7 @@ final class CallManager {
                         active.answeredAt = Date()
                     }
                 } catch {
-                    Log.error("📞 Failed to set remote answer: \(error)", category: "Calls")
+                    Log.error("Failed to set remote answer: \(error)", category: "Calls")
                 }
             }
         case .iceCandidate(let ice):
@@ -820,7 +853,7 @@ final class CallManager {
             // ICE candidate SDP is always CallSignalCrypto-encrypted before sending.
             // Decrypt it here (stream path decrypts in handleRemoteIceCandidate).
             guard let candidateSdp = try? CallSignalCrypto.shared.decryptField(ice.candidate, from: senderUserId) else {
-                Log.error("📞 Failed to decrypt E2EE ICE candidate from \(senderUserId.prefix(8))… — dropping", category: "Calls")
+                Log.error("Failed to decrypt E2EE ICE candidate from \(senderUserId.prefix(8))… — dropping", category: "Calls")
                 return
             }
             let c = WebRTCIceCandidate(sdp: candidateSdp, sdpMid: ice.sdpMid, sdpMLineIndex: Int32(ice.sdpMLineIndex))
@@ -828,7 +861,7 @@ final class CallManager {
             // addRemoteIceCandidate silently fails when there's no remote description.
             if active.pendingRemoteOfferSdp != nil {
                 active.pendingIceCandidates.append(c)
-                Log.debug("📞 Buffered E2EE ICE candidate (pending SDP)", category: "Calls")
+                Log.debug("Buffered E2EE ICE candidate (pending SDP)", category: "Calls")
             } else {
                 Task { try? await active.webrtc?.addRemoteIceCandidate(c) }
             }
@@ -836,7 +869,7 @@ final class CallManager {
             guard let active, active.session.id == signal.callID else { return }
             for ice in batch.candidates {
                 guard let candidateSdp = try? CallSignalCrypto.shared.decryptField(ice.candidate, from: senderUserId) else {
-                    Log.error("📞 Failed to decrypt E2EE ICE candidate (batch) from \(senderUserId.prefix(8))… — dropping", category: "Calls")
+                    Log.error("Failed to decrypt E2EE ICE candidate (batch) from \(senderUserId.prefix(8))… — dropping", category: "Calls")
                     continue
                 }
                 let c = WebRTCIceCandidate(sdp: candidateSdp, sdpMid: ice.sdpMid, sdpMLineIndex: Int32(ice.sdpMLineIndex))
@@ -847,7 +880,7 @@ final class CallManager {
                 }
             }
             if active.pendingRemoteOfferSdp != nil {
-                Log.debug("📞 Buffered \(batch.candidates.count) E2EE ICE candidates (pending SDP)", category: "Calls")
+                Log.debug("Buffered \(batch.candidates.count) E2EE ICE candidates (pending SDP)", category: "Calls")
             }
         case .hangup(let hangup):
             guard active?.session.id == signal.callID else { return }
@@ -868,7 +901,7 @@ final class CallManager {
         // If we already have a call from VoIP push, attach SDP to it.
         if let active, active.session.id == callId, case .incoming = active.session.direction {
             active.pendingRemoteOfferSdp = sdp
-            Log.info("📞 Stored pending SDP for existing call callId=\(callId.prefix(8))…", category: "Calls")
+            Log.info("Stored pending SDP for existing call callId=\(callId.prefix(8))…", category: "Calls")
             return
         }
         // No existing call — create from message-based offer.
@@ -877,7 +910,7 @@ final class CallManager {
         let session = CallSession(id: callId, uuid: uuid, peerUserId: callerUserId, peerName: name, direction: .incoming)
         begin(session: session, initialState: .incoming(session))
         active?.pendingRemoteOfferSdp = sdp
-        Log.info("📞 Incoming call via E2EE offer from \(callerUserId.prefix(8))… callId=\(callId.prefix(8))…", category: "Calls")
+        Log.info("Incoming call via E2EE offer from \(callerUserId.prefix(8))… callId=\(callId.prefix(8))…", category: "Calls")
         #if os(iOS)
         let reportedUUID = CallKitProvider.shared.reportIncomingCall(
             callId: callId, callerId: callerUserId, callerName: name, hasVideo: false
@@ -895,7 +928,7 @@ final class CallManager {
         var answer = Shared_Proto_Signaling_V1_CallAnswer()
         answer.sdp = sdp
         answer.answererDeviceID = Self.currentDeviceId()
-        answer.answererUserID = SessionManager.shared.currentUserId ?? ""
+        answer.answererUserID = AuthSessionManager.shared.currentUserId ?? ""
         answer.answeredAt = Self.nowMs()
         var sig = Shared_Proto_Signaling_V1_WebRTCSignal()
         sig.callID = active.session.id
@@ -903,7 +936,7 @@ final class CallManager {
         sig.timestamp = Self.nowMs()
         sig.signal = .answer(answer)
         sendCallSignalProto(sig, to: active.session.peerUserId)
-        Log.info("📞 Answer (proto) sent via E2EE to \(active.session.peerUserId.prefix(8))…", category: "Calls")
+        Log.info("Answer (proto) sent via E2EE to \(active.session.peerUserId.prefix(8))…", category: "Calls")
     }
 
     private func sendOffer(toUserId: String) async throws {
@@ -914,7 +947,7 @@ final class CallManager {
         offer.sdp = plainSdp
         offer.callType = .audio
         offer.callerDeviceID = Self.currentDeviceId()
-        offer.callerUserID = SessionManager.shared.currentUserId ?? ""
+        offer.callerUserID = AuthSessionManager.shared.currentUserId ?? ""
         offer.offeredAt = Self.nowMs()
         var sig = Shared_Proto_Signaling_V1_WebRTCSignal()
         sig.callID = active.session.id
@@ -922,7 +955,7 @@ final class CallManager {
         sig.timestamp = Self.nowMs()
         sig.signal = .offer(offer)
         sendCallSignalProto(sig, to: toUserId)
-        Log.info("📞 Offer (proto) sent via E2EE to \(toUserId.prefix(8))… call_id=\(active.session.id.prefix(8))…", category: "Calls")
+        Log.info("Offer (proto) sent via E2EE to \(toUserId.prefix(8))… call_id=\(active.session.id.prefix(8))…", category: "Calls")
     }
 
     /// ICE candidates are batched with a 200ms debounce before sending to stay under the
@@ -934,7 +967,7 @@ final class CallManager {
         do {
             ice.candidate = try CallSignalCrypto.shared.encryptField(c.sdp, for: peerUserId)
         } catch {
-            Log.error("📞 Failed to encrypt ICE candidate: \(error) — dropping", category: "Calls")
+            Log.error("Failed to encrypt ICE candidate: \(error) — dropping", category: "Calls")
             return
         }
         ice.sdpMid = c.sdpMid
@@ -959,7 +992,7 @@ final class CallManager {
                         candidates.candidates = batch
                         stream.send(Self.makeRoutedSignal(callId: active.session.id, deviceId: Self.currentDeviceId(), signal: .iceCandidates(candidates)))
                     }
-                    Log.debug("📞 Flushed \(batch.count) ICE candidate(s) via stream (call_id=\(active.session.id.prefix(8))…)", category: "Calls")
+                    Log.debug("Flushed \(batch.count) ICE candidate(s) via stream (call_id=\(active.session.id.prefix(8))…)", category: "Calls")
                 } else {
                     // Stream closed before flush — send via E2EE.
                     for candidate in batch {
@@ -990,7 +1023,7 @@ final class CallManager {
     }
 
     private static func currentDeviceId() -> String {
-        SessionManager.shared.currentDeviceId ?? (KeychainManager.shared.loadDeviceID() ?? "")
+        AuthSessionManager.shared.currentDeviceId ?? (KeychainManager.shared.loadDeviceID() ?? "")
     }
 
     private static func makePing(timestampMs: Int64) -> Shared_Proto_Signaling_V1_SignalRequest {

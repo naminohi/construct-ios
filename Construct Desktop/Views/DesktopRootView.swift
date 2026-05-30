@@ -30,6 +30,7 @@ struct DesktopRootView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var showAddContact = false
     @State private var sidebarMode: SidebarMode = .chats
+    @State private var callManager = CallManager.shared
 
     private enum SidebarMode { case chats, synaps }
 
@@ -95,7 +96,7 @@ struct DesktopRootView: View {
                 Rectangle().fill(Color.CT.noise).frame(height: 1)
 
                 if sidebarMode == .chats {
-                    ChatsListView()
+                    DesktopChatsListView()
                         .environment(chatsViewModel)
                 } else {
                     // Synaps cloud is in the detail pane — sidebar shows nothing
@@ -113,7 +114,7 @@ struct DesktopRootView: View {
                 .environment(\.managedObjectContext, viewContext)
             } else if let chatId = chatsViewModel.chatToOpen,
                let chat = fetchChat(id: chatId) {
-                ChatView(chat: chat, context: viewContext)
+                DesktopChatView(chat: chat, context: viewContext, sessionCoordinator: chatsViewModel.sessionCoordinator)
                     .onDrop(of: [.image, .fileURL], isTargeted: nil) { providers in
                         handleDrop(providers: providers, into: chat)
                     }
@@ -126,6 +127,26 @@ struct DesktopRootView: View {
         .onChange(of: sidebarMode) { _, mode in
             withAnimation(.easeInOut(duration: 0.2)) {
                 columnVisibility = mode == .synaps ? .detailOnly : .all
+            }
+        }
+        // Incoming call banner — bottom-center
+        .overlay(alignment: .bottom) {
+            if CallsFeature.isEnabled, case .incoming(let session) = callManager.state {
+                DesktopIncomingCallView(session: session)
+                    .zIndex(100)
+                    .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isIncomingState)
+            }
+        }
+        // In-call controls strip — bottom-right
+        .overlay(alignment: .bottomTrailing) {
+            if CallsFeature.isEnabled, isActiveOrConnecting, let session = activeCallSession {
+                DesktopInCallView(
+                    session: session,
+                    isConnecting: isConnectingState,
+                    endReason: callEndReason
+                )
+                .zIndex(100)
+                .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isActiveOrConnecting)
             }
         }
         // Add Contact sheet (⌘⌥N)
@@ -143,19 +164,42 @@ struct DesktopRootView: View {
                 .environment(\.managedObjectContext, viewContext)
                 .frame(minWidth: 400, minHeight: 300)
         }
-        // Toolbar — CT ASCII style (no mode switcher — it lives in the sidebar only)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    showAddContact = true
-                } label: {
-                    Text("[QR]")
-                        .font(CTFont.regular(11))
-                        .foregroundStyle(Color.CT.textDim)
-                }
-                .help("Scan QR code to add contact")
-            }
+        // No custom toolbar items — window title bar is hidden via .windowStyle(.hiddenTitleBar)
+        // [QR] button lives in the sidebar mode bar below.
+    }
+
+    // MARK: - Call state helpers
+
+    private var isIncomingState: Bool {
+        if case .incoming = callManager.state { return true }
+        return false
+    }
+
+    private var isActiveOrConnecting: Bool {
+        switch callManager.state {
+        case .dialing, .active, .connecting, .ringing, .ended: return true
+        default: return false
         }
+    }
+
+    private var isConnectingState: Bool {
+        switch callManager.state {
+        case .dialing, .connecting, .ringing: return true
+        default: return false
+        }
+    }
+
+    private var activeCallSession: CallManager.CallSession? {
+        switch callManager.state {
+        case .dialing(let s), .active(let s), .connecting(let s), .ringing(let s): return s
+        case .ended(let s, _): return s
+        default: return nil
+        }
+    }
+
+    private var callEndReason: CallManager.EndReason? {
+        if case .ended(_, let reason) = callManager.state { return reason }
+        return nil
     }
 
     // MARK: - Sidebar mode toggle bar
@@ -168,21 +212,17 @@ struct DesktopRootView: View {
 
             Spacer()
 
-            // Contextual action: [+] in Synaps mode, [+] new chat in Chats mode
+            // QR scan button (add contact via QR)
             Button {
-                if sidebarMode == .synaps {
-                    NotificationCenter.default.post(name: .desktopShowAddContact, object: nil)
-                } else {
-                    chatsViewModel.showNewChat = true
-                }
+                showAddContact = true
             } label: {
-                Text("[+]")
-                    .font(CTFont.regular(12))
-                    .foregroundStyle(Color.CT.accent)
-                    .padding(.horizontal, 12)
+                Image(systemName: "qrcode.viewfinder")
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(Color.CT.textDim)
+                    .padding(.horizontal, 10)
             }
             .buttonStyle(.plain)
-            .help(sidebarMode == .synaps ? "Add contact" : "New conversation (⌘N)")
+            .help("Scan QR code to add contact")
         }
         .frame(height: 34)
         .background(Color.CT.bg)

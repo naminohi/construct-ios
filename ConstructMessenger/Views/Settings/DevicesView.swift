@@ -29,6 +29,7 @@ struct DevicesView: View {
     @State private var showSignOutAllConfirm = false
 
     var body: some View {
+        let otherDevices = devices.filter { !$0.isCurrent }
         VStack(spacing: 0) {
             CTNavBar(
                 title: NSLocalizedString("linked_devices", comment: ""),
@@ -37,102 +38,108 @@ struct DevicesView: View {
             )
 
             ScrollView {
-            VStack(spacing: 20) {
+            LazyVStack(spacing: DevicesSettingsLayout.listSpacing) {
                 if isLoading && devices.isEmpty {
-                    ConstructSection {
+                    CTSectionGroup {
                         HStack { Spacer(); ProgressView(); Spacer() }.padding()
                     }
                 } else {
                     // MARK: - This Device (always first)
                     if let current = devices.first(where: { $0.isCurrent }) {
-                        ConstructSection(header: NSLocalizedString("this_device", comment: "")) {
-                            DeviceRow(device: current, isCurrent: true, onRevoke: {})
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 14)
+                        VStack(alignment: .leading, spacing: 0) {
+                            CTSettingsSectionHeader(title: NSLocalizedString("this_device", comment: ""))
+                            CTSectionGroup {
+                                DeviceRow(device: current, isCurrent: true, onRevoke: {})
+                                    .deviceRowInsets()
+                            }
                         }
                     }
 
                     // MARK: - Other Devices
-                    let others = devices.filter { !$0.isCurrent }
-                    if !others.isEmpty {
-                        VStack(alignment: .leading, spacing: 6) {
-                            ConstructSection(header: NSLocalizedString("other_devices", comment: "")) {
-                                ForEach(Array(others.enumerated()), id: \.element.id) { index, device in
-                                    if index > 0 { ConstructRowDivider(indent: 52) }
-                                    DeviceRow(device: device, isCurrent: false) {
-                                        deviceToRevoke = device
-                                        showRevokeConfirm = true
+                    if !otherDevices.isEmpty {
+                        VStack(alignment: .leading, spacing: DevicesSettingsLayout.sectionSpacing) {
+                            VStack(alignment: .leading, spacing: 0) {
+                                CTSettingsSectionHeader(title: NSLocalizedString("other_devices", comment: ""))
+                                CTSectionGroup {
+                                    ForEach(Array(otherDevices.enumerated()), id: \.element.id) { index, device in
+                                        if index > 0 { ConstructRowDivider(indent: DevicesSettingsLayout.dividerIndent) }
+                                        DeviceRow(device: device, isCurrent: false) {
+                                            deviceToRevoke = device
+                                            showRevokeConfirm = true
+                                        }
+                                        .deviceRowInsets()
                                     }
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 14)
                                 }
                             }
-                            if others.count > 1 {
+                            if otherDevices.count > 1 {
                                 Text(LocalizedStringKey("other_devices_hint"))
                                     .font(CTFont.regular(11))
                                     .foregroundStyle(Color.CT.textDim)
-                                    .padding(.horizontal, 20)
+                                    .settingsSectionHintInsets()
                             }
                         }
                     }
 
                     // MARK: - Link / Approve
-                    VStack(alignment: .leading, spacing: 6) {
-                        ConstructSection {
-                            ConstructButtonRow(icon: "[+]", title: LocalizedStringKey("link_new_device")) {
+                    VStack(alignment: .leading, spacing: DevicesSettingsLayout.sectionSpacing) {
+                        CTSectionGroup {
+                            ConstructButtonRow(systemImage: "plus.circle", title: LocalizedStringKey("link_new_device")) {
                                 showingQRSheet = true
                             }
                             #if os(iOS)
-                            ConstructRowDivider(indent: 52)
-                            ConstructButtonRow(icon: "[scan]", title: LocalizedStringKey("device_scan_to_approve")) {
+                            ConstructRowDivider(indent: DevicesSettingsLayout.dividerIndent)
+                            ConstructButtonRow(systemImage: "qrcode.viewfinder", title: LocalizedStringKey("device_scan_to_approve")) {
                                 showingScanner = true
                             }
                             #endif
                         }
                         Text(LocalizedStringKey("linked_devices_hint"))
-                            .font(CTFont.regular(11))
+                            .font(CTFont.regular(12))
                             .foregroundStyle(Color.CT.textDim)
-                            .padding(.horizontal, 20)
+                            .settingsSectionHintInsets()
                     }
 
                     // MARK: - History Transfer
-                    VStack(alignment: .leading, spacing: 6) {
-                        ConstructSection {
-                            ConstructButtonRow(icon: "[→]", title: LocalizedStringKey("transfer_history_row")) {
+                    VStack(alignment: .leading, spacing: DevicesSettingsLayout.sectionSpacing) {
+                        CTSectionGroup {
+                            ConstructButtonRow(systemImage: "arrow.right.arrow.left", title: LocalizedStringKey("transfer_history_row")) {
                                 showSendHistorySync = true
                             }
                         }
                         Text(LocalizedStringKey("transfer_history_hint"))
-                            .font(CTFont.regular(11))
+                            .font(CTFont.regular(12))
                             .foregroundStyle(Color.CT.textDim)
-                            .padding(.horizontal, 20)
+                            .settingsSectionHintInsets()
                     }
 
                     // MARK: - Session management
-                    VStack(alignment: .leading, spacing: 6) {
-                        ConstructSection(header: NSLocalizedString("session_management", comment: "")) {
-                            ConstructActionRow(icon: "[→]", title: LocalizedStringKey("sign_out_this_device"), role: .destructive) {
-                                showSignOutConfirm = true
-                            }
-                            if devices.filter({ !$0.isCurrent }).count > 0 {
-                                ConstructRowDivider(indent: 52)
-                                ConstructActionRow(icon: "[x]", title: LocalizedStringKey("sign_out_other_devices"), role: .destructive) {
-                                    showSignOutOthersConfirm = true
+                    VStack(alignment: .leading, spacing: DevicesSettingsLayout.sectionSpacing) {
+                        VStack(alignment: .leading, spacing: 0) {
+                            CTSettingsSectionHeader(title: NSLocalizedString("session_management", comment: ""))
+                            CTSectionGroup {
+                                ConstructActionRow(systemImage: "rectangle.portrait.and.arrow.right", title: LocalizedStringKey("sign_out_this_device"), role: .destructive) {
+                                    showSignOutConfirm = true
                                 }
-                            }
-                            ConstructRowDivider(indent: 52)
-                            ConstructActionRow(icon: "[x]", title: LocalizedStringKey("sign_out_all_devices"), role: .destructive) {
-                                showSignOutAllConfirm = true
+                                if !otherDevices.isEmpty {
+                                    ConstructRowDivider(indent: DevicesSettingsLayout.dividerIndent)
+                                    ConstructActionRow(systemImage: "person.2.slash", title: LocalizedStringKey("sign_out_other_devices"), role: .destructive) {
+                                        showSignOutOthersConfirm = true
+                                    }
+                                }
+                                ConstructRowDivider(indent: DevicesSettingsLayout.dividerIndent)
+                                ConstructActionRow(systemImage: "xmark.circle", title: LocalizedStringKey("sign_out_all_devices"), role: .destructive) {
+                                    showSignOutAllConfirm = true
+                                }
                             }
                         }
                         Text(LocalizedStringKey("sign_out_all_hint"))
-                            .font(CTFont.regular(11))
+                            .font(CTFont.regular(12))
                             .foregroundStyle(Color.CT.textDim)
-                            .padding(.horizontal, 20)
+                            .settingsSectionHintInsets()
                     }
                 }
             }
-            .padding(.vertical, 20)
+            .padding(.vertical, DevicesSettingsLayout.listVerticalPadding)
         } // ScrollView
         } // VStack
         .background(Color.CT.bg.ignoresSafeArea())
@@ -229,7 +236,7 @@ struct DevicesView: View {
             devices = try await AuthServiceClient.shared.listDevices()
         } catch {
             errorMessage = error.localizedDescription
-            Log.error("❌ listDevices failed: \(error)", category: "DevicesView")
+            Log.error("listDevices failed: \(error)", category: "DevicesView")
         }
     }
 
@@ -239,7 +246,7 @@ struct DevicesView: View {
             do {
                 try await AuthServiceClient.shared.revokeDevice(deviceId: device.id)
             } catch {
-                Log.error("❌ revokeDevice failed for \(device.name): \(error)", category: "DevicesView")
+                Log.error("revokeDevice failed for \(device.name): \(error)", category: "DevicesView")
             }
         }
         await loadDevices()
@@ -251,7 +258,7 @@ struct DevicesView: View {
             await loadDevices()
         } catch {
             errorMessage = error.localizedDescription
-            Log.error("❌ revokeDevice failed: \(error)", category: "DevicesView")
+            Log.error("revokeDevice failed: \(error)", category: "DevicesView")
         }
     }
 }
@@ -259,23 +266,36 @@ struct DevicesView: View {
 // MARK: - Device Row
 
 private struct DeviceRow: View {
+    private static let addedDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter
+    }()
+
+    private static let relativeLastSeenFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter
+    }()
+
     let device: AuthServiceClient.LinkedDevice
     let isCurrent: Bool
     let onRevoke: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: DevicesSettingsLayout.rowContentSpacing) {
             CTRowIcon(asciiPlatformIcon,
                       color: isCurrent ? Color.CT.accent : Color.CT.textDim)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DevicesSettingsLayout.deviceMetaSpacing) {
                 Text(device.name)
                     .font(CTFont.bold(16))
 
                 if isCurrent {
-                    HStack(spacing: 4) {
+                    HStack(spacing: DevicesSettingsLayout.currentStatusSpacing) {
                         Text("●")
-                            .font(.system(size: 7))
+                            .font(.system(size: DevicesSettingsLayout.currentStatusDotSize))
                             .foregroundStyle(Color.CT.accent)
                         Text(LocalizedStringKey("device_active_now"))
                             .font(CTFont.regular(12))
@@ -312,14 +332,23 @@ private struct DeviceRow: View {
 
     private var lastSeenText: String {
         if abs(device.lastSeen.timeIntervalSince(device.createdAt)) < 5 {
-            let fmt = DateFormatter()
-            fmt.dateStyle = .medium
-            fmt.timeStyle = .none
-            return String(format: NSLocalizedString("device_added_%@", comment: ""), fmt.string(from: device.createdAt))
+            return String(
+                format: NSLocalizedString("device_added_%@", comment: ""),
+                Self.addedDateFormatter.string(from: device.createdAt)
+            )
         }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .full
-        return formatter.localizedString(for: device.lastSeen, relativeTo: Date())
+        return Self.relativeLastSeenFormatter.localizedString(for: device.lastSeen, relativeTo: Date())
+    }
+}
+
+private extension View {
+    func settingsSectionHintInsets() -> some View {
+        padding(.horizontal, DevicesSettingsLayout.hintHorizontalPadding)
+    }
+
+    func deviceRowInsets() -> some View {
+        padding(.horizontal, DevicesSettingsLayout.rowHorizontalPadding)
+            .padding(.vertical, DevicesSettingsLayout.rowVerticalPadding)
     }
 }
 

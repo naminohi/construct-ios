@@ -48,9 +48,20 @@ final class MessageStreamManager {
 
     static let shared = MessageStreamManager()
 
+    // MARK: - Transport (injectable for testing)
+
+    let transport: any StreamTransport
+
+    private init(transport: any StreamTransport = GRPCStreamTransport()) {
+        self.transport = transport
+    }
+
     deinit {
         MainActor.assumeIsolated {
             if let obs = serverChangedObserver {
+                NotificationCenter.default.removeObserver(obs)
+            }
+            if let obs = networkPathChangedObserver {
                 NotificationCenter.default.removeObserver(obs)
             }
         }
@@ -61,6 +72,10 @@ final class MessageStreamManager {
     var isConnected = false
     /// Set to the current time whenever a heartbeat ack is received from the server.
     var lastHeartbeatDate: Date?
+    /// Transport protocol of the active stream connection ("H3" = QUIC, "H2" = HTTP/2, "" = not connected).
+    var activeTransport: String = ""
+    /// Last transport that was successfully used; persists across disconnects for display purposes.
+    var lastActiveTransport: String = ""
 
     /// True when a connection attempt is actively in progress (not sleeping in backoff).
     /// When true, app-foreground force-reconnect should be skipped to avoid interrupting
@@ -82,13 +97,28 @@ final class MessageStreamManager {
     var backgroundFetchTask: Task<Void, Never>?
     var heartbeatTask: Task<Void, Never>?
     var heartbeatWatchdogTask: Task<Void, Never>?
+    /// True once the server has pushed *any* event since `openStream()` accept.
+    /// Reset to false on each new openStream. Drives the first-event watchdog: if
+    /// nothing has arrived from the server within `firstServerEventWatchdogH3` seconds
+    /// (only on H3 — we don't watchdog H2/ICE this tightly), we treat H3 as silently
+    /// broken (DPI dropped UDP after handshake) and force fallback to H2.
+    var firstServerEventReceived: Bool = false
     private var serverChangedObserver: NSObjectProtocol?
+    private var networkPathChangedObserver: NSObjectProtocol?
     private var retryCount = 0
     private let maxRetryDelay: TimeInterval = NetworkTiming.Stream.maxRetryDelay
-    /// Counts consecutive stream-open timeouts where the ICE routing key did NOT change
-    /// (relay reachable at TCP level but streaming RPCs failing). After 2 consecutive
-    /// unchanged-routing timeouts the current relay is blacklisted and rotation is forced.
-    private var consecutiveRoutingUnchangedTimeouts = 0
+    /// When `true`, the next `openStream()` call uses H2 direct instead of H3.
+    /// Set in connectLoop when H3 direct times out — gives H2 a chance on the same host
+    /// before escalating to ICE relay (H3 may be blocked/unsupported while H2 works fine).
+    var shouldFallbackToH2Direct = false
+    /// Records whether the most recent `openStream()` call attempted H3 transport.
+    /// Used by connectLoop to decide whether to try H2 direct before activating ICE.
+    var lastStreamTransportWasH3 = false
+    /// Counts consecutive H3 stream-open failures across reconnects and network changes.
+    /// Not reset by forceDisconnect() so it survives network path switches.
+    /// Cleared when H3 succeeds or the stream ends cleanly.
+    var consecutiveH3OpenFailures = 0
+    static let h3OpenFailureThreshold = 2
     private(set) var isPaused = false
     private(set) var subscriptionUserIds: [String] = []
     private var lastPendingCursor: String = UserDefaults.standard.string(forKey: "construct.pendingCursor") ?? "" {
@@ -127,32 +157,81 @@ final class MessageStreamManager {
     /// Timestamp of the latest connection attempt — used to compute total connect latency in logs.
     var connectStartTime: Date?
 
+    // MARK: - Low-power degraded mode (P3: battery optimisation for prolonged offline)
+
+    /// Wall-clock timestamp when the connect loop first entered a continuous-failure streak.
+    /// Reset on any success, clean disconnect, or network path change.
+    private var continuousFailureStreakStart: Date?
+
+    /// After this many minutes of uninterrupted failures, the loop switches to low-power mode:
+    /// skips `fetchMissedMessages`, skips ICE `prepare()`, and uses a longer backoff.
+    private let degradedModeThreshold: TimeInterval = 5 * 60  // 5 minutes
+
+    /// Backoff used in degraded mode — longer sleep between retries to conserve battery.
+    private let degradedModeBackoff: TimeInterval = 10 * 60  // 10 minutes
+
+    /// Set to true when the loop is in low-power mode.
+    private(set) var isInDegradedMode = false
+
+    /// Whether the connect loop should skip expensive pre-stream operations.
+    private var isInDegradedModeWindow: Bool {
+        guard let start = continuousFailureStreakStart else { return false }
+        return Date().timeIntervalSince(start) >= degradedModeThreshold
+    }
+
+    /// Called on network path change — resets degraded state and forces an immediate
+    /// stream reconnect. Without the forced reconnect, the stream can stay bound to the
+    /// old (dead) connection for up to a full heartbeat-watchdog interval (~90s).
+    func onNetworkPathChanged() {
+        continuousFailureStreakStart = nil
+        isInDegradedMode = false
+        // No stream running — degraded-mode clear is all that's needed.
+        guard streamTask != nil || isConnected else {
+            Log.info("Network path changed — cleared degraded mode (no active stream)", category: "MessageStream")
+            return
+        }
+        let ids = subscriptionUserIds
+        let cb = onMessageReceived
+        guard let cb else {
+            Log.info("Network path changed — no callback, not forcing reconnect", category: "MessageStream")
+            return
+        }
+        Log.info("Network path changed — forcing stream reconnect", category: "MessageStream")
+        forceDisconnect()
+        connect(contactUserIds: ids, onMessageReceived: cb)
+    }
+
     // MARK: - Public API
 
     func connect(contactUserIds: [String] = [], onMessageReceived: @escaping (ChatMessage) -> Void) {
         self.onMessageReceived = onMessageReceived
 
-        let subscriptionChanged = contactUserIds != subscriptionUserIds
+        // Use Set comparison: currentConversationIds() builds from Array(Set) whose order is
+        // non-deterministic across calls, so the same 3 IDs may arrive in a different order on
+        // each reconnect attempt.  An order-sensitive != would trigger a spurious forceDisconnect()
+        // even when the actual subscription set hasn't changed, causing the stream to loop.
+        let subscriptionChanged = Set(contactUserIds) != Set(subscriptionUserIds)
 
         // If subscriptions changed and a loop is running, force reconnect so the
         // new contact's conversation ID is included in the subscribe request.
         if subscriptionChanged && (isConnected || streamTask != nil) {
-            Log.info("📡 Subscriptions changed (\(subscriptionUserIds.count)→\(contactUserIds.count)) — reconnecting stream", category: "MessageStream")
+            Log.info("Subscriptions changed (\(subscriptionUserIds.count)→\(contactUserIds.count)) — reconnecting stream", category: "MessageStream")
             forceDisconnect()
         }
 
         self.subscriptionUserIds = contactUserIds
+        if isPaused { ConnectionStatusManager.shared.markStreamResumed() }
         isPaused = false
 
         // Already fully connected with up-to-date subscriptions.
         guard !isConnected else {
-            Log.info("📡 MessageStream already connected", category: "MessageStream")
+            Log.info("MessageStream already connected", category: "MessageStream")
             return
         }
 
         // connectLoop is already running (in backoff between retries) — don't stack tasks.
         guard streamTask == nil else {
-            Log.info("📡 MessageStream already reconnecting", category: "MessageStream")
+            Log.info("MessageStream already reconnecting", category: "MessageStream")
             return
         }
 
@@ -164,7 +243,7 @@ final class MessageStreamManager {
                 queue: .main
             ) { [weak self] _ in
                 guard let self else { return }
-                Log.info("🔄 gRPC server changed — reconnecting stream", category: "MessageStream")
+                Log.info("gRPC server changed — reconnecting stream", category: "MessageStream")
                 Task { @MainActor in
                     let ids = self.subscriptionUserIds
                     let cb = self.onMessageReceived
@@ -174,8 +253,19 @@ final class MessageStreamManager {
             }
         }
 
-        Log.info("📡 Starting MessageStream connection (subscribed to \(contactUserIds.count) contacts)", category: "MessageStream")
-        ConnectionStatusManager.shared.markConnecting()
+        // Force stream reconnect on network path change. Guarded so repeated `connect()`
+        // calls don't stack observers.
+        if networkPathChangedObserver == nil {
+            networkPathChangedObserver = NotificationCenter.default.addObserver(
+                forName: .networkPathChanged,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in self?.onNetworkPathChanged() }
+            }
+        }
+
+        Log.info("Starting MessageStream connection (subscribed to \(contactUserIds.count) contacts)", category: "MessageStream")
         connectStartTime = Date()
         streamTask = Task { [weak self] in
             await self?.connectLoop()
@@ -185,7 +275,17 @@ final class MessageStreamManager {
     /// Cancel any in-progress backoff/connection and start fresh immediately.
     /// Use when returning from background or recovering from a known-bad state.
     func forceReconnect(contactUserIds: [String], onMessageReceived: @escaping (ChatMessage) -> Void) {
-        Log.info("🔁 Force reconnecting stream", category: "MessageStream")
+        // Don't downgrade an active subscription list to empty.
+        // This happens when forceReconnect fires while CoreData hasn't settled yet (context
+        // returns [] transiently). Tearing down the live stream and reconnecting with 0
+        // subscriptions sends an empty subscribe request — the server never sends a heartbeat
+        // for it, so the connectLoop times out and retries forever with subscriptions=[].
+        // Mirrors the identical guard in ChatsViewModel.startMessageStream().
+        guard !contactUserIds.isEmpty || subscriptionUserIds.isEmpty else {
+            Log.debug("forceReconnect skipped — empty ids would clear \(subscriptionUserIds.count) active subscriptions", category: "MessageStream")
+            return
+        }
+        Log.info("Force reconnecting stream", category: "MessageStream")
         // Finish the outbound stream BEFORE cancelling the task.
         // Cancelling the Task first while the producer is mid-write triggers an
         // assertionFailure inside GRPCStreamStateMachine ("Client is closed, cannot send a
@@ -193,6 +293,7 @@ final class MessageStreamManager {
         // Finishing the continuation first lets the producer's `for await` drain naturally;
         // task cancellation then only aborts a sleeping backoff or an idle await point.
         isConnected = false
+        activeTransport = ""
         outboundContinuation?.finish()
         outboundContinuation = nil
         streamTask?.cancel()
@@ -204,6 +305,12 @@ final class MessageStreamManager {
         backgroundFetchTask?.cancel()
         backgroundFetchTask = nil
         retryCount = 0
+
+        shouldFallbackToH2Direct = false
+        lastStreamTransportWasH3 = false
+        consecutiveH3OpenFailures = 0
+        continuousFailureStreakStart = nil
+        isInDegradedMode = false
         connect(contactUserIds: contactUserIds, onMessageReceived: onMessageReceived)
     }
 
@@ -218,6 +325,7 @@ final class MessageStreamManager {
     /// Disconnect without removing the server-change observer (used for reconnects).
     private func forceDisconnect() {
         isConnected = false
+        activeTransport = ""
         outboundContinuation?.finish()
         outboundContinuation = nil
         heartbeatTask?.cancel()
@@ -230,21 +338,27 @@ final class MessageStreamManager {
         streamTask?.cancel()
         streamTask = nil
         retryCount = 0
-        ConnectionStatusManager.shared.markStreamDisconnected()
-        Log.info("📡 MessageStream disconnected", category: "MessageStream")
+
+        shouldFallbackToH2Direct = false
+        lastStreamTransportWasH3 = false
+        continuousFailureStreakStart = nil
+        isInDegradedMode = false
+        Log.info("MessageStream disconnected", category: "MessageStream")
     }
 
     func pause() {
         guard !isPaused else { return }
         isPaused = true
+        ConnectionStatusManager.shared.markStreamPaused()
         disconnect()
-        Log.info("📱 MessageStream paused", category: "MessageStream")
+        Log.info("MessageStream paused", category: "MessageStream")
     }
 
     func resume(onMessageReceived: @escaping (ChatMessage) -> Void) {
         guard isPaused else { return }
         isPaused = false
-        Log.info("📱 MessageStream resuming", category: "MessageStream")
+        ConnectionStatusManager.shared.markStreamResumed()
+        Log.info("MessageStream resuming", category: "MessageStream")
         connect(contactUserIds: subscriptionUserIds, onMessageReceived: onMessageReceived)
     }
 
@@ -255,7 +369,12 @@ final class MessageStreamManager {
         hb.timestamp = Int64(Date().timeIntervalSince1970)
         var req = Shared_Proto_Services_V1_MessageStreamRequest()
         req.request = .heartbeat(hb)
-        outboundContinuation?.yield(req)
+        if outboundContinuation != nil {
+            outboundContinuation?.yield(req)
+            Log.debug("Heartbeat sent (outbound stream alive)", category: "MessageStream")
+        } else {
+            Log.info("Heartbeat skipped — outbound stream is nil", category: "MessageStream")
+        }
     }
 
     /// Send a delivery receipt for one or more messages via the live stream.
@@ -286,7 +405,7 @@ final class MessageStreamManager {
                 return  // already queued — dedup to prevent bloat during paging cycles
             }
             pendingDeliveredAcks.append(PendingDeliveredAck(messageIds: messageIds, recipientUserId: recipientUserId))
-            Log.info("📨 Receipt queued (stream not open): \(status) for \(messageIds.count) msg(s) → recipient=\(recipientUserId.prefix(8))…", category: "MessageStream")
+            Log.info("Receipt queued (stream not open): \(status) for \(messageIds.count) msg(s) → recipient=\(recipientUserId.prefix(8))…", category: "MessageStream")
             return
         }
 
@@ -303,7 +422,7 @@ final class MessageStreamManager {
         var req = Shared_Proto_Services_V1_MessageStreamRequest()
         req.receipt = delivery
         outboundContinuation?.yield(req)
-        Log.info("📨 Receipt sent: \(status) for \(messageIds.count) msg(s) → recipient=\(recipientUserId.prefix(8))…", category: "MessageStream")
+        Log.info("Receipt sent: \(status) for \(messageIds.count) msg(s) → recipient=\(recipientUserId.prefix(8))…", category: "MessageStream")
     }
 
     // MARK: - Private: Connection Loop
@@ -311,7 +430,7 @@ final class MessageStreamManager {
     private func connectLoop() async {
         let host = GRPCChannelManager.shared.currentHost
         let port = GRPCChannelManager.shared.currentPort
-        Log.info("🔄 MessageStream connectLoop started → \(host):\(port)", category: "MessageStream")
+        Log.info("MessageStream connectLoop started → \(host):\(port)", category: "MessageStream")
 
         while !Task.isCancelled {
             let attemptStart = Date()
@@ -319,66 +438,81 @@ final class MessageStreamManager {
             // Cancel any background fetch left over from the previous iteration.
             backgroundFetchTask?.cancel()
 
-            // Fetch messages that arrived while disconnected. Run as an independent
-            // Task so the wall-clock cap doesn't cancel it: pending messages live in
-            // the server's queue and are NOT replayed via the live stream cursor.
-            // The background task continues delivering them after openStream() starts.
-            let fetchTask = Task { await self.fetchMissedMessages() }
-            backgroundFetchTask = fetchTask
+            // Fetch messages that arrived while disconnected — skip in degraded mode
+            // to avoid wasteful RPCs when the network is clearly down for a long time.
+            if !isInDegradedMode {
+                let fetchTask = Task { await self.fetchMissedMessages() }
+                backgroundFetchTask = fetchTask
 
-            // Advance to openStream after wall-clock cap OR when fetch completes,
-            // whichever fires first. fetchTask is NOT cancelled — it continues as a
-            // background task alongside the live stream.
-            //
-            // IMPORTANT: do NOT use withTaskGroup { await fetchTask.value } here.
-            // task.value ignores cooperative cancellation of the caller — the group
-            // would block for the full 30 s RPC timeout even after the cap fires.
-            //
-            // Use the shorter cap when the relay is already verified: its RPC latency
-            // is ≤1 RTT (≈100ms for AMS), so 0.5s is more than enough.
-            let fetchCapDuration = IceProxyManager.shared.isCurrentRelayVerified
-                ? NetworkTiming.Stream.fetchMissedMessagesWallClockCapVerified
-                : NetworkTiming.Stream.fetchMissedMessagesWallClockCap
-            let capSleep = Task<Void, any Error> {
-                try await Task.sleep(for: .seconds(fetchCapDuration))
-            }
-            // Cancel the sleep early once fetch completes so we don't wait the full cap.
-            var fetchCompletedBeforeCap = false
-            Task { [capSleep] in _ = await fetchTask.value; fetchCompletedBeforeCap = true; capSleep.cancel() }
-            // Also cancel if the outer connectLoop task is cancelled.
-            await withTaskCancellationHandler {
-                try? await capSleep.value
-            } onCancel: {
-                capSleep.cancel()
-            }
-            guard !Task.isCancelled else { break }
-            if fetchCompletedBeforeCap {
-                Log.debug("📬 fetchMissedMessages completed (cap=\(fetchCapDuration)s not reached) — opening stream", category: "MessageStream")
+                // Advance to openStream after wall-clock cap OR when fetch completes,
+                // whichever fires first. fetchTask is NOT cancelled — it continues as a
+                // background task alongside the live stream.
+                //
+                // IMPORTANT: do NOT use withTaskGroup { await fetchTask.value } here.
+                // task.value ignores cooperative cancellation of the caller — the group
+                // would block for the full 30 s RPC timeout even after the cap fires.
+                let fetchCapDuration = NetworkTiming.Stream.fetchMissedMessagesWallClockCap
+                let capSleep = Task<Void, any Error> {
+                    try await Task.sleep(for: .seconds(fetchCapDuration))
+                }
+                // Cancel the sleep early once fetch completes so we don't wait the full cap.
+                var fetchCompletedBeforeCap = false
+                Task { [capSleep] in _ = await fetchTask.value; fetchCompletedBeforeCap = true; capSleep.cancel() }
+                // Also cancel if the outer connectLoop task is cancelled.
+                await withTaskCancellationHandler {
+                    try? await capSleep.value
+                } onCancel: {
+                    capSleep.cancel()
+                }
+                guard !Task.isCancelled else { break }
+                if fetchCompletedBeforeCap {
+                    Log.debug("fetchMissedMessages completed (cap=\(fetchCapDuration)s not reached) — opening stream", category: "MessageStream")
+                } else {
+                    Log.debug("fetchMissedMessages wall-clock cap reached (\(fetchCapDuration)s) — opening stream while fetch continues in background", category: "MessageStream")
+                }
             } else {
-                Log.debug("⏰ fetchMissedMessages wall-clock cap reached (\(fetchCapDuration)s) — opening stream while fetch continues in background", category: "MessageStream")
+                Log.debug("Skipping fetchMissedMessages — degraded mode", category: "MessageStream")
             }
 
             guard !Task.isCancelled else { break }
 
-            Log.info("🔄 connectLoop: fetchMissedMessages done, isCancelled=\(Task.isCancelled) — opening stream", category: "MessageStream")
-            ConnectionStatusManager.shared.markConnecting()
+            Log.info("connectLoop: fetchMissedMessages done, isCancelled=\(Task.isCancelled) — opening stream", category: "MessageStream")
+
+            // TransportRouter maintains ICE state continuously; no explicit prepare needed.
+            // We just read whatever the router has set as current routing.
+            let routerSnapshot = await TransportRouter.shared.snapshot()
             do {
                 try await openStream()
                 // Stream ended cleanly — brief pause before reconnecting to avoid tight loop
                 // (e.g. server closes stream when 0 topics are subscribed)
-                Log.info("📡 MessageStream ended cleanly, reconnecting in \(Int(NetworkTiming.Stream.cleanEndReconnectDelay))s", category: "MessageStream")
+                Log.info("MessageStream ended cleanly, reconnecting in \(Int(NetworkTiming.Stream.cleanEndReconnectDelay))s", category: "MessageStream")
+                // Report stream-level success to the router so the FSM moves to .veilActive
+                // (or stays in .direct(0)). Latency is unknown for a stream lifecycle event;
+                // we pass 0 — relay scoring should not penalise this case.
+                let okTarget: TransportTarget
+                if let port = GRPCChannelManager.shared.veilProxyPort(),
+                   let addr = routerSnapshot.state.currentRelay {
+                    okTarget = .ice(port: port, relay: addr)
+                } else {
+                    okTarget = .direct(.h2)
+                }
+                await TransportRouter.shared.send(.rpcSucceeded(via: okTarget, latencyMs: 0))
                 retryCount = 0
-                consecutiveRoutingUnchangedTimeouts = 0
+                shouldFallbackToH2Direct = false
+                lastStreamTransportWasH3 = false
+                consecutiveH3OpenFailures = 0
+                continuousFailureStreakStart = nil
+                isInDegradedMode = false
                 try await Task.sleep(for: .seconds(NetworkTiming.Stream.cleanEndReconnectDelay))
             } catch is CancellationError {
-                Log.info("🛑 MessageStream cancelled — connectLoop exiting", category: "MessageStream")
+                Log.info("MessageStream cancelled — connectLoop exiting", category: "MessageStream")
                 break
             } catch {
                 guard !Task.isCancelled else { break }
                 // If the stream was rejected due to expired token, refresh and retry immediately
                 // (skip exponential backoff to reduce perceived downtime).
                 if let rpcError = error as? RPCError, rpcError.code == .unauthenticated {
-                    Log.info("🔐 MessageStream unauthenticated — attempting token refresh", category: "MessageStream")
+                    Log.info("MessageStream unauthenticated — attempting token refresh", category: "MessageStream")
                     var refreshError: Error?
                     do {
                         let refreshed = try await TokenRefreshCoordinator.shared.refreshIfPossible()
@@ -388,99 +522,127 @@ final class MessageStreamManager {
                         }
                     } catch {
                         refreshError = error
-                        Log.error("❌ Token refresh failed for MessageStream: \(error)", category: "MessageStream")
+                        Log.error("Token refresh failed for MessageStream: \(error)", category: "MessageStream")
                     }
                     // Only wipe tokens if the server explicitly rejected the refresh token.
                     // Network errors mean the refresh was unreachable, not that the token is invalid.
                     let serverRejected: Bool
-                    if let rpcErr = refreshError as? RPCError {
-                        serverRejected = rpcErr.code == .unauthenticated || rpcErr.code == .permissionDenied
+                    if let rpcErr = refreshError {
+                        serverRejected = TokenRefreshCoordinator.isRefreshTokenPermanentlyInvalid(rpcErr)
                     } else {
                         serverRejected = refreshError == nil  // returned false = no refresh token
                     }
                     if serverRejected {
-                        Log.info("🔑 MessageStream refresh rejected by server — triggering device re-auth", category: "MessageStream")
-                        SessionManager.shared.invalidateTokensForReauth()
+                        // Untrusted-relay gate: a hostile or broken ICE relay can synthesise
+                        // an UNAUTHENTICATED response indistinguishable from a real one. Only
+                        // honor the rejection when the stream was opened over the direct path.
+                        // On ICE: rotate the relay and retry; if the rejection is real it will
+                        // surface again on a clean relay (or on direct) and be honored there.
+                        let streamWentThroughICE = GRPCChannelManager.shared.veilProxyPort() != nil
+                            || routingKeyAtLoopStart.hasPrefix("ice:")
+                        if streamWentThroughICE {
+                            let snap = await TransportRouter.shared.snapshot()
+                            let relayAddr = snap.state.currentRelay
+                            Log.info("MessageStream refresh rejected over ICE relay \(relayAddr ?? "?") — not wiping tokens, will rotate", category: "MessageStream")
+                            if let port = GRPCChannelManager.shared.veilProxyPort(), let addr = relayAddr {
+                                await TransportRouter.shared.send(
+                                    .rpcFailed(kind: .tlsFingerprintBlocked,
+                                               via: .ice(port: port, relay: addr),
+                                               foreground: true)
+                                )
+                            }
+                        } else {
+                            Log.info("MessageStream refresh rejected by server — triggering device re-auth", category: "MessageStream")
+                            AuthSessionManager.shared.invalidateTokensForReauth()
+                        }
                     } else {
-                        Log.info("🔑 MessageStream refresh failed (network error) — keeping tokens, will retry later", category: "MessageStream")
+                        Log.info("MessageStream refresh failed (network error) — keeping tokens, will retry later", category: "MessageStream")
                     }
                 }
-                // Fast ICE failover path: openStream() intentionally throws this sentinel
-                // error to force an immediate reconnect without exponential backoff.
+                // Fast failover path: openStream() throws this sentinel to force an immediate
+                // reconnect without exponential backoff.
                 if let rpcError = error as? RPCError,
                    rpcError.code == .unavailable,
                    rpcError.message.contains("retrying with ICE") {
-                    // Check whether the routing key actually changed during the failover
-                    // attempt inside openStream(). "Unchanged" means the relay is reachable
-                    // at TCP level but streaming RPCs are silently failing (e.g. relay v0.3.3
-                    // obfs4 session corruption bug).
-                    let routingKeyNow = GRPCChannelManager.shared.currentRoutingKey
-                    if routingKeyNow == routingKeyAtLoopStart {
-                        consecutiveRoutingUnchangedTimeouts += 1
-                        if consecutiveRoutingUnchangedTimeouts >= 1,
-                           routingKeyAtLoopStart.hasPrefix("ice:"),
-                           let failedAddr = IceProxyManager.shared.activeRelay?.address {
-                            // ICE path: streaming keeps failing on this relay → blacklist + rotate.
-                            Log.error("🧊 \(consecutiveRoutingUnchangedTimeouts) consecutive stream timeouts on same relay \(failedAddr) — blacklisting and forcing rotation", category: "MessageStream")
-                            IceProxyManager.shared.recordRelayFailure(address: failedAddr)
-                            let rotated = await IceProxyManager.shared.rotateToNextRelay()
-                            if rotated {
-                                GRPCChannelManager.shared.invalidatePersistentClient()
-                            }
-                            consecutiveRoutingUnchangedTimeouts = 0
-                        } else if IceProxyManager.shared.mode == .auto,
-                                  routingKeyAtLoopStart.hasPrefix("direct:"),
-                                  consecutiveRoutingUnchangedTimeouts >= 2 {
-                            // Direct path + .auto mode: consecutive failures suggest DPI blocking.
-                            // Threshold = 2: each cycle ~4s, so 2 cycles ≈ 8s total before ICE.
-                            Log.info("🧊 \(consecutiveRoutingUnchangedTimeouts) direct stream timeouts in .auto mode — DPI suspected, activating ICE", category: "MessageStream")
-                            await IceProxyManager.shared.activateDPIAutoMode()
-                            if GRPCChannelManager.shared.iceProxyPort() != nil {
-                                GRPCChannelManager.shared.invalidatePersistentClient()
-                            }
-                            consecutiveRoutingUnchangedTimeouts = 0
-                        }
-                    } else {
-                        consecutiveRoutingUnchangedTimeouts = 0
+                    // Route the failure through the FSM so it decides ICE escalation / relay rotation.
+                    let kind = RPCFailureClassifier.classify(rpcError)
+                    let failTarget: TransportTarget = routingKeyAtLoopStart.hasPrefix("ice:")
+                        ? .ice(port: GRPCChannelManager.shared.veilProxyPort() ?? 0,
+                               relay: routerSnapshot.state.currentRelay ?? "")
+                        : .direct(.h2)
+                    await TransportRouter.shared.send(.rpcFailed(kind: kind, via: failTarget, foreground: true))
+                    if lastStreamTransportWasH3 {
+                        consecutiveH3OpenFailures += 1
+                        Log.info("H3 open failure #\(consecutiveH3OpenFailures)/\(Self.h3OpenFailureThreshold)", category: "MessageStream")
                     }
-                    Log.info("🧊 MessageStream switching routing — reconnecting immediately", category: "MessageStream")
-                    // Cancel the background fetch started on the previous routing path.
-                    // It would otherwise outlive the routing change and eventually kill
-                    // the new connection when it times out (gen-mismatch guard catches it,
-                    // but early cancellation avoids the wasted network traffic entirely).
+                    // H3→H2 fallback: if H3 failed on the direct path and ICE isn't active yet,
+                    // try H2 once before activating ICE (H3 may be unsupported, not blocked).
+                    let routingKeyNow = GRPCChannelManager.shared.currentRoutingKey
+                    let nowUsingICE = await TransportRouter.shared.snapshot().state.prefersVEIL
+                    if !nowUsingICE, routingKeyNow == routingKeyAtLoopStart,
+                       routingKeyAtLoopStart.hasPrefix("direct:"), lastStreamTransportWasH3 {
+                        shouldFallbackToH2Direct = true
+                        Log.info("H3 direct timeout — trying H2 direct next", category: "MessageStream")
+                    } else {
+                        shouldFallbackToH2Direct = false
+                        lastStreamTransportWasH3 = false
+                    }
+                    Log.info("MessageStream reconnecting immediately (ICE=\(nowUsingICE))", category: "MessageStream")
                     backgroundFetchTask?.cancel()
                     retryCount = 0
                     continue
                 }
+                // Generic stream failure → feed to the FSM.
+                let kind = RPCFailureClassifier.classify(error)
+                let failTarget: TransportTarget = routingKeyAtLoopStart.hasPrefix("ice:")
+                    ? .ice(port: GRPCChannelManager.shared.veilProxyPort() ?? 0,
+                           relay: routerSnapshot.state.currentRelay ?? "")
+                    : .direct(.h2)
+                await TransportRouter.shared.send(.rpcFailed(kind: kind, via: failTarget, foreground: true))
+                if lastStreamTransportWasH3 {
+                    consecutiveH3OpenFailures += 1
+                    Log.info("H3 failure #\(consecutiveH3OpenFailures)/\(Self.h3OpenFailureThreshold)", category: "MessageStream")
+                }
                 // Log full error details for diagnosis
                 if let rpcError = error as? RPCError {
                     Log.error("""
-                        ❌ MessageStream RPC error:
+                        MessageStream RPC error:
                            code    = \(rpcError.code)
                            message = \(rpcError.message)
                            host    = \(host):\(port)
                            attempt = #\(retryCount + 1)
                         """, category: "MessageStream")
                 } else {
-                    Log.error("❌ MessageStream error (attempt #\(retryCount + 1)): \(error)", category: "MessageStream")
+                    Log.error("MessageStream error (attempt #\(retryCount + 1)): \(error)", category: "MessageStream")
                 }
-                ConnectionStatusManager.shared.markStreamDisconnected(error: error.localizedDescription)
+                ConnectionStatusManager.shared.setLastError(error.localizedDescription)
             }
 
             guard !Task.isCancelled else { break }
+
+            // Track continuous failure streak for degraded mode (P3).
+            if continuousFailureStreakStart == nil {
+                continuousFailureStreakStart = Date()
+            }
+            isInDegradedMode = isInDegradedModeWindow
 
             // Exponential backoff with ±30% jitter.
             // Wider spread than 25% reduces the thundering-herd effect: when many clients
             // disconnect simultaneously (server restart, network outage), their retries
             // are spread over a 60% window instead of bunching within 25% of the same delay.
             retryCount += 1
-            let base: TimeInterval = NetworkTiming.Stream.backoffBaseDelay
-            let delay = min(base * pow(2, Double(min(retryCount - 1, 5))), maxRetryDelay)
-            let jitter = Double.random(in: -(delay * 0.3)...(delay * 0.3))
-            let totalDelay = max(0.1, delay + jitter)
-            let attemptMs = Int(Date().timeIntervalSince(attemptStart) * 1000)
-
-            Log.info("⏳ MessageStream reconnecting in \(String(format: "%.1f", totalDelay))s (attempt #\(retryCount), took \(attemptMs)ms) → \(host):\(port)", category: "MessageStream")
+            let totalDelay: TimeInterval
+            if isInDegradedMode {
+                // Low-power mode: fixed long backoff to conserve battery during prolonged offline.
+                totalDelay = NetworkTiming.jitter(degradedModeBackoff, fraction: 0.3)
+                Log.info("MessageStream degraded mode — retrying in \(String(format: "%.0f", totalDelay))s (attempt #\(retryCount), streak: \(Int(Date().timeIntervalSince(continuousFailureStreakStart!)))s) → \(host):\(port)", category: "MessageStream")
+            } else {
+                let base: TimeInterval = NetworkTiming.Stream.backoffBaseDelay
+                let delay = min(base * pow(2, Double(min(retryCount - 1, 5))), maxRetryDelay)
+                totalDelay = max(0.1, NetworkTiming.jitter(delay, fraction: 0.3))
+                let attemptMs = Int(Date().timeIntervalSince(attemptStart) * 1000)
+                Log.info("MessageStream reconnecting in \(String(format: "%.1f", totalDelay))s (attempt #\(retryCount), took \(attemptMs)ms) → \(host):\(port)", category: "MessageStream")
+            }
             do {
                 try await Task.sleep(for: .seconds(totalDelay))
             } catch {
@@ -488,7 +650,7 @@ final class MessageStreamManager {
                 break
             }
         }
-        Log.info("🏁 MessageStream connectLoop finished", category: "MessageStream")
+        Log.info("MessageStream connectLoop finished", category: "MessageStream")
     }
 
     private func fetchMissedMessages() async {
@@ -506,12 +668,10 @@ final class MessageStreamManager {
             }
 
             let startCursor = lastPendingCursor
+            // INVARIANT: invalidatesConnectionOnFailure must remain false (default).
+            // A fetch failure must not kill the live stream or penalise the current relay.
             let fetchResult: FetchResult = try await GRPCChannelManager.shared.performRPC(
-                timeout: GRPCTimeouts.getPendingMessages,
-                // fetchMissedMessages only runs while the stream is not open (inside connectLoop,
-                // before openStream). Allowing ICE rotation here is safe — there is no live stream
-                // channel to kill, and it lets us escape a dead relay before openStream is called.
-                invalidatesConnectionOnFailure: true
+                timeout: GRPCTimeouts.getPendingMessages
             ) { grpcClient in
                 var cursor: String? = startCursor.isEmpty ? nil : startCursor
                 var cursorToPersist: String = startCursor
@@ -562,26 +722,26 @@ final class MessageStreamManager {
             lastPendingCursor = fetchResult.nextCursor
 
             if !fetchResult.failed.isEmpty {
-                Log.info("⚠️ fetchMissedMessages: \(fetchResult.failed.count) undecryptable message(s) — will ACK as failed once stream opens", category: "MessageStream")
+                Log.info("fetchMissedMessages: \(fetchResult.failed.count) undecryptable message(s) — will ACK as failed once stream opens", category: "MessageStream")
                 pendingFailedAcks.append(contentsOf: fetchResult.failed)
             }
 
             if !fetchResult.messages.isEmpty {
                 let fetchMs = Int(Date().timeIntervalSince(fetchStart) * 1000)
-                Log.info("📨 fetchMissedMessages: \(fetchMs)ms, \(fetchResult.messages.count) message(s) fetched", category: "MessageStream")
+                Log.info("fetchMissedMessages: \(fetchMs)ms, \(fetchResult.messages.count) message(s) fetched", category: "MessageStream")
                 for msg in fetchResult.messages {
                     onMessageReceived?(msg)
                 }
             } else {
                 let fetchMs = Int(Date().timeIntervalSince(fetchStart) * 1000)
-                Log.debug("📭 fetchMissedMessages: \(fetchMs)ms, no pending messages", category: "MessageStream")
+                Log.debug("fetchMissedMessages: \(fetchMs)ms, no pending messages", category: "MessageStream")
             }
         } catch is CancellationError {
             // Task was cancelled during force-reconnect or backgrounding — expected, no log needed
             return
         } catch {
             if let rpcError = error as? RPCError {
-                Log.error("⚠️ fetchMissedMessages RPC error: code=\(rpcError.code) message=\"\(rpcError.message)\"", category: "MessageStream")
+                Log.error("fetchMissedMessages RPC error: code=\(rpcError.code) message=\"\(rpcError.message)\"", category: "MessageStream")
             } else {
                 Log.debug("fetchMissedMessages failed: \(error)", category: "MessageStream")
             }
@@ -602,7 +762,7 @@ final class MessageStreamManager {
         }
         lastWatchdogRestartAt = Date()
 
-        Log.info("💔 Heartbeat timeout (\(Int(elapsed))s) — restarting MessageStream", category: "MessageStream")
+        Log.info("Heartbeat timeout (\(Int(elapsed))s) — restarting MessageStream", category: "MessageStream")
         guard let cb = onMessageReceived else { return }
         forceReconnect(contactUserIds: subscriptionUserIds, onMessageReceived: cb)
     }

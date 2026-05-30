@@ -26,33 +26,13 @@ struct OnboardingView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // Top bar — network settings
-                HStack {
-                    Spacer()
-                    Button {
-                        #if os(macOS)
-                        openSettings()
-                        #else
-                        showingNetworkSettings = true
-                        #endif
-                    } label: {
-                        Text("[net]")
-                            .font(CTFont.regular(12))
-                            .foregroundColor(Color.CT.textDim)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(Text("onboarding_network_settings"))
-                    .padding(.horizontal, 16)
-                    .padding(.top, 16)
-                }
-
                 Spacer()
 
                 // Branding
                 VStack(spacing: 60) {
                     CTLogoView(size: 100, color: Color.CT.text)
 
-                    Text("constrcut_titlte")
+                    Text("construct_titlte")
                         .font(CTFont.bold(26))
                         .foregroundColor(Color.CT.text)
                         .tracking(8)

@@ -5,14 +5,13 @@
 
 import SwiftUI
 
-/// Terminal-style connection status badge.
+/// Compact connection status badge for the chat list header.
 ///
-/// Shows the actual transport path (RELAY host · protocol or DIRECT)
-/// derived from IceProxyManager.currentTrafficPath plus gRPC stream state.
-/// Pulses when connecting; auto-hides after 4 s when connected.
+/// States: Connected (auto-hides, except on VEIL) / Connecting... (with phase) / Paused / Disconnected.
+/// When VEIL is active the connected badge stays visible permanently.
 struct ConnectionStatusIndicator: View {
     var connectionManager = ConnectionStatusManager.shared
-    @ObservedObject var iceProxy = IceProxyManager.shared
+    @ObservedObject var veilManager = VeilProxyManager.shared
 
     @State private var textOpacity: Double = 1
     @State private var visible: Bool = true
@@ -32,62 +31,63 @@ struct ConnectionStatusIndicator: View {
         .onChange(of: connectionManager.connectionStatus) { _, newStatus in
             handleStatusChange(newStatus)
         }
+        .onChange(of: connectionManager.isStreamPaused) { _, isPaused in
+            handlePauseChange(isPaused)
+        }
+        .onChange(of: veilManager.isRunning) { _, isRunning in
+            if case .connected = connectionManager.connectionStatus {
+                if isRunning {
+                    // VEIL activated while connected — cancel hide timer, stay visible.
+                    hideTask?.cancel()
+                    hideTask = nil
+                    visible = true
+                    withAnimation(.easeOut(duration: 0.4)) { textOpacity = 1 }
+                } else {
+                    // VEIL stopped while connected — start normal hide timer.
+                    handleStatusChange(.connected)
+                }
+            }
+        }
     }
 
     // MARK: - Label
 
     private var labelText: String {
+        if connectionManager.isStreamPaused {
+            return "> \(NSLocalizedString("status_paused", comment: ""))"
+        }
         switch connectionManager.connectionStatus {
         case .connected:
-            return "> \(trafficLabel) · [✓]"
+            let status = NSLocalizedString("connected", comment: "")
+            return veilManager.isRunning ? "> \(status) \(CTSymbol.star8)" : "> \(status)"
         case .connecting, .unknown:
-            return "> \(trafficLabel) · ···"
+            if let phase = connectionManager.connectingPhase {
+                return "> \(phase)"
+            }
+            return "> \(NSLocalizedString("status_connecting", comment: ""))"
         case .disconnected:
-            return "> OFFLINE"
-        }
-    }
-
-    private var trafficLabel: String {
-        switch iceProxy.currentTrafficPath {
-        case .direct:
-            return "DIRECT"
-        case .icePrimary(let host):
-            // Strip port if present, keep only hostname
-            let hostname = host.components(separatedBy: ":").first ?? host
-            return "RELAY: \(hostname) · TLS+OBFS4"
-        case .iceRelay(let address):
-            let hostname = address.components(separatedBy: ":").first ?? address
-            return "RELAY: \(hostname) · OBFS4"
-        case .iceWebTunnel(let relay):
-            let hostname = relay.components(separatedBy: ":").first ?? relay
-            return "RELAY: \(hostname) · WEBTUNNEL"
-        case .iceCooldown:
-            return "DIRECT · RECOVERING"
-        case .iceConnecting:
-            return "ICE STARTING"
+            return "> \(NSLocalizedString("disconnected", comment: ""))"
         }
     }
 
     private var labelColor: Color {
+        if connectionManager.isStreamPaused {
+            return Color.CT.textDim.opacity(0.45)
+        }
         switch connectionManager.connectionStatus {
         case .connected:
-            switch iceProxy.currentTrafficPath {
-            case .direct:     return Color.CT.textDim
-            case .icePrimary: return Color.CT.accent
-            case .iceRelay:   return Color.CT.accentDim
-            case .iceWebTunnel: return Color.CT.accent
-            case .iceCooldown, .iceConnecting: return Color.CT.textDim
-            }
+            return veilManager.isRunning ? Color.CT.accent : Color.CT.textDim
         case .connecting, .unknown:
             return Color.CT.textDim
         case .disconnected:
-            return Color(hex: 0xE05555).opacity(0.8)
+            return Color.CT.danger.opacity(0.7)
         }
     }
 
-    // MARK: - Visibility logic
+    // MARK: - Visibility / Animation
 
     private func handleStatusChange(_ status: ConnectionStatusManager.ConnectionStatus) {
+        guard !connectionManager.isStreamPaused else { return }
         hideTask?.cancel()
         hideTask = nil
 
@@ -95,15 +95,18 @@ struct ConnectionStatusIndicator: View {
         case .connected:
             visible = true
             withAnimation(.easeOut(duration: 0.4)) { textOpacity = 1 }
-            hideTask = Task {
-                try? await Task.sleep(nanoseconds: 4_000_000_000)
-                guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    withAnimation(.easeIn(duration: 0.8)) { textOpacity = 0 }
+            // Keep indicator visible permanently when VEIL is active.
+            if !veilManager.isRunning {
+                hideTask = Task {
+                    try? await Task.sleep(nanoseconds: 4_000_000_000)
+                    guard !Task.isCancelled else { return }
+                    await MainActor.run {
+                        withAnimation(.easeIn(duration: 0.8)) { textOpacity = 0 }
+                    }
+                    try? await Task.sleep(nanoseconds: 900_000_000)
+                    guard !Task.isCancelled else { return }
+                    await MainActor.run { visible = false }
                 }
-                try? await Task.sleep(nanoseconds: 900_000_000)
-                guard !Task.isCancelled else { return }
-                await MainActor.run { visible = false }
             }
 
         case .connecting, .unknown:
@@ -117,10 +120,23 @@ struct ConnectionStatusIndicator: View {
             withAnimation(.easeOut(duration: 0.3)) { textOpacity = 1 }
         }
     }
+
+    private func handlePauseChange(_ isPaused: Bool) {
+        hideTask?.cancel()
+        hideTask = nil
+        visible = true
+        if isPaused {
+            withAnimation(.easeOut(duration: 0.3)) { textOpacity = 0.45 }
+        } else {
+            handleStatusChange(connectionManager.connectionStatus)
+        }
+    }
 }
 
 #Preview {
-    ConnectionStatusIndicator()
-        .padding()
-        .background(Color.CT.bg)
+    VStack(spacing: 16) {
+        ConnectionStatusIndicator()
+    }
+    .padding()
+    .background(Color.CT.bg)
 }

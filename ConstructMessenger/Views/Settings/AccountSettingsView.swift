@@ -27,10 +27,11 @@ struct AccountSettingsView: View {
     @State private var showingReceiveNearby = false
     @State private var imageToCrop: UIImage?
     @State private var showingCropView = false
-    @State private var isEditingDisplayName = false
-    @State private var isEditingUsername = false
-
-    @State private var originalUsername: String = ""
+    @State private var isEditingProfile = false
+    @State private var draftUsername: String = ""
+    @State private var draftDisplayName: String = ""
+    @State private var showingDiscardProfileChangesConfirm = false
+    @State private var shouldDismissAfterDiscard = false
 
     // Logout flow
     @State private var showingLogoutConfirm = false
@@ -41,48 +42,60 @@ struct AccountSettingsView: View {
     @State private var pendingLogoutAll = false  // which logout action was requested before backup check
 
     var body: some View {
-        @Bindable var viewModel = viewModel
         VStack(spacing: 0) {
             CTNavBar(
                 title: NSLocalizedString("account", comment: ""),
                 showBack: true,
-                backAction: { dismiss() }
+                trailingSystemImage: isEditingProfile ? "checkmark.circle.fill" : "square.and.pencil",
+                trailingSecondarySystemImage: isEditingProfile ? "xmark.circle" : nil,
+                backAction: { handleBackTap() },
+                trailingAction: { handleProfileEditActionTap() },
+                trailingSecondaryAction: { handleProfileEditCancelTap() }
             )
             flatDivider(thick: true)
 
             ScrollView {
-                VStack(spacing: 0) {
+                LazyVStack(spacing: 0) {
                     avatarHeader
                     flatDivider(thick: true)
                     identitySection
                     flatDivider(thick: true)
                     accountSection
+                        .opacity(isEditingProfile ? AccountSettingsLayout.sectionDisabledOpacity : 1)
+                        .disabled(isEditingProfile)
                     flatDivider(thick: true)
                     backupSection
+                        .opacity(isEditingProfile ? AccountSettingsLayout.sectionDisabledOpacity : 1)
+                        .disabled(isEditingProfile)
                     flatDivider(thick: true)
                     dangerSection
+                        .opacity(isEditingProfile ? AccountSettingsLayout.sectionDisabledOpacity : 1)
+                        .disabled(isEditingProfile)
                     flatDivider(thick: true)
 
                     Text(NSLocalizedString("changes_encrypted_footer", comment: ""))
                         .font(CTFont.regular(11))
-                        .foregroundStyle(Color.CT.accent.opacity(0.6))
+                        .foregroundStyle(Color.CT.accent.opacity(AccountSettingsLayout.footerTextOpacity))
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 12)
+                        .padding(.horizontal, AccountSettingsLayout.footerHorizontalPadding)
+                        .padding(.vertical, AccountSettingsLayout.footerVerticalPadding)
                 }
             }
         }
         .background(Color.CT.bg.ignoresSafeArea())
-        #if os(iOS)
         .toolbar(.hidden, for: .navigationBar)
-        #endif
         .onAppear {
             viewModel.setContext(viewContext)
-            viewModel.loadUserInfo(from: authViewModel)
-            originalUsername = viewModel.username
+            if viewModel.needsUserInfoRefresh(from: authViewModel) {
+                viewModel.loadUserInfo(from: authViewModel)
+            }
+            syncDraftProfileFields()
         }
-        .onChange(of: viewModel.usernameSaved) { _, saved in
-            if saved { originalUsername = viewModel.username }
+        .onChange(of: viewModel.username) { _, _ in
+            if !isEditingProfile { syncDraftProfileFields() }
+        }
+        .onChange(of: viewModel.displayName) { _, _ in
+            if !isEditingProfile { syncDraftProfileFields() }
         }
         .sheet(isPresented: $showingExportBackup) {
             ExportBackupView()
@@ -106,7 +119,9 @@ struct AccountSettingsView: View {
         .sheet(isPresented: $showingAvatarViewer) {
             AvatarViewerSheet(image: viewModel.profileImage, onChangeAvatar: {
                 showingAvatarViewer = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showingImagePicker = true }
+                DispatchQueue.main.asyncAfter(deadline: .now() + AccountSettingsLayout.postAvatarPickerDelay) {
+                    showingImagePicker = true
+                }
             })
         }
         .photosPicker(isPresented: $showingImagePicker, selection: $selectedPhotoItem, matching: .images)
@@ -172,12 +187,23 @@ struct AccountSettingsView: View {
             SocialRecoverySetupView()
                 .environment(socialRecoveryService)
         }
+        .alert("account_discard_changes_title", isPresented: $showingDiscardProfileChangesConfirm) {
+            Button("account_discard_changes_discard", role: .destructive) {
+                discardProfileEditingChanges()
+                if shouldDismissAfterDiscard {
+                    dismiss()
+                }
+            }
+            Button("account_discard_changes_keep_editing", role: .cancel) {}
+        } message: {
+            Text("account_discard_changes_message")
+        }
     }
 
     // MARK: - Avatar Header
 
     private var avatarHeader: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: AccountSettingsLayout.avatarSectionSpacing) {
             HexagonAvatarView(
                 userId: viewModel.userId,
                 displayName: viewModel.displayName,
@@ -186,76 +212,81 @@ struct AccountSettingsView: View {
                 isActive: false
             )
             .onTapGesture {
+                guard !isEditingProfile else { return }
                 if viewModel.profileImage != nil { showingAvatarViewer = true }
                 else { showingImagePicker = true }
             }
+            .opacity(isEditingProfile ? AccountSettingsLayout.avatarSectionEditingOpacity : 1)
 
             Button {
+                guard !isEditingProfile else { return }
                 showingImagePicker = true
             } label: {
                 Text("[\(NSLocalizedString("change_photo", comment: ""))]")
                     .font(CTFont.regular(13))
-                    .foregroundStyle(Color.CT.accent)
+                    .foregroundStyle(isEditingProfile ? Color.CT.textDim : Color.CT.accent)
             }
             .buttonStyle(.plain)
+            .disabled(isEditingProfile)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 28)
+        .padding(.vertical, AccountSettingsLayout.avatarSectionVerticalPadding)
     }
 
     // MARK: - Identity Section
 
     private var identitySection: some View {
-        @Bindable var viewModel = viewModel
         return VStack(alignment: .leading, spacing: 0) {
             sectionHeader(NSLocalizedString("identity_section", comment: ""))
+            if isEditingProfile {
+                Text(NSLocalizedString("account_editing_profile", comment: ""))
+                    .font(CTFont.regular(11))
+                    .foregroundStyle(Color.CT.accent)
+                    .padding(.horizontal, AccountSettingsLayout.sectionHintHorizontalPadding)
+                    .padding(.bottom, AccountSettingsLayout.sectionHintBottomPadding)
+            }
             flatRowDivider()
 
-            // username — editable, server-validated
-            profileEditRow(
+            profileEditableRow(
                 label: NSLocalizedString("username", comment: ""),
-                isEditing: $isEditingUsername,
-                value: $viewModel.username,
+                value: $draftUsername,
                 hint: NSLocalizedString("username_hint", comment: ""),
-                maxLength: MessageSizeLimits.maxUsernameCharacters,
+                isEditing: isEditingProfile,
                 isSaving: viewModel.isSavingUsername,
                 errorMessage: viewModel.usernameSaveError,
-                onCommit: {
-                    Task { await viewModel.saveUsername(viewModel.username, authViewModel: authViewModel) }
-                }
+                maxLength: MessageSizeLimits.maxUsernameCharacters,
+                lowercased: true
             )
             flatRowDivider()
-            HStack(spacing: 8) {
+            HStack(spacing: AccountSettingsLayout.discoverableRowSpacing) {
                 Text(viewModel.isDiscoverable
                     ? NSLocalizedString("searchable_indicator", comment: "")
                     : NSLocalizedString("searchable_indicator_off", comment: ""))
                     .font(CTFont.regular(12))
                     .foregroundStyle(viewModel.isDiscoverable ? Color.CT.accent : Color.CT.noise)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .padding(.horizontal, AccountSettingsLayout.discoverableRowHorizontalPadding)
+            .padding(.vertical, AccountSettingsLayout.discoverableRowVerticalPadding)
             flatRowDivider()
 
-            // display name — local, shown to contacts
-            profileEditRow(
+            profileEditableRow(
                 label: NSLocalizedString("display_name", comment: ""),
-                isEditing: $isEditingDisplayName,
-                value: $viewModel.displayName,
+                value: $draftDisplayName,
                 hint: NSLocalizedString("display_name_hint", comment: ""),
-                maxLength: MessageSizeLimits.maxDisplayNameCharacters,
-                onCommit: { viewModel.saveDisplayName(viewModel.displayName, authViewModel: authViewModel) }
+                isEditing: isEditingProfile,
+                maxLength: MessageSizeLimits.maxDisplayNameCharacters
             )
             flatRowDivider()
 
             // status — placeholder, not yet implemented
             profileRow(label: NSLocalizedString("status", comment: "")) {
-                HStack(spacing: 8) {
+                HStack(spacing: AccountSettingsLayout.inlineStatusSpacing) {
                     Text("[[ONLINE]]")
                         .font(CTFont.regular(14))
                         .foregroundStyle(Color.CT.accent)
                     Text("[→]")
                         .font(CTFont.regular(13))
-                        .foregroundStyle(Color.CT.accent.opacity(0.6))
+                        .foregroundStyle(Color.CT.accent.opacity(AccountSettingsLayout.inlineStatusAccentOpacity))
                 }
             }
         }
@@ -291,8 +322,8 @@ struct AccountSettingsView: View {
                         .font(CTFont.regular(13))
                         .foregroundStyle(Color.CT.accent)
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
+                .padding(.horizontal, AccountSettingsLayout.rowHorizontalPadding)
+                .padding(.vertical, AccountSettingsLayout.rowVerticalPadding)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -313,8 +344,8 @@ struct AccountSettingsView: View {
                         .font(CTFont.regular(13))
                         .foregroundStyle(Color.CT.accent)
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
+                .padding(.horizontal, AccountSettingsLayout.rowHorizontalPadding)
+                .padding(.vertical, AccountSettingsLayout.rowVerticalPadding)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -333,8 +364,8 @@ struct AccountSettingsView: View {
                         .font(CTFont.regular(13))
                         .foregroundStyle(Color.CT.accent)
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
+                .padding(.horizontal, AccountSettingsLayout.rowHorizontalPadding)
+                .padding(.vertical, AccountSettingsLayout.rowVerticalPadding)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -358,8 +389,8 @@ struct AccountSettingsView: View {
                         .font(CTFont.regular(13))
                         .foregroundStyle(Color.CT.accent)
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
+                .padding(.horizontal, AccountSettingsLayout.rowHorizontalPadding)
+                .padding(.vertical, AccountSettingsLayout.rowVerticalPadding)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -375,8 +406,8 @@ struct AccountSettingsView: View {
                         .font(CTFont.regular(13))
                         .foregroundStyle(Color.CT.accent)
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
+                .padding(.horizontal, AccountSettingsLayout.rowHorizontalPadding)
+                .padding(.vertical, AccountSettingsLayout.rowVerticalPadding)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -392,8 +423,8 @@ struct AccountSettingsView: View {
                         .font(CTFont.regular(13))
                         .foregroundStyle(Color.CT.accent)
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
+                .padding(.horizontal, AccountSettingsLayout.rowHorizontalPadding)
+                .padding(.vertical, AccountSettingsLayout.rowVerticalPadding)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -409,8 +440,8 @@ struct AccountSettingsView: View {
                         .font(CTFont.regular(13))
                         .foregroundStyle(Color.CT.accent)
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
+                .padding(.horizontal, AccountSettingsLayout.rowHorizontalPadding)
+                .padding(.vertical, AccountSettingsLayout.rowVerticalPadding)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -431,14 +462,14 @@ struct AccountSettingsView: View {
                 HStack {
                     Text(NSLocalizedString("logout_all_row", comment: "").lowercased())
                         .font(CTFont.regular(14))
-                        .foregroundStyle(Color.CT.danger.opacity(0.85))
+                        .foregroundStyle(Color.CT.danger.opacity(AccountSettingsLayout.dangerPrimaryOpacity))
                     Spacer()
                     Text("[→]")
                         .font(CTFont.regular(13))
-                        .foregroundStyle(Color.CT.danger.opacity(0.7))
+                        .foregroundStyle(Color.CT.danger.opacity(AccountSettingsLayout.dangerSecondaryOpacity))
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
+                .padding(.horizontal, AccountSettingsLayout.rowHorizontalPadding)
+                .padding(.vertical, AccountSettingsLayout.rowVerticalPadding)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -455,10 +486,10 @@ struct AccountSettingsView: View {
                     Spacer()
                     Text("[\(NSLocalizedString("delete_action", comment: "")) →]")
                         .font(CTFont.regular(13))
-                        .foregroundStyle(Color.CT.danger.opacity(0.7))
+                        .foregroundStyle(Color.CT.danger.opacity(AccountSettingsLayout.dangerSecondaryOpacity))
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
+                .padding(.horizontal, AccountSettingsLayout.rowHorizontalPadding)
+                .padding(.vertical, AccountSettingsLayout.rowVerticalPadding)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -483,29 +514,29 @@ struct AccountSettingsView: View {
 
     private func flatDivider(thick: Bool = false) -> some View {
         Rectangle()
-            .fill(thick ? Color.CT.noise : Color.CT.noise.opacity(0.5))
-            .frame(height: 1)
+            .fill(thick ? Color.CT.noise : Color.CT.noise.opacity(AccountSettingsLayout.dividerRegularOpacity))
+            .frame(height: AccountSettingsLayout.dividerHeight)
     }
 
     private func flatRowDivider() -> some View {
         Rectangle()
-            .fill(Color.CT.noise.opacity(0.35))
-            .frame(height: 1)
-            .padding(.horizontal, 20)
+            .fill(Color.CT.noise.opacity(AccountSettingsLayout.dividerRowOpacity))
+            .frame(height: AccountSettingsLayout.dividerHeight)
+            .padding(.horizontal, AccountSettingsLayout.dividerHorizontalPadding)
     }
 
     private func sectionHeader(_ title: String, color: Color = Color.CT.accent) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: AccountSettingsLayout.sectionHeaderSpacing) {
             Text(">")
                 .font(CTFont.bold(12))
                 .foregroundStyle(color)
             Text(title.uppercased())
                 .font(CTFont.bold(12))
                 .foregroundStyle(color)
-                .tracking(2)
+                .tracking(AccountSettingsLayout.sectionHeaderTracking)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 10)
+        .padding(.horizontal, AccountSettingsLayout.sectionHeaderHorizontalPadding)
+        .padding(.vertical, AccountSettingsLayout.sectionHeaderVerticalPadding)
     }
 
     private func profileRow<V: View>(label: String, @ViewBuilder value: () -> V) -> some View {
@@ -516,95 +547,163 @@ struct AccountSettingsView: View {
             Spacer()
             value()
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
+        .padding(.horizontal, AccountSettingsLayout.rowHorizontalPadding)
+        .padding(.vertical, AccountSettingsLayout.rowVerticalPadding)
     }
 
-    private func profileEditRow(
+    private func profileEditableRow(
         label: String,
-        isEditing: Binding<Bool>,
         value: Binding<String>,
         hint: String? = nil,
-        maxLength: Int? = nil,
+        isEditing: Bool,
         isSaving: Bool = false,
         errorMessage: String? = nil,
-        onCommit: @escaping () -> Void
+        maxLength: Int? = nil,
+        lowercased: Bool = false
     ) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Main row — entire row is a tap target
-            Button {
-                if !isEditing.wrappedValue { isEditing.wrappedValue = true }
-            } label: {
-                HStack {
-                    Text(label.lowercased())
-                        .font(CTFont.regular(14))
-                        .foregroundStyle(Color.CT.textDim)
-                    Spacer()
-                    if isEditing.wrappedValue {
-                        TextField("", text: value)
-                            .font(CTFont.regular(14))
-                            .foregroundStyle(Color.CT.text)
-                            .multilineTextAlignment(.trailing)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
-                            .onSubmit {
-                                onCommit()
-                                isEditing.wrappedValue = false
-                            }
-                            .onChange(of: value.wrappedValue) { _, newValue in
-                                if let max = maxLength, newValue.count > max {
-                                    value.wrappedValue = String(newValue.prefix(max))
-                                }
-                            }
-                            .frame(maxWidth: 180)
-                        Button {
-                            onCommit()
-                            isEditing.wrappedValue = false
-                        } label: {
-                            if isSaving {
-                                ProgressView()
-                                    .tint(Color.CT.accent)
-                                    .scaleEffect(0.8)
-                            } else {
-                                Text("[→]")
-                                    .font(CTFont.bold(13))
-                                    .foregroundStyle(Color.CT.accent)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    } else {
-                        HStack(spacing: 8) {
-                            Text(value.wrappedValue.isEmpty ? "—" : value.wrappedValue)
-                                .font(CTFont.regular(14))
-                                .foregroundStyle(Color.CT.text)
-                            Text("[edit]")
-                                .font(CTFont.regular(12))
-                                .foregroundStyle(Color.CT.accent.opacity(0.7))
-                        }
-                    }
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+            HStack {
+                Text(label.lowercased())
+                    .font(CTFont.regular(14))
+                    .foregroundStyle(Color.CT.textDim)
+                Spacer()
 
-            // Error or hint line
+                if isEditing {
+                    TextField("", text: value)
+                        .font(CTFont.regular(14))
+                        .foregroundStyle(Color.CT.text)
+                        .multilineTextAlignment(.trailing)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(lowercased ? .never : .words)
+                        .onChange(of: value.wrappedValue) { _, newValue in
+                            var updated = newValue
+                            if lowercased {
+                                updated = updated.lowercased()
+                            }
+                            if let max = maxLength, updated.count > max {
+                                updated = String(updated.prefix(max))
+                            }
+                            if updated != value.wrappedValue {
+                                value.wrappedValue = updated
+                            }
+                        }
+                        .frame(maxWidth: AccountSettingsLayout.editableFieldMaxWidth)
+
+                    if isSaving {
+                        ProgressView()
+                            .tint(Color.CT.accent)
+                            .scaleEffect(AccountSettingsLayout.editableSavingIndicatorScale)
+                    }
+                } else {
+                    Text(value.wrappedValue.isEmpty ? "—" : value.wrappedValue)
+                        .font(CTFont.regular(14))
+                        .foregroundStyle(Color.CT.text)
+                }
+            }
+            .padding(.horizontal, AccountSettingsLayout.rowHorizontalPadding)
+            .padding(.vertical, AccountSettingsLayout.rowVerticalPadding)
+
             if let err = errorMessage, !err.isEmpty {
                 Text("> [!] \(err)")
                     .font(CTFont.regular(11))
                     .foregroundStyle(Color.CT.danger)
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 8)
-            } else if !isEditing.wrappedValue, let hint {
+                    .padding(.horizontal, AccountSettingsLayout.sectionHintHorizontalPadding)
+                    .padding(.bottom, AccountSettingsLayout.sectionHintBottomPadding)
+            } else if !isEditing, let hint {
                 Text("> \(hint)")
                     .font(CTFont.regular(11))
                     .foregroundStyle(Color.CT.textDim)
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 8)
+                    .padding(.horizontal, AccountSettingsLayout.sectionHintHorizontalPadding)
+                    .padding(.bottom, AccountSettingsLayout.sectionHintBottomPadding)
             }
         }
     }
+
+    private func syncDraftProfileFields() {
+        draftUsername = viewModel.username
+        draftDisplayName = viewModel.displayName
+    }
+
+    private func discardProfileEditingChanges() {
+        syncDraftProfileFields()
+        viewModel.usernameSaveError = nil
+        shouldDismissAfterDiscard = false
+        isEditingProfile = false
+    }
+
+    private var hasUnsavedProfileChanges: Bool {
+        let usernameChanged = draftUsername.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            != viewModel.username
+        let displayNameChanged = draftDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            != viewModel.displayName
+        return usernameChanged || displayNameChanged
+    }
+
+    private func handleBackTap() {
+        if isEditingProfile {
+            if hasUnsavedProfileChanges {
+                promptDiscardProfileChanges(dismissAfterDiscard: true)
+                return
+            }
+            discardProfileEditingChanges()
+        }
+        dismiss()
+    }
+
+    private func handleProfileEditActionTap() {
+        if isEditingProfile {
+            Task { await saveProfileEdits() }
+        } else {
+            syncDraftProfileFields()
+            viewModel.usernameSaveError = nil
+            isEditingProfile = true
+        }
+    }
+
+    private func handleProfileEditCancelTap() {
+        guard isEditingProfile else { return }
+        if hasUnsavedProfileChanges {
+            promptDiscardProfileChanges(dismissAfterDiscard: false)
+        } else {
+            discardProfileEditingChanges()
+        }
+    }
+
+    private func promptDiscardProfileChanges(dismissAfterDiscard: Bool) {
+        shouldDismissAfterDiscard = dismissAfterDiscard
+        showingDiscardProfileChangesConfirm = true
+    }
+
+    private func saveProfileEdits() async {
+        guard !viewModel.isSavingUsername else { return }
+
+        let trimmedDisplayName = draftDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedDisplayName.count > MessageSizeLimits.maxDisplayNameCharacters {
+            draftDisplayName = String(trimmedDisplayName.prefix(MessageSizeLimits.maxDisplayNameCharacters))
+        } else {
+            draftDisplayName = trimmedDisplayName
+        }
+
+        draftUsername = draftUsername.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        let didChangeDisplayName = draftDisplayName != viewModel.displayName
+        let didChangeUsername = draftUsername != viewModel.username
+
+        if didChangeDisplayName {
+            viewModel.saveDisplayName(draftDisplayName, authViewModel: authViewModel)
+            draftDisplayName = viewModel.displayName
+        }
+
+        if didChangeUsername {
+            await viewModel.saveUsername(draftUsername, authViewModel: authViewModel)
+            draftUsername = viewModel.username
+        }
+
+        if viewModel.usernameSaveError == nil && !hasUnsavedProfileChanges {
+            isEditingProfile = false
+        }
+    }
+
 }
 
 
@@ -616,36 +715,39 @@ struct DeleteAccountConfirmationView: View {
     let onDelete: () -> Void
     let onCancel: () -> Void
 
-    @State private var countdown = 7
+    @State private var countdown = DeleteAccountSheetLayout.countdownStartValue
     @State private var showLocalDeleteConfirm = false
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: DeleteAccountSheetLayout.rootSpacing) {
             // Drag indicator
             Capsule()
                 .fill(Color.CT.noise)
-                .frame(width: 36, height: 4)
-                .padding(.top, 12)
-                .padding(.bottom, 24)
+                .frame(
+                    width: DeleteAccountSheetLayout.dragIndicatorWidth,
+                    height: DeleteAccountSheetLayout.dragIndicatorHeight
+                )
+                .padding(.top, DeleteAccountSheetLayout.dragIndicatorTopPadding)
+                .padding(.bottom, DeleteAccountSheetLayout.dragIndicatorBottomPadding)
 
             Spacer()
 
             Text(LocalizedStringKey("delete_my_account"))
                 .font(CTFont.bold(20))
                 .foregroundStyle(Color.CT.text)
-                .padding(.bottom, 8)
+                .padding(.bottom, DeleteAccountSheetLayout.titleBottomPadding)
 
             Text(LocalizedStringKey("delete_account_confirmation_message"))
                 .font(CTFont.regular(14))
                 .foregroundStyle(Color.CT.textDim)
                 .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
-                .padding(.bottom, 32)
+                .padding(.horizontal, DeleteAccountSheetLayout.messageHorizontalPadding)
+                .padding(.bottom, DeleteAccountSheetLayout.messageBottomPadding)
 
             // Retro digital countdown
             if countdown > 0 && !authViewModel.isLoading {
                 CTDigitalCountdown(value: countdown)
-                    .padding(.bottom, 28)
+                    .padding(.bottom, DeleteAccountSheetLayout.countdownBottomPadding)
             }
 
             // Local-delete fallback — shown after a server-side deletion failure
@@ -656,20 +758,20 @@ struct DeleteAccountConfirmationView: View {
                     Text(LocalizedStringKey("delete_account_local_only"))
                         .font(CTFont.regular(12))
                         .underline()
-                        .foregroundStyle(Color.CT.danger.opacity(0.75))
+                        .foregroundStyle(Color.CT.danger.opacity(DeleteAccountSheetLayout.localDeleteWarningOpacity))
                 }
-                .padding(.bottom, 16)
+                .padding(.bottom, DeleteAccountSheetLayout.localDeleteActionBottomPadding)
             }
 
             Spacer()
 
             // Delete button (full-width, appears after countdown)
-            VStack(spacing: 12) {
+            VStack(spacing: DeleteAccountSheetLayout.actionsSpacing) {
                 if authViewModel.isLoading {
                     ProgressView()
                         .tint(Color.CT.danger)
                         .frame(maxWidth: .infinity)
-                        .frame(height: 50)
+                        .frame(height: DeleteAccountSheetLayout.actionButtonHeight)
                 } else {
                     Button {
                         onDelete()
@@ -677,19 +779,35 @@ struct DeleteAccountConfirmationView: View {
                         Text(LocalizedStringKey("delete_account"))
                             .font(CTFont.bold(16))
                             .frame(maxWidth: .infinity)
-                            .frame(height: 50)
+                            .frame(height: DeleteAccountSheetLayout.actionButtonHeight)
                             .background(
                                 Rectangle()
-                                    .fill(countdown > 0 ? Color.CT.danger.opacity(0.08) : Color.CT.danger.opacity(0.15))
+                                    .fill(
+                                        countdown > 0
+                                        ? Color.CT.danger.opacity(DeleteAccountSheetLayout.deleteButtonIdleFillOpacity)
+                                        : Color.CT.danger.opacity(DeleteAccountSheetLayout.deleteButtonActiveFillOpacity)
+                                    )
                                     .overlay(
                                         Rectangle()
-                                            .strokeBorder(countdown > 0 ? Color.CT.danger.opacity(0.2) : Color.CT.danger.opacity(0.5), lineWidth: 1)
+                                            .strokeBorder(
+                                                countdown > 0
+                                                ? Color.CT.danger.opacity(DeleteAccountSheetLayout.deleteButtonIdleStrokeOpacity)
+                                                : Color.CT.danger.opacity(DeleteAccountSheetLayout.deleteButtonActiveStrokeOpacity),
+                                                lineWidth: DeleteAccountSheetLayout.deleteButtonStrokeWidth
+                                            )
                                     )
                             )
-                            .foregroundStyle(countdown > 0 ? Color.CT.danger.opacity(0.4) : Color.CT.danger)
+                            .foregroundStyle(
+                                countdown > 0
+                                ? Color.CT.danger.opacity(DeleteAccountSheetLayout.deleteButtonDisabledOpacity)
+                                : Color.CT.danger
+                            )
                     }
                     .disabled(countdown > 0)
-                    .animation(.easeInOut(duration: 0.25), value: countdown)
+                    .animation(
+                        .easeInOut(duration: DeleteAccountSheetLayout.deleteButtonAnimationDuration),
+                        value: countdown
+                    )
                 }
 
                 Button {
@@ -702,8 +820,8 @@ struct DeleteAccountConfirmationView: View {
                 }
                 .disabled(authViewModel.isLoading)
             }
-            .padding(.horizontal, 24)
-            .padding(.bottom, 36)
+            .padding(.horizontal, DeleteAccountSheetLayout.actionsHorizontalPadding)
+            .padding(.bottom, DeleteAccountSheetLayout.actionsBottomPadding)
         }
         .background(Color.CT.bg)
         .presentationDetents([.medium])
@@ -717,9 +835,9 @@ struct DeleteAccountConfirmationView: View {
             Text("delete_account_local_only_warning")
         }
         .task {
-            // Count down from 7 to 0 using structured concurrency — avoids RunLoop blocking on macOS.
+            // Count down from initial value to 0 using structured concurrency — avoids RunLoop blocking on macOS.
             while countdown > 0 {
-                try? await Task.sleep(for: .seconds(1))
+                try? await Task.sleep(for: .seconds(DeleteAccountSheetLayout.countdownStepSeconds))
                 guard countdown > 0 else { break }
                 countdown -= 1
             }
@@ -753,9 +871,7 @@ struct AvatarViewerSheet: View {
                         .ignoresSafeArea(edges: .bottom)
                 }
             }
-            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
-            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("close") { dismiss() }
@@ -766,11 +882,9 @@ struct AvatarViewerSheet: View {
                         .foregroundColor(.white)
                 }
             }
-            #if os(iOS)
             .toolbarBackground(.black, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
-            #endif
         }
     }
 }

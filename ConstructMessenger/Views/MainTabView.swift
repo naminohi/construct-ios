@@ -5,6 +5,7 @@
 //  Created by Maxim Eliseyev on 14.12.2025.
 //
 
+#if os(iOS)
 import SwiftUI
 import CoreData
 
@@ -29,22 +30,19 @@ struct MainTabView: View {
     var body: some View {
         callContent
             .debugMetricsOverlay()
-            // In-app incoming call sheet (CallKit handles lock-screen / background)
-            #if os(iOS)
             .overlay(alignment: .bottom) {
-                if case .incoming(let session) = callManager.state {
+                if CallsFeature.isEnabled, case .incoming(let session) = callManager.state {
                     IncomingCallView(session: session)
                         .zIndex(100)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isIncomingState)
                 }
             }
-            .fullScreenCover(isPresented: .constant(isActiveOrConnecting)) {
+            .fullScreenCover(isPresented: .constant(CallsFeature.isEnabled && isActiveOrConnecting)) {
                 if let session = activeCallSession {
                     InCallView(session: session, isConnecting: isConnectingState, endReason: callEndReason)
                 }
             }
-            #endif
     }
 
     @ViewBuilder
@@ -88,7 +86,6 @@ struct MainTabView: View {
                     .allowsHitTesting(vm.selectedTab == 1)
             }
 
-            #if os(iOS)
             if CallsFeature.isEnabled, visitedTabs.contains(2) {
                 CallHistoryView()
                     .opacity(vm.selectedTab == 2 ? 1 : 0)
@@ -102,7 +99,6 @@ struct MainTabView: View {
                     .opacity(vm.selectedTab == settingsTab ? 1 : 0)
                     .allowsHitTesting(vm.selectedTab == settingsTab)
             }
-            #endif
         }
         .onChange(of: vm.selectedTab) { _, newTab in
             visitedTabs.insert(newTab)
@@ -110,19 +106,15 @@ struct MainTabView: View {
     }
 
     private var tabItems: [CTTabItem] {
-        #if os(iOS)
         var items: [CTTabItem] = [
-            CTTabItem(symbol: CTSymbol.tabChats,  label: "MSG"),
-            CTTabItem(symbol: CTSymbol.tabSynaps, label: "SYN"),
+            CTTabItem(symbol: CTSymbol.tabChats, sfName: "message"),
+            CTTabItem(symbol: CTSymbol.tabSynaps, sfName: "circle.grid.cross"),
         ]
         if CallsFeature.isEnabled {
-            items.append(CTTabItem(symbol: CTSymbol.tabCalls, label: "TEL"))
+            items.append(CTTabItem(symbol: CTSymbol.tabCalls, sfName: "phone"))
         }
-        items.append(CTTabItem(symbol: CTSymbol.tabSettings, label: "CFG"))
+        items.append(CTTabItem(symbol: CTSymbol.tabSettings, sfName: "gearshape"))
         return items
-        #else
-        return CTTabBar.defaultItems
-        #endif
     }
 
     // MARK: - Call state helpers
@@ -193,4 +185,6 @@ private final class MainTabPreviewState {
         .environment(state.chatsViewModel)
         .environment(SecurityViewModel())
 }
+#endif
+
 #endif

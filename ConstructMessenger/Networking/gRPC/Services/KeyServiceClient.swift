@@ -125,10 +125,10 @@ final class KeyServiceClient: Sendable {
                     kyberPreKeySignature: kyberSig,
                     kyberOneTimePreKeyPublic: kyberOtpkPK,
                     kyberOneTimePreKeyId: kyberOtpkId,
-                    spkUploadedAt: b.generatedAt > 0 ? UInt64(b.generatedAt) : 0,
-                    spkRotationEpoch: 0,
-                    kyberSpkUploadedAt: 0,
-                    kyberSpkRotationEpoch: 0
+                    spkUploadedAt: b.spkUploadedAt > 0 ? UInt64(b.spkUploadedAt) : (b.generatedAt > 0 ? UInt64(b.generatedAt) : 0),
+                    spkRotationEpoch: b.spkRotationEpoch,
+                    kyberSpkUploadedAt: b.hasKyberSpkUploadedAt ? UInt64(b.kyberSpkUploadedAt) : 0,
+                    kyberSpkRotationEpoch: b.hasKyberSpkRotationEpoch ? b.kyberSpkRotationEpoch : 0
                 )
                 return DeviceBundleData(deviceId: deviceBundle.deviceID, bundle: bundle, platform: deviceBundle.platform)
             }
@@ -173,7 +173,7 @@ final class KeyServiceClient: Sendable {
             // KT verification (non-blocking: failure is logged but does not reject the bundle)
             if response.hasKtProof {
                 let p = response.ktProof
-                let serverKey = UserDefaults.standard.data(forKey: IceCertFetcher.cachedBundleSigningKeyKey)
+                let serverKey = UserDefaults.standard.data(forKey: VeilCertFetcher.cachedBundleSigningKeyKey)
                 let result = KeyTransparencyVerifier.verify(
                     leafIndex: p.leafIndex,
                     treeSize: p.treeSize,
@@ -187,7 +187,7 @@ final class KeyServiceClient: Sendable {
                 switch result {
                 case .verified:
                     KTStore.shared.recordVerified()
-                    Log.info("🔐 KT: inclusion proof verified for device \(response.deviceID)", category: "KT")
+                    Log.info("KT: inclusion proof verified for device \(response.deviceID)", category: "KT")
                     Self.updateContactKTStatus(
                         userId: userId,
                         identityKey: bundle.identityKey,
@@ -195,7 +195,7 @@ final class KeyServiceClient: Sendable {
                     )
                 case .failed(let e):
                     KTStore.shared.recordFailure()
-                    Log.error("🔐 KT: proof FAILED for device \(response.deviceID) — \(e)", category: "KT")
+                    Log.error("KT: proof FAILED for device \(response.deviceID) — \(e)", category: "KT")
                     Self.updateContactKTStatus(
                         userId: userId,
                         identityKey: bundle.identityKey,
@@ -221,10 +221,10 @@ final class KeyServiceClient: Sendable {
                 kyberPreKeySignature: kyberSig,
                 kyberOneTimePreKeyPublic: kyberOtpkPK,
                 kyberOneTimePreKeyId: kyberOtpkId,
-                spkUploadedAt: bundle.generatedAt > 0 ? UInt64(bundle.generatedAt) : 0,
-                spkRotationEpoch: 0,
-                kyberSpkUploadedAt: 0,
-                kyberSpkRotationEpoch: 0
+                spkUploadedAt: bundle.spkUploadedAt > 0 ? UInt64(bundle.spkUploadedAt) : (bundle.generatedAt > 0 ? UInt64(bundle.generatedAt) : 0),
+                spkRotationEpoch: bundle.spkRotationEpoch,
+                kyberSpkUploadedAt: bundle.hasKyberSpkUploadedAt ? UInt64(bundle.kyberSpkUploadedAt) : 0,
+                kyberSpkRotationEpoch: bundle.hasKyberSpkRotationEpoch ? bundle.kyberSpkRotationEpoch : 0
             )
         }
     }
@@ -430,7 +430,7 @@ final class KeyServiceClient: Sendable {
                 // Identity key has changed since the last verified session.
                 user.ktStatus = .keyChanged
                 user.knownIdentityKey = identityKey
-                Log.error("🔐 KT: identity key changed for user \(userId)", category: "KT")
+                Log.error("KT: identity key changed for user \(userId)", category: "KT")
                 DispatchQueue.main.async {
                     NotificationCenter.default.post(
                         name: .contactKeyChanged,

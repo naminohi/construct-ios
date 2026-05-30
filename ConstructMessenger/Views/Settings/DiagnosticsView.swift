@@ -22,11 +22,32 @@ struct DiagnosticsView: View {
     
     @State private var logText: String = ""
     @State private var logSize: String = ""
-    private var push = PushNotificationManager.shared
+    @State private var push = PushNotificationManager.shared
+    private var isPushPermissionGranted: Bool {
+        push.authorizationStatus == .authorized || push.authorizationStatus == .provisional
+    }
+    private var hasPushToken: Bool {
+        push.deviceToken != nil
+    }
+    private var pushTokenStatusText: String {
+        guard let token = push.deviceToken else {
+            return NSLocalizedString("diagnostics_apns_token_missing", comment: "")
+        }
+        let prefix = String(token.prefix(DiagnosticsConfig.apnsTokenPreviewPrefixLength))
+        return String(format: NSLocalizedString("diagnostics_apns_token_received_format", comment: ""), prefix)
+    }
+    private var isLogCollectionEnabled: Bool {
+        LogCollector.shared.isEnabled
+    }
+    private var registrationStatusText: String {
+        push.isRegisteredWithServer
+        ? NSLocalizedString("diagnostics_yes", comment: "")
+        : NSLocalizedString("diagnostics_not_registered_with_server", comment: "")
+    }
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 20) {
+            LazyVStack(spacing: SettingsLayout.sectionSpacing) {
                 
                 if showNavBar {
                     CTNavBar(
@@ -37,64 +58,69 @@ struct DiagnosticsView: View {
                 }
 
                 // MARK: - Push Notifications
-                VStack(alignment: .leading, spacing: 6) {
-                    ConstructSection(header: NSLocalizedString("PUSH_NOTIFICATIONS", comment: "")) {
-                        diagRow(
-                            label: "Permission",
-                            value: push.authorizationStatus.description,
-                            ok: push.authorizationStatus == .authorized || push.authorizationStatus == .provisional
-                        )
-                        ConstructRowDivider(indent: 52)
-                        diagRow(
-                            label: "APNs Token",
-                            value: push.deviceToken != nil ? "received (\(push.deviceToken!.prefix(8))…)" : "missing",
-                            ok: push.deviceToken != nil
-                        )
-                        ConstructRowDivider(indent: 52)
-                        diagRow(
-                            label: "Registered with server",
-                            value: push.isRegisteredWithServer ? "yes" : "no — notifications won't arrive",
-                            ok: push.isRegisteredWithServer
-                        )
+                VStack(alignment: .leading, spacing: DiagnosticsLayout.sectionHintSpacing) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        CTSettingsSectionHeader(title: NSLocalizedString("PUSH_NOTIFICATIONS", comment: ""), color: .orange)
+                        CTSectionGroup {
+                            diagRow(
+                                label: NSLocalizedString("diagnostics_permission", comment: ""),
+                                value: push.authorizationStatus.description,
+                                ok: isPushPermissionGranted
+                            )
+                            ConstructRowDivider(indent: SettingsLayout.rowDividerIndent)
+                            diagRow(
+                                label: NSLocalizedString("diagnostics_apns_token", comment: ""),
+                                value: pushTokenStatusText,
+                                ok: hasPushToken
+                            )
+                            ConstructRowDivider(indent: SettingsLayout.rowDividerIndent)
+                            diagRow(
+                                label: NSLocalizedString("diagnostics_registered_with_server", comment: ""),
+                                value: registrationStatusText,
+                                ok: push.isRegisteredWithServer
+                            )
+                        }
                     }
                     if !push.isRegisteredWithServer {
-                        Text("Token not on server. Go back to chats — registration retries automatically on foreground.")
+                        Text(LocalizedStringKey("diagnostics_server_token_warning"))
                             .font(CTFont.regular(11))
                             .foregroundStyle(.orange)
-                            .padding(.horizontal, 20)
+                            .padding(.horizontal, SettingsLayout.footerHorizontalPadding)
                     }
                 }
 
                 // MARK: - Status
-                ConstructSection {
-                    HStack(spacing: 14) {
+                CTSectionGroup {
+                    HStack(spacing: SettingsLayout.rowContentSpacing) {
                         Text(CTSymbol.log)
                             .font(CTFont.bold(14))
-                            .foregroundStyle(LogCollector.shared.isEnabled ? Color.CT.accent : Color.CT.textDim)
+                            .foregroundStyle(isLogCollectionEnabled ? Color.CT.accent : Color.CT.textDim)
                             .lineLimit(1)
                             .fixedSize()
-                            .frame(minWidth: 22, alignment: .center)
-                        Text("Log collection")
+                            .frame(minWidth: SettingsLayout.rowIconMinWidth, alignment: .center)
+                        Text(LocalizedStringKey("diagnostics_log_collection"))
                             .font(CTFont.bold(16))
                             .foregroundStyle(Color.CT.text)
                         Spacer()
-                        Text(LogCollector.shared.isEnabled ? "Active" : "Off")
+                        Text(isLogCollectionEnabled
+                             ? NSLocalizedString("diagnostics_status_active", comment: "")
+                             : NSLocalizedString("diagnostics_status_off", comment: ""))
                             .font(CTFont.regular(14))
-                            .foregroundStyle(LogCollector.shared.isEnabled ? Color.CT.accent : Color.CT.textDim)
+                            .foregroundStyle(isLogCollectionEnabled ? Color.CT.accent : Color.CT.textDim)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 14)
+                    .padding(.horizontal, SettingsLayout.rowHorizontalPadding)
+                    .padding(.vertical, SettingsLayout.rowVerticalPadding)
 
                     if !logSize.isEmpty {
-                        ConstructRowDivider(indent: 52)
-                        HStack(spacing: 14) {
+                        ConstructRowDivider(indent: SettingsLayout.rowDividerIndent)
+                        HStack(spacing: SettingsLayout.rowContentSpacing) {
                             Text(CTSymbol.disk)
                                 .font(CTFont.bold(14))
                                 .foregroundStyle(Color.CT.textDim)
                                 .lineLimit(1)
                                 .fixedSize()
-                                .frame(minWidth: 22, alignment: .center)
-                            Text("Size")
+                                .frame(minWidth: SettingsLayout.rowIconMinWidth, alignment: .center)
+                            Text(LocalizedStringKey("diagnostics_size"))
                                 .font(CTFont.bold(16))
                                 .foregroundStyle(Color.CT.text)
                             Spacer()
@@ -102,81 +128,67 @@ struct DiagnosticsView: View {
                                 .font(CTFont.regular(14))
                                 .foregroundStyle(Color.CT.textDim)
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 14)
+                        .padding(.horizontal, SettingsLayout.rowHorizontalPadding)
+                        .padding(.vertical, SettingsLayout.rowVerticalPadding)
                     }
                 }
 
                 // MARK: - Actions
-                ConstructSection {
-                    Button {
+                CTSectionGroup {
+                    
+                    ConstructActionRow(systemImage: "square.and.arrow.up", title: LocalizedStringKey("diagnostics_share_logs"), role: .accent) {
                         shareArchive()
-                    } label: {
-                        HStack(spacing: 14) {
-                            Text("[→]")
-                                .font(CTFont.bold(14))
-                                .foregroundStyle(LogCollector.shared.isEnabled ? Color.CT.accent : Color.CT.textDim)
-                                .lineLimit(1)
-                                .fixedSize()
-                                .frame(minWidth: 22, alignment: .center)
-                            Text("Share logs")
-                                .font(CTFont.bold(16))
-                                .foregroundStyle(LogCollector.shared.isEnabled ? Color.CT.text : Color.CT.textDim)
-                            Spacer()
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 14)
-                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
-                    .disabled(!LogCollector.shared.isEnabled)
-                    .opacity(LogCollector.shared.isEnabled ? 1.0 : 0.4)
 
-                    ConstructRowDivider(indent: 52)
-
-                    ConstructActionRow(icon: "[x]", title: LocalizedStringKey("Clear logs"), role: .destructive) {
+                    ConstructActionRow(systemImage: "trash", title: LocalizedStringKey("diagnostics_clear_logs"), role: .destructive) {
                         clearLogs()
                     }
-                    .disabled(!LogCollector.shared.isEnabled)
-                    .opacity(LogCollector.shared.isEnabled ? 1.0 : 0.4)
+                    .disabled(!isLogCollectionEnabled)
+                    .opacity(isLogCollectionEnabled ? 1 : DiagnosticsLayout.disabledActionOpacity)
                 }
 
                 #if DEBUG
                 // MARK: - Dev Tools (Debug only)
-                VStack(alignment: .leading, spacing: 6) {
-                    ConstructSection(header: NSLocalizedString("DEVELOPER", comment: "")) {
-                        ConstructActionRow(icon: "[↻]", title: LocalizedStringKey("Force SPK Rotation"), role: .secondary) {
-                            Task {
-                                await PreKeyRotationService.shared.forceRotate()
+                VStack(alignment: .leading, spacing: DiagnosticsLayout.sectionHintSpacing) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        CTSettingsSectionHeader(title: NSLocalizedString("DEVELOPER", comment: ""), color: .orange)
+                        CTSectionGroup {
+                            ConstructActionRow(systemImage: "arrow.clockwise", title: LocalizedStringKey("diagnostics_force_spk_rotation"), role: .secondary) {
+                                Task {
+                                    await PreKeyRotationService.shared.forceRotate()
+                                }
+                            }
+                            ConstructActionRow(systemImage: "exclamationmark.triangle", title: LocalizedStringKey("diagnostics_reset_local_data_keychain"), role: .destructive) {
+                                resetLocalData()
                             }
                         }
-                        ConstructActionRow(icon: "[!]", title: LocalizedStringKey("Reset local data & Keychain"), role: .destructive) {
-                            resetLocalData()
-                        }
                     }
-                    Text("Clears all Keychain keys, sessions and UserDefaults. Use to test fresh registration without reinstalling.")
-                        .font(CTFont.regular(11))
+                    Text(LocalizedStringKey("diagnostics_dev_tools_footer"))
+                        .font(CTFont.regular(12))
                         .foregroundStyle(Color.CT.textDim)
-                        .padding(.horizontal, 20)
+                        .padding(.horizontal, SettingsLayout.footerHorizontalPadding)
                 }
                 #endif
 
                 // MARK: - Recent Logs
                 if !logText.isEmpty {
-                    ConstructSection(header: NSLocalizedString("RECENT_LOGS", comment: "")) {
-                        ScrollView {
-                            Text(logText)
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundStyle(Color.white)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(8)
-                                .textSelection(.enabled)
+                    VStack(alignment: .leading, spacing: 0) {
+                        CTSettingsSectionHeader(title: NSLocalizedString("diagnostics_recent_logs", comment: ""), color: .orange)
+                        CTSectionGroup {
+                            ScrollView {
+                                Text(logText)
+                                    .font(CTFont.regular(DiagnosticsLayout.recentLogFontSize))
+                                    .foregroundStyle(Color.white)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(DiagnosticsLayout.recentLogPadding)
+                                    .textSelection(.enabled)
+                            }
+                            .frame(height: DiagnosticsConfig.recentLogContainerHeight)
                         }
-                        .frame(height: 340)
                     }
                 }
             }
-            .padding(.vertical, 20)
+            .padding(.vertical, SettingsLayout.screenVerticalPadding)
         }
         .background(Color.CT.bg.ignoresSafeArea())
         .navigationTitle("")
@@ -199,15 +211,20 @@ struct DiagnosticsView: View {
         if bytes > 0 {
             logSize = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
         } else {
-            logSize = "empty"
+            logSize = NSLocalizedString("diagnostics_empty", comment: "")
         }
 
-        // Show last ~200 lines of current log
         let files = LogCollector.shared.getAllLogFiles()
-        if let first = files.first,
-           let raw = try? String(contentsOf: first, encoding: .utf8) {
-            let lines = raw.components(separatedBy: "\n")
-            logText = lines.suffix(200).joined(separator: "\n")
+        guard let first = files.first else {
+            logText = ""
+            return
+        }
+
+        DispatchQueue.global(qos: .utility).async {
+            let preview = Self.readLogPreview(from: first, lineLimit: DiagnosticsConfig.recentLogLineLimit)
+            DispatchQueue.main.async {
+                logText = preview
+            }
         }
     }
 
@@ -230,15 +247,15 @@ struct DiagnosticsView: View {
 
     private func clearLogs() {
         LogCollector.shared.clearLogs()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { refresh() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + DiagnosticsConfig.clearLogsRefreshDelay) { refresh() }
     }
 
     private func diagRow(label: String, value: String, ok: Bool) -> some View {
-        HStack(spacing: 14) {
+        HStack(spacing: SettingsLayout.rowContentSpacing) {
             Circle()
                 .fill(ok ? Color.CT.accent : Color.CT.danger)
-                .frame(width: 8, height: 8)
-                .frame(width: 22, alignment: .center)
+                .frame(width: DiagnosticsLayout.statusDotSize, height: DiagnosticsLayout.statusDotSize)
+                .frame(width: SettingsLayout.rowIconMinWidth, alignment: .center)
             Text(label)
                 .font(CTFont.bold(16))
                 .foregroundStyle(Color.CT.text)
@@ -247,8 +264,14 @@ struct DiagnosticsView: View {
                 .font(CTFont.regular(13))
                 .foregroundStyle(ok ? Color.CT.textDim : Color.CT.danger)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
+        .padding(.horizontal, SettingsLayout.rowHorizontalPadding)
+        .padding(.vertical, SettingsLayout.rowVerticalPadding)
+    }
+
+    private static func readLogPreview(from url: URL, lineLimit: Int) -> String {
+        guard let raw = try? String(contentsOf: url, encoding: .utf8) else { return "" }
+        let lines = raw.split(separator: "\n", omittingEmptySubsequences: false)
+        return lines.suffix(lineLimit).joined(separator: "\n")
     }
 
     #if DEBUG
@@ -269,18 +292,18 @@ struct DiagnosticsView: View {
         CryptoManager.shared.clearOrchestratorStateCFE()
 
         // Clear in-memory session state so the app shows the registration screen
-        SessionManager.shared.clearSession()
+        AuthSessionManager.shared.clearSession()
 
         // --- UserDefaults: registration / migration flags ---
         let keysToRemove = [
             "construct.deviceId", "construct.userId",
             "pqcKyberSPKMigrationV1Done",
-            "ice_bridge_cert", "iceActiveRelay", "ice_enabled",
+            "ice_bridge_cert", "veilActiveRelay", "ice_enabled",
             "recovery_is_setup", "recovery_banner_dismissed",
             "construct.kyber.otpk.nextKeyId",
         ]
         keysToRemove.forEach { UserDefaults.standard.removeObject(forKey: $0) }
-        Log.info("🗑️ [DEV] Full Keychain + UserDefaults wipe complete (device will re-register on next launch)", category: "Diagnostics")
+        Log.info("[DEV] Full Keychain + UserDefaults wipe complete (device will re-register on next launch)", category: "Diagnostics")
     }
     #endif
 }

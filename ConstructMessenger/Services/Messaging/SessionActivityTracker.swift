@@ -92,10 +92,10 @@ final class SessionActivityTracker {
             guard age > heartbeatThreshold else { continue }
 
             Log.info(
-                "💓 Auto-heartbeat: \(contactId.prefix(8))… silent for \(Int(age / 3600))h",
+                "Auto-heartbeat: \(contactId.prefix(8))… silent for \(Int(age / 3600))h",
                 category: "SessionActivityTracker"
             )
-            await MessageRouter.shared.sendSessionHeartbeat(to: contactId)
+            await OutboundSessionService.shared.sendSessionHeartbeat(to: contactId)
             // Record the heartbeat as activity so we don't spam.
             recordActivity(for: contactId)
         }
@@ -107,20 +107,20 @@ final class SessionActivityTracker {
     func logSessionHealthSummary() {
         let contactIds = CryptoManager.shared.getAllSessionUserIds()
         guard !contactIds.isEmpty else {
-            Log.debug("📊 Session health: no active sessions", category: "SessionActivityTracker")
+            Log.debug("Session health: no active sessions", category: "SessionActivityTracker")
             return
         }
-        Log.info("📊 Session health summary (\(contactIds.count) sessions):", category: "SessionActivityTracker")
+        Log.info("Session health summary (\(contactIds.count) sessions):", category: "SessionActivityTracker")
         for contactId in contactIds {
             if let health = CryptoManager.shared.getSessionHealth(for: contactId) {
                 let ratchetAge = Int(Date().timeIntervalSince1970 - TimeInterval(health.lastRatchetAt))
                 let activityAge = secondsSinceLastActivity(for: contactId).map { Int($0) }
                 Log.info(
-                    "  • \(contactId.prefix(8))… sent=\(health.messagesSent) recv=\(health.messagesReceived) skipped=\(health.skippedKeysCount) ratchet_age=\(ratchetAge)s activity_age=\(activityAge.map { "\($0)s" } ?? "unknown") pq=\(health.isPqStrengthened)",
+                    "\(contactId.prefix(8))… sent=\(health.messagesSent) recv=\(health.messagesReceived) skipped=\(health.skippedKeysCount) ratchet_age=\(ratchetAge)s activity_age=\(activityAge.map { "\($0)s" } ?? "unknown") pq=\(health.isPqStrengthened)",
                     category: "SessionActivityTracker"
                 )
             } else {
-                Log.error("  • \(contactId.prefix(8))… — health unavailable (session not in memory?)", category: "SessionActivityTracker")
+                Log.error("\(contactId.prefix(8))… — health unavailable (session not in memory?)", category: "SessionActivityTracker")
             }
         }
     }

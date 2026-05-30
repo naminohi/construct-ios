@@ -1,28 +1,59 @@
 import Foundation
+import GRPCCore
 
 /// Serializes refresh-token requests so multiple concurrent RPCs that hit
 /// `.unauthenticated` don't stampede the refresh endpoint.
 actor TokenRefreshCoordinator {
     static let shared = TokenRefreshCoordinator()
 
+    /// Returns `true` when the error indicates the refresh token itself is
+    /// permanently invalid (revoked, consumed, or explicitly rejected by the server).
+    /// Callers should wipe stored tokens and trigger device re-auth on `true`.
+    /// On `false` the error is a transient network/connectivity failure and the
+    /// existing tokens should be kept for the next retry.
+    static func isRefreshTokenPermanentlyInvalid(_ error: Error) -> Bool {
+        guard let rpc = error as? RPCError else { return false }
+        switch rpc.code {
+        case .unauthenticated, .permissionDenied:
+            return true
+        case .internalError:
+            // Server returns internalError for "Refresh token was already used or revoked"
+            let msg = rpc.message.lowercased()
+            return msg.contains("revoked") || msg.contains("already used")
+        default:
+            return false
+        }
+    }
+
     private var inFlight: Task<Void, Error>?
+    // Set when the server permanently rejects the token (revoked / already used).
+    // Prevents redundant network requests from concurrent callers after the first rejection.
+    // Cleared by resetInvalidation() when new tokens are saved via device re-auth.
+    private var permanentlyInvalid = false
+
+    func resetInvalidation() {
+        permanentlyInvalid = false
+    }
 
     /// Refreshes access token using the stored refresh token.
     /// - Returns: `true` if refresh succeeded and tokens were updated.
     @discardableResult
     func refreshIfPossible() async throws -> Bool {
+        if permanentlyInvalid { return false }
+
         if let inFlight {
             try await inFlight.value
-            return SessionManager.shared.sessionToken != nil && SessionManager.shared.isSessionValid
+            return await MainActor.run { AuthSessionManager.shared.sessionToken != nil && AuthSessionManager.shared.isSessionValid }
         }
 
-        guard let refreshToken = SessionManager.shared.refreshToken, !refreshToken.isEmpty else {
+        let storedRefreshToken = await MainActor.run { AuthSessionManager.shared.refreshToken }
+        guard let storedRefreshToken, !storedRefreshToken.isEmpty else {
             return false
         }
 
         let task = Task {
             let response = try await AuthServiceClient.shared.refreshToken(
-                refreshToken: refreshToken,
+                refreshToken: storedRefreshToken,
                 allowAuthRetry: false
             )
 
@@ -33,17 +64,26 @@ actor TokenRefreshCoordinator {
                 expiresIn = response.expiresIn ?? 3600
             }
 
-            SessionManager.shared.saveTokens(
-                accessToken: response.accessToken,
-                refreshToken: response.refreshToken,
-                expiresIn: expiresIn
-            )
+            await MainActor.run {
+                AuthSessionManager.shared.saveTokens(
+                    accessToken: response.accessToken,
+                    refreshToken: response.refreshToken,
+                    expiresIn: expiresIn
+                )
+            }
         }
 
         inFlight = task
         defer { inFlight = nil }
-        try await task.value
-        return SessionManager.shared.sessionToken != nil && SessionManager.shared.isSessionValid
+        do {
+            try await task.value
+        } catch {
+            if TokenRefreshCoordinator.isRefreshTokenPermanentlyInvalid(error) {
+                permanentlyInvalid = true
+            }
+            throw error
+        }
+        return await MainActor.run { AuthSessionManager.shared.sessionToken != nil && AuthSessionManager.shared.isSessionValid }
     }
 }
 

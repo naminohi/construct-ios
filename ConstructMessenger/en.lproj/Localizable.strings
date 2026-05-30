@@ -4,7 +4,14 @@
 "cancel" = "Cancel";
 "done" = "Done";
 "unknown" = "Unknown";
-"constrcut_titlte" = "KONSTRUCT";
+"construct_titlte" = "KONSTRUCT";
+"search_prompt" = "Search";
+
+// MARK: - Loading Screen
+"app_loading_state" = "Initializing secure state";
+"app_loading_stage_transport" = "warming transport envelope";
+"app_loading_stage_identity" = "restoring identity envelope";
+"app_loading_stage_streams" = "preparing encrypted streams";
 
 // MARK: - Main Tabs
 "chats" = "Chats";
@@ -31,6 +38,7 @@
 // MARK: - Chat
 "sending" = "Sending...";
 "status_connecting" = "Connecting...";
+"status_paused" = "Background";
 "status_no_connection" = "No connection";
 "status_encrypting" = "Encrypting...";
 "chat" = "Chat";
@@ -385,6 +393,7 @@
 "recovery_restored_body" = "Your account has been recovered on this device. Previous sessions have been revoked.";
 "recovery_banner_title" = "Protect Your Account";
 "recovery_banner_subtitle" = "Set up your recovery phrase to avoid losing access.";
+"recovery_setup_action" = "CONFIGURE";
 
 // macOS Catalyst — push notifications
 "push_not_available_mac" = "Push Notifications Unavailable on Desktop";
@@ -400,24 +409,24 @@
 "mark_unread" = "Mark Unread";
 "mark_read" = "Mark Read";
 
-// ICE — traffic obfuscation
-"ice_title" = "ICE";
-"ice_footer" = "ICE masks your traffic to make it indistinguishable from regular HTTPS. The configuration is provided automatically by the server.";
-"ice_unavailable" = "Not available on this server";
-"ice_retry" = "Retry ICE connection";
+// VEIL — traffic obfuscation
+"veil_title" = "VEIL";
+"veil_footer" = "VEIL masks your traffic to make it indistinguishable from regular HTTPS. The configuration is provided automatically by the server.";
+"veil_unavailable" = "Not available on this server";
+"veil_retry" = "Retry VEIL connection";
 "traffic_protection" = "Traffic Protection";
-"ice_footer_short" = "ICE masks traffic as standard HTTPS. Configuration is provided automatically.";
+"veil_footer_short" = "VEIL masks traffic as standard HTTPS. Configuration is provided automatically.";
 
-// ICE mode (tri-state)
-"ice_mode_off" = "off";
-"ice_mode_auto" = "auto";
-"ice_mode_on" = "on";
-"ice_footer_off" = "Traffic protection disabled. Direct connection only.";
-"ice_footer_auto" = "ICE activates automatically when network blocking is detected.";
-"ice_footer_on" = "All traffic routed through ICE relay.";
-"ice_auto_active" = "Auto-activated · direct blocked";
-"ice_direct_probe_ok" = "Direct: OK (%@)";
-"ice_direct_probe_blocked" = "Direct: blocked";
+// VEIL mode (tri-state)
+"veil_mode_off" = "off";
+"veil_mode_auto" = "auto";
+"veil_mode_on" = "on";
+"veil_footer_off" = "Traffic protection disabled. Direct connection only.";
+"veil_footer_auto" = "VEIL activates automatically when network blocking is detected.";
+"veil_footer_on" = "All traffic routed through VEIL relay.";
+"veil_auto_active" = "Auto-activated · direct blocked";
+"veil_direct_probe_ok" = "Direct: OK (%@)";
+"veil_direct_probe_blocked" = "Direct: blocked";
 
 // Data & Storage
 "data_and_storage" = "Data & Storage";
@@ -489,6 +498,29 @@
 "tls" = "TLS";
 "interval" = "Interval";
 "preview" = "Preview";
+"settings_coming_soon" = "soon";
+"diagnostics_permission" = "Permission";
+"diagnostics_apns_token" = "APNs Token";
+"diagnostics_apns_token_missing" = "missing";
+"diagnostics_apns_token_received_format" = "received (%@…)";
+"diagnostics_registered_with_server" = "Registered with Construct";
+"diagnostics_yes" = "yes";
+"diagnostics_not_registered_with_server" = "no — notifications won't arrive";
+"diagnostics_server_token_warning" = "Token is not registered on Construct. Return to chats — registration will retry automatically when the app becomes active.";
+"diagnostics_log_collection" = "Log collection";
+"diagnostics_status_active" = "Active";
+"diagnostics_status_off" = "Off";
+"diagnostics_size" = "Size";
+"diagnostics_share_logs" = "Share logs";
+"diagnostics_clear_logs" = "Clear logs";
+"diagnostics_force_spk_rotation" = "Force SPK Rotation";
+"diagnostics_reset_local_data_keychain" = "Reset local data & Keychain";
+"diagnostics_dev_tools_footer" = "Clears all Keychain keys, sessions, and UserDefaults. Use to test fresh initialization without reinstalling.";
+"diagnostics_recent_logs" = "Recent Logs";
+"diagnostics_empty" = "empty";
+"preview_desc_name_and_message" = "Show sender name and message content";
+"preview_desc_name_only" = "Show only sender name";
+"preview_desc_none" = "Show only 'New Message'";
 
 // MARK: - Device Linking
 "onboarding_link_device" = "Link Existing Account";
@@ -554,15 +586,15 @@
 // MARK: - Image Crop
 "crop_use_photo" = "Use Photo";
 
-// MARK: - Synaps
-"synaps" = "Synapses";
-"synaps_search_prompt" = "Search";
-"synaps_empty_title" = "No connections yet";
-"synaps_empty_subtitle" = "People you connect with will appear here, even after you clear a conversation.";
-"synaps_open_chat" = "Open Chat";
-"synaps_prune_title" = "Cut this synapse?";
-"synaps_prune_action" = "Cut";
-"synaps_prune_message" = "This will permanently remove %@ from your Synaps and delete the conversation.";
+// MARK: - Synapses
+"synapses" = "Synapses";
+"synapses_search_prompt" = "Search";
+"synapses_empty_title" = "No connections yet";
+"synapses_empty_subtitle" = "People you connect with will appear here, even after you clear a conversation.";
+"synapses_open_chat" = "Open Chat";
+"synapses_prune_title" = "Cut this synapse?";
+"synapses_prune_action" = "Cut";
+"synapses_prune_message" = "This will permanently remove %@ from your Synapses and delete the conversation.";
 
 // MARK: - Connection Status Indicator
 
@@ -571,7 +603,7 @@
 "session_crypto_no_session" = "No active session";
 
 "voice_message" = "Voice message";
-"ice_auto_activated_footer" = "ICE was activated automatically — your network blocks direct connections. You can disable it in settings.";
+"veil_auto_activated_footer" = "VEIL was activated automatically — your network blocks direct connections. You can disable it in settings.";
 
 // MARK: - Calls
 "call_mute" = "Mute";
@@ -668,9 +700,9 @@
 "username_not_set" = "no username";
 "searchable_indicator" = "[⊙] searchable";
 "searchable_indicator_off" = "[ ] searchable";
-"synaps_remote_result_header" = "found on construct";
-"synaps_searching" = "searching...";
-"synaps_not_found" = "not found";
+"synapses_remote_result_header" = "found on construct";
+"synapses_searching" = "searching...";
+"synapses_not_found" = "not found";
 
 // Contact Requests
 "contact_requests_section" = "requests";
@@ -829,5 +861,54 @@
 
 /* Tab bar labels */
 "tab_chats" = "MSG";
-"tab_synaps" = "SYN";
+"tab_synapses" = "SYN";
 "tab_settings" = "CFG";
+
+/* Engine background push notifications */
+"notification.new_message.title" = "New message";
+"notification.new_message.body" = "You have a new encrypted message.";
+
+/* Desktop settings — new keys */
+"remove_avatar" = "remove avatar";
+"general" = "General";
+"composing" = "Composing";
+"send_on_enter" = "Send with ⏎ (Shift+⏎ for new line)";
+"show_timestamps" = "Show timestamps on every message";
+"sign_out_confirm_title" = "Sign Out?";
+"sign_out_confirm_message" = "You will be signed out on this Mac only.";
+"sign_out_confirm_action" = "Sign Out";
+"session_section" = "Session";
+"encryption_section" = "Encryption";
+"e2e_protocol" = "Protocol";
+"e2e_forward_secrecy" = "Forward Secrecy";
+"e2e_key_agreement" = "Key Agreement";
+
+/* Desktop delete account sheet */
+"delete_locally_only" = "Delete locally only (offline)";
+"delete_locally_question" = "Delete Locally?";
+"delete_locally_action" = "Delete Locally";
+"delete_locally_message" = "This removes all local data. The server account may still exist if the network request failed.";
+
+/* Desktop general settings */
+"message_section" = "Messages";
+
+/* STT / Transcription */
+"stt_section_title" = "Transcription";
+"stt_auto_transcribe" = "Auto-transcribe voice messages";
+"stt_translate_toggle" = "Translate to English";
+"stt_translate_footer" = "Transcription will be translated to English using the model.";
+"stt_language_label" = "Language";
+"stt_language_auto" = "Auto-detect";
+"stt_models_on_disk" = "Models on disk";
+"stt_no_models" = "None";
+"stt_footer" = "On-device transcription via WhisperKit. No audio leaves your device.";
+"stt_download" = "Download";
+"stt_delete_model" = "Delete Model";
+"stt_delete_confirm_title" = "Delete this model?";
+"stt_transcribe_button" = "Transcribe";
+"stt_transcribing" = "Transcribing…";
+"account_discard_changes_title" = "Discard changes?";
+"account_discard_changes_message" = "You have unsaved profile changes. Leave without saving?";
+"account_discard_changes_discard" = "Discard";
+"account_discard_changes_keep_editing" = "Keep Editing";
+"account_editing_profile" = "> Editing profile fields. Tap ✓ to save or x to cancel.";

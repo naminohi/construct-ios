@@ -31,8 +31,15 @@ struct MessageBubbleRegularView: View {
     let onReplyWithQuote: ((Message, String) -> Void)?
 
     @State private var swipeOffset: CGFloat = 0
+    @State private var isTranscribingVoice = false
 
     var body: some View {
+        // Parse once per body pass to avoid repeated JSON decode attempts.
+        let profileData = MessageBubbleContentParsing.parseProfileMessage(message.displayText)
+        let mediaContent = profileData == nil ? MessageBubbleContentParsing.parseMediaMessage(message.displayText) : nil
+        let fileContent = (profileData == nil && mediaContent == nil) ? MessageBubbleContentParsing.parseFileMessage(message.displayText) : nil
+        let voiceContent = (profileData == nil && mediaContent == nil && fileContent == nil) ? MessageBubbleContentParsing.parseVoiceMessage(message.displayText) : nil
+
         HStack(spacing: 8) {
             // Selection checkbox in edit mode - positioned based on message direction
             if isEditMode && !message.isSentByMe {
@@ -51,13 +58,13 @@ struct MessageBubbleRegularView: View {
             }
 
             VStack(alignment: message.isSentByMe ? .trailing : .leading, spacing: 4) {
-                if let profileData = MessageBubbleContentParsing.parseProfileMessage(message.displayText) {
+                if let profileData {
                     ProfileShareBubbleView(profileData: profileData)
                         .overlay(
                             Rectangle()
                                 .stroke(isSelected ? Color.CT.accent : Color.clear, lineWidth: 2)
                         )
-                } else if let mediaContent = MessageBubbleContentParsing.parseMediaMessage(message.displayText) {
+                } else if let mediaContent {
                     VStack(alignment: .leading, spacing: 0) {
                         replyIndicatorView
                         MediaMessageView(
@@ -67,7 +74,7 @@ struct MessageBubbleRegularView: View {
                             onTapFullScreen: { onTapMedia?(message) }
                         )
                     }
-                } else if let fileContent = MessageBubbleContentParsing.parseFileMessage(message.displayText) {
+                } else if let fileContent {
                     VStack(alignment: .leading, spacing: 0) {
                         replyIndicatorView
                         FileAttachmentBubbleView(fileContent: fileContent, isSentByMe: message.isSentByMe)
@@ -76,17 +83,43 @@ struct MessageBubbleRegularView: View {
                                     .stroke(isSelected ? Color.CT.accent : Color.clear, lineWidth: 2)
                             )
                     }
-                } else if let voiceContent = MessageBubbleContentParsing.parseVoiceMessage(message.displayText) {
+                } else if let voiceContent {
                     VoiceMessageBubbleView(
                         voiceContent: voiceContent,
                         isSentByMe: message.isSentByMe,
                         deliveryStatus: message.deliveryStatus,
-                        onRetry: onRetry != nil ? { onRetry?(message) } : nil
+                        onRetry: onRetry != nil ? { onRetry?(message) } : nil,
+                        transcript: message.transcriptText,
+                        isTranscribing: isTranscribingVoice,
+                        onTranscribe: {
+                            guard !isTranscribingVoice else { return }
+                            isTranscribingVoice = true
+                            Task {
+                                defer { isTranscribingVoice = false }
+                                do {
+                                    let data = try await MediaManager.shared.downloadAndDecryptMedia(
+                                        mediaId: voiceContent.mediaId,
+                                        mediaUrl: voiceContent.mediaUrl,
+                                        mediaKey: voiceContent.mediaKey
+                                    )
+                                    if let ctx = message.managedObjectContext {
+                                        try await VoiceTranscriptionService.shared.transcribe(
+                                            audioData: data,
+                                            message: message,
+                                            context: ctx
+                                        )
+                                    }
+                                } catch {
+                                    Log.error("Transcription failed: \(error)", category: "MessageBubbleRegularView")
+                                }
+                            }
+                        }
                     )
-                        .overlay(
-                            Rectangle()
-                                .stroke(isSelected ? Color.CT.accent : Color.clear, lineWidth: 2)
-                        )
+                    .frame(maxWidth: 360)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(isSelected ? Color.CT.accent : Color.clear, lineWidth: 2)
+                    )
                 } else {
                     VStack(alignment: .leading, spacing: 0) {
                         replyIndicatorView
@@ -115,11 +148,11 @@ struct MessageBubbleRegularView: View {
                             isSelected: isSelected
                         )
                     )
-                    .clipShape(Rectangle())
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
                     .overlay(
                         Group {
                             if !message.isSentByMe {
-                                Rectangle().stroke(Color.CT.noise, lineWidth: 0.5)
+                                RoundedRectangle(cornerRadius: 10).stroke(Color.CT.noise, lineWidth: 0.5)
                             }
                         }
                     )
@@ -164,8 +197,8 @@ struct MessageBubbleRegularView: View {
 
                     if let onReplyWithQuote,
                        !message.displayText.isEmpty,
-                       parseMediaContent(from: message.displayText) == nil,
-                       MessageBubbleContentParsing.parseFileMessage(message.displayText) == nil
+                       mediaContent == nil,
+                       fileContent == nil
                     {
                         Button { onReplyWithQuote(message, message.displayText) } label: {
                             Label(NSLocalizedString("quote_reply", comment: ""), systemImage: "text.quote")

@@ -44,9 +44,9 @@ final class CallKitProvider: NSObject, CXProviderDelegate {
         update.hasVideo = hasVideo
         provider.reportNewIncomingCall(with: uuid, update: update) { error in
             if let error {
-                Log.error("📞 CallKit reportNewIncomingCall failed: \(error)", category: "Calls")
+                Log.error("CallKit reportNewIncomingCall failed: \(error)", category: "Calls")
             } else {
-                Log.info("📞 CallKit incoming call reported sync (uuid=\(uuid.uuidString.prefix(8))…)", category: "Calls")
+                Log.info("CallKit incoming call reported sync (uuid=\(uuid.uuidString.prefix(8))…)", category: "Calls")
             }
         }
         return uuid
@@ -62,9 +62,9 @@ final class CallKitProvider: NSObject, CXProviderDelegate {
 
         provider.reportNewIncomingCall(with: uuid, update: update) { error in
             if let error {
-                Log.error("📞 CallKit reportNewIncomingCall failed: \(error)", category: "Calls")
+                Log.error("CallKit reportNewIncomingCall failed: \(error)", category: "Calls")
             } else {
-                Log.info("📞 CallKit incoming call reported (uuid=\(uuid.uuidString.prefix(8))…)", category: "Calls")
+                Log.info("CallKit incoming call reported (uuid=\(uuid.uuidString.prefix(8))…)", category: "Calls")
             }
         }
         return uuid
@@ -84,7 +84,7 @@ final class CallKitProvider: NSObject, CXProviderDelegate {
         do {
             try await callController.request(transaction)
         } catch {
-            Log.error("📞 CallKit end-call transaction failed: \(error)", category: "Calls")
+            Log.error("CallKit end-call transaction failed: \(error)", category: "Calls")
         }
     }
 
@@ -94,15 +94,19 @@ final class CallKitProvider: NSObject, CXProviderDelegate {
         let action = CXStartCallAction(call: uuid, handle: handle)
         action.isVideo = hasVideo
         action.contactIdentifier = calleeId
-        // Callee display name is set via app UI; CallKit uses the handle value.
 
         let transaction = CXTransaction(action: action)
         do {
             try await callController.request(transaction)
             provider.reportOutgoingCall(with: uuid, startedConnectingAt: nil)
-            Log.info("📞 CallKit start-call transaction ok (uuid=\(uuid.uuidString.prefix(8))…)", category: "Calls")
+            // Set the callee's display name so the lock screen shows a human-readable name
+            // instead of the raw server UUID that CallKit falls back to for the handle value.
+            let update = CXCallUpdate()
+            update.localizedCallerName = calleeName
+            provider.reportCall(with: uuid, updated: update)
+            Log.info("CallKit start-call transaction ok (uuid=\(uuid.uuidString.prefix(8))…)", category: "Calls")
         } catch {
-            Log.error("📞 CallKit start-call transaction failed: \(error)", category: "Calls")
+            Log.error("CallKit start-call transaction failed: \(error)", category: "Calls")
             throw error
         }
     }
@@ -122,28 +126,28 @@ final class CallKitProvider: NSObject, CXProviderDelegate {
     nonisolated func providerDidReset(_ provider: CXProvider) {}
 
     nonisolated func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
-        Log.info("📞 CallKit audio session activated", category: "Calls")
+        Log.info("CallKit audio session activated", category: "Calls")
         onAudioActivated?()
     }
 
     nonisolated func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
-        Log.info("📞 CallKit audio session deactivated", category: "Calls")
+        Log.info("CallKit audio session deactivated", category: "Calls")
         onAudioDeactivated?()
     }
 
     nonisolated func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
-        Log.info("📞 CallKit start (uuid=\(action.callUUID.uuidString.prefix(8))…)", category: "Calls")
+        Log.info("CallKit start (uuid=\(action.callUUID.uuidString.prefix(8))…)", category: "Calls")
         action.fulfill()
     }
 
     nonisolated func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
-        Log.info("📞 CallKit answer (uuid=\(action.callUUID.uuidString.prefix(8))…)", category: "Calls")
+        Log.info("CallKit answer (uuid=\(action.callUUID.uuidString.prefix(8))…)", category: "Calls")
         onAnswer?(action.callUUID)
         action.fulfill()
     }
 
     nonisolated func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
-        Log.info("📞 CallKit end (uuid=\(action.callUUID.uuidString.prefix(8))…)", category: "Calls")
+        Log.info("CallKit end (uuid=\(action.callUUID.uuidString.prefix(8))…)", category: "Calls")
         onEnd?(action.callUUID)
         action.fulfill()
     }

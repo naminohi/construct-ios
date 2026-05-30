@@ -48,7 +48,25 @@ final class SessionHealingService {
     /// Rust-backed attempt tracker. Keyed by senderId (one healing slot per contact).
     private let rustQueue = RustHealingQueue()
 
+    private static let queueStateKey = "construct.healing_queue_state"
+
     private init() {}
+
+    // MARK: - Persistence
+
+    /// Serialise the Rust healing queue to Keychain. Call after every mutation.
+    private func saveQueueState() {
+        let blob = rustQueue.exportState()
+        guard !blob.isEmpty else { return }
+        _ = KeychainManager.shared.saveRawData(Data(blob), forKey: Self.queueStateKey)
+    }
+
+    /// Restore the Rust healing queue from Keychain. Call on app startup.
+    func restoreQueueState() {
+        guard let data = KeychainManager.shared.loadRawData(forKey: Self.queueStateKey) else { return }
+        rustQueue.importState(data: [UInt8](data))
+        Log.info("SessionHealingService: restored queue state (\(data.count) bytes)", category: "SessionHealing")
+    }
 
     // MARK: - Canary
 
@@ -63,11 +81,12 @@ final class SessionHealingService {
     func enqueue(_ message: ChatMessage, in context: NSManagedObjectContext) {
         guard let data = try? JSONEncoder().encode(message),
               let messageJson = String(data: data, encoding: .utf8) else {
-            Log.error("❌ SessionHealingService: failed to encode message \(message.id.prefix(8))…", category: "SessionHealing")
+            Log.error("SessionHealingService: failed to encode message \(message.id.prefix(8))…", category: "SessionHealing")
             return
         }
 
         rustQueue.enqueue(contactId: message.from, messageJson: messageJson)
+        saveQueueState()
 
         // CoreData persistence (survives app restart until PlatformBridge migration)
         let fetch = HealingMessage.fetchRequest()
@@ -85,9 +104,9 @@ final class SessionHealingService {
 
         do {
             try context.save()
-            Log.info("🩹 SessionHealingService: enqueued message \(message.id.prefix(8))… for healing", category: "SessionHealing")
+            Log.info("SessionHealingService: enqueued message \(message.id.prefix(8))… for healing", category: "SessionHealing")
         } catch {
-            Log.error("❌ SessionHealingService: failed to persist healing message: \(error)", category: "SessionHealing")
+            Log.error("SessionHealingService: failed to persist healing message: \(error)", category: "SessionHealing")
         }
     }
 
@@ -121,13 +140,14 @@ final class SessionHealingService {
 
             let result = rustQueue.recordAttempt(contactId: record.senderId)
             shouldContinue = result.decision == "retry_allowed"
+            saveQueueState()
 
             record.healAttempts += 1
             record.lastAttemptAt = Date()
             do { try context.save() } catch {}
 
             if !shouldContinue {
-                Log.info("⛔ SessionHealingService: max attempts reached for \(messageId.prefix(8))…", category: "SessionHealing")
+                Log.info("SessionHealingService: max attempts reached for \(messageId.prefix(8))…", category: "SessionHealing")
             }
         }
         return shouldContinue
@@ -139,6 +159,7 @@ final class SessionHealingService {
     func removeRecord(for messageId: String, in context: NSManagedObjectContext) {
         if let record = healingRecord(for: messageId, in: context) {
             _ = rustQueue.removeRecord(contactId: record.senderId)
+            saveQueueState()
             context.delete(record)
         }
         context.saveAndLog()
@@ -147,12 +168,13 @@ final class SessionHealingService {
     /// Removes ALL healing records for `senderId`.
     func clearQueue(for senderId: String, in context: NSManagedObjectContext) {
         _ = rustQueue.removeRecord(contactId: senderId)
+        saveQueueState()
 
         let fetch = HealingMessage.fetchRequest()
         fetch.predicate = NSPredicate(format: "senderId == %@", senderId)
         guard let records = try? context.fetch(fetch) else { return }
         if !records.isEmpty {
-            Log.info("🧹 SessionHealingService: clearing \(records.count) healing record(s) for \(senderId.prefix(8))…", category: "SessionHealing")
+            Log.info("SessionHealingService: clearing \(records.count) healing record(s) for \(senderId.prefix(8))…", category: "SessionHealing")
             records.forEach { context.delete($0) }
             context.saveAndLog()
         }
@@ -168,7 +190,7 @@ final class SessionHealingService {
         let fetch = HealingMessage.fetchRequest()
         fetch.predicate = NSPredicate(format: "receivedAt < %@", cutoff as NSDate)
         guard let stale = try? context.fetch(fetch), !stale.isEmpty else { return }
-        Log.info("🧹 SessionHealingService: pruning \(stale.count) stale healing record(s)", category: "SessionHealing")
+        Log.info("SessionHealingService: pruning \(stale.count) stale healing record(s)", category: "SessionHealing")
         stale.forEach { context.delete($0) }
         context.saveAndLog()
     }

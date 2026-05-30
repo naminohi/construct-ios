@@ -4,7 +4,13 @@
 "cancel" = "Отмена";
 "done" = "Готово";
 "unknown" = "Неизвестно";
-"constrcut_titlte" = "КОНСТРУКТ";
+"construct_titlte" = "КОНСТРУКТ";
+
+// MARK: - Loading Screen
+"app_loading_state" = "Инициализация защищённого состояния";
+"app_loading_stage_transport" = "прогрев транспортного контура";
+"app_loading_stage_identity" = "восстановление оболочки идентичности";
+"app_loading_stage_streams" = "подготовка зашифрованных потоков";
 
 // MARK: - Main Tabs
 "chats" = "Чаты";
@@ -31,6 +37,7 @@
 // MARK: - Chat
 "sending" = "Отправка...";
 "status_connecting" = "Подключение...";
+"status_paused" = "Фон";
 "status_no_connection" = "Нет соединения";
 "status_encrypting" = "Шифрование...";
 "chat" = "Чат";
@@ -387,6 +394,7 @@
 "recovery_restored_body" = "Ваш аккаунт восстановлен на этом устройстве. Предыдущие сессии отозваны.";
 "recovery_banner_title" = "Защитите свой аккаунт";
 "recovery_banner_subtitle" = "Настройте фразу восстановления, чтобы не потерять доступ.";
+"recovery_setup_action" = "НАСТРОИТЬ";
 
 // macOS Catalyst — push уведомления
 "push_not_available_mac" = "Push-уведомления недоступны на десктопе";
@@ -402,24 +410,24 @@
 "mark_unread" = "Отметить как непрочитанное";
 "mark_read" = "Отметить как прочитанное";
 
-// ICE — маскировка трафика
-"ice_title" = "Лёд";
-"ice_footer" = "Лёд защищает трафик, делая его неотличимым от обычного HTTPS. Конфигурация предоставляется сервером автоматически.";
-"ice_retry" = "Повторить подключение";
-"ice_unavailable" = "Недоступно на этом сервере";
+// VEIL — маскировка трафика
+"veil_title" = "VEIL";
+"veil_footer" = "VEIL защищает трафик, делая его неотличимым от обычного HTTPS. Конфигурация предоставляется сервером автоматически.";
+"veil_retry" = "Повторить подключение";
+"veil_unavailable" = "Недоступно на этом сервере";
 "traffic_protection" = "Защита трафика";
-"ice_footer_short" = "Лёд маскирует трафик под обычный HTTPS. Конфигурация предоставляется автоматически.";
+"veil_footer_short" = "VEIL маскирует трафик под обычный HTTPS. Конфигурация предоставляется автоматически.";
 
-// ICE mode (tri-state)
-"ice_mode_off" = "выкл";
-"ice_mode_auto" = "авто";
-"ice_mode_on" = "вкл";
-"ice_footer_off" = "Защита трафика отключена. Только прямое подключение.";
-"ice_footer_auto" = "ICE активируется автоматически при обнаружении блокировки.";
-"ice_footer_on" = "Весь трафик проходит через ICE.";
-"ice_auto_active" = "Авто · прямое заблокировано";
-"ice_direct_probe_ok" = "Прямое: ОК (%@)";
-"ice_direct_probe_blocked" = "Прямое: заблокировано";
+// VEIL mode (tri-state)
+"veil_mode_off" = "выкл";
+"veil_mode_auto" = "авто";
+"veil_mode_on" = "вкл";
+"veil_footer_off" = "Защита трафика отключена. Только прямое подключение.";
+"veil_footer_auto" = "VEIL активируется автоматически при обнаружении блокировки.";
+"veil_footer_on" = "Весь трафик проходит через VEIL.";
+"veil_auto_active" = "Авто · прямое заблокировано";
+"veil_direct_probe_ok" = "Прямое: ОК (%@)";
+"veil_direct_probe_blocked" = "Прямое: заблокировано";
 
 // Data & Storage
 "data_and_storage" = "Данные и память";
@@ -491,6 +499,29 @@
 "tls" = "TLS";
 "interval" = "Интервал";
 "preview" = "Предпросмотр";
+"settings_coming_soon" = "скоро";
+"diagnostics_permission" = "Разрешение";
+"diagnostics_apns_token" = "APNs-токен";
+"diagnostics_apns_token_missing" = "отсутствует";
+"diagnostics_apns_token_received_format" = "получен (%@…)";
+"diagnostics_registered_with_server" = "Зарегистрирован в Construct";
+"diagnostics_yes" = "да";
+"diagnostics_not_registered_with_server" = "нет — уведомления не будут приходить";
+"diagnostics_server_token_warning" = "Токен не зарегистрирован в Construct. Вернитесь в чаты — повторная регистрация выполнится автоматически при возврате приложения на передний план.";
+"diagnostics_log_collection" = "Сбор логов";
+"diagnostics_status_active" = "Активен";
+"diagnostics_status_off" = "Выкл";
+"diagnostics_size" = "Размер";
+"diagnostics_share_logs" = "Поделиться логами";
+"diagnostics_clear_logs" = "Очистить логи";
+"diagnostics_force_spk_rotation" = "Принудительно обновить SPK";
+"diagnostics_reset_local_data_keychain" = "Сбросить локальные данные и Keychain";
+"diagnostics_dev_tools_footer" = "Удаляет все ключи из Keychain, сессии и UserDefaults. Используйте для теста чистой инициализации без переустановки.";
+"diagnostics_recent_logs" = "Последние логи";
+"diagnostics_empty" = "пусто";
+"preview_desc_name_and_message" = "Показывать имя отправителя и текст сообщения";
+"preview_desc_name_only" = "Показывать только имя отправителя";
+"preview_desc_none" = "Показывать только «Новое сообщение»";
 
 // MARK: - Device Linking
 "onboarding_link_device" = "Привязать существующий аккаунт";
@@ -556,15 +587,16 @@
 // MARK: - Image Crop
 "crop_use_photo" = "Выбрать фото";
 
-// MARK: - Synaps
-"synaps" = "Синапсы";
-"synaps_search_prompt" = "Поиск";
-"synaps_empty_title" = "Пока нет связей";
-"synaps_empty_subtitle" = "Люди с которыми вы общаетесь будут здесь, даже если вы удалили переписку.";
-"synaps_open_chat" = "Открыть чат";
-"synaps_prune_title" = "Отрезать синапс?";
-"synaps_prune_action" = "Отрезать";
-"synaps_prune_message" = "Это навсегда удалит %@ из ваших синапсов и удалит переписку.";
+// MARK: - Synapses
+"synapses" = "Синапсы";
+"search_prompt" = "Поиск";
+"synapses_search_prompt" = "Поиск";
+"synapses_empty_title" = "Пока нет связей";
+"synapses_empty_subtitle" = "Люди с которыми вы общаетесь будут здесь, даже если вы удалили переписку.";
+"synapses_open_chat" = "Открыть чат";
+"synapses_prune_title" = "Отрезать синапс?";
+"synapses_prune_action" = "Отрезать";
+"synapses_prune_message" = "Это навсегда удалит %@ из ваших синапсов и удалит переписку.";
 
 // MARK: - Connection Status Indicator
 
@@ -573,7 +605,7 @@
 "session_crypto_no_session" = "Нет активной сессии";
 
 "voice_message" = "Голосовое сообщение";
-"ice_auto_activated_footer" = "Лёд активирован автоматически — ваша сеть блокирует прямые подключения. Вы можете отключить его в настройках.";
+"veil_auto_activated_footer" = "VEIL активирован автоматически — ваша сеть блокирует прямые подключения. Вы можете отключить его в настройках.";
 
 // MARK: - Calls
 "call_mute" = "Выкл. микрофон";
@@ -678,9 +710,9 @@
 "username_not_set" = "username не задан";
 "searchable_indicator" = "[⊙] в поиске";
 "searchable_indicator_off" = "[ ] в поиске";
-"synaps_remote_result_header" = "найдено в construct";
-"synaps_searching" = "поиск...";
-"synaps_not_found" = "не найдено";
+"synapses_remote_result_header" = "найдено в construct";
+"synapses_searching" = "поиск...";
+"synapses_not_found" = "не найдено";
 
 // Contact Requests
 "contact_requests_section" = "запросы";
@@ -839,5 +871,54 @@
 
 /* Tab bar labels */
 "tab_chats" = "СОБ";
-"tab_synaps" = "УЗЛ";
+"tab_synapses" = "УЗЛ";
 "tab_settings" = "НСТ";
+
+/* Engine background push notifications */
+"notification.new_message.title" = "Новое сообщение";
+"notification.new_message.body" = "У вас новое зашифрованное сообщение.";
+
+/* Desktop settings — new keys */
+"remove_avatar" = "удалить аватар";
+"general" = "Основные";
+"composing" = "Набор текста";
+"send_on_enter" = "Отправить по ⏎ (Shift+⏎ для новой строки)";
+"show_timestamps" = "Показывать время у каждого сообщения";
+"sign_out_confirm_title" = "Выйти?";
+"sign_out_confirm_message" = "Вы выйдете только на этом Mac.";
+"sign_out_confirm_action" = "Выйти";
+"session_section" = "Сессия";
+"encryption_section" = "Шифрование";
+"e2e_protocol" = "Протокол";
+"e2e_forward_secrecy" = "Прямая секретность";
+"e2e_key_agreement" = "Соглашение о ключах";
+
+/* Desktop delete account sheet */
+"delete_locally_only" = "Удалить только локально (оффлайн)";
+"delete_locally_question" = "Удалить локально?";
+"delete_locally_action" = "Удалить локально";
+"delete_locally_message" = "Это удалит все локальные данные. Серверный аккаунт может остаться, если сетевой запрос не прошёл.";
+
+/* Desktop general settings */
+"message_section" = "Сообщения";
+
+/* STT / Transcription */
+"stt_section_title" = "Транскрипция";
+"stt_auto_transcribe" = "Автотранскрипция голосовых";
+"stt_translate_toggle" = "Переводить на английский";
+"stt_translate_footer" = "Транскрипция будет переведена на английский с помощью модели.";
+"stt_language_label" = "Язык";
+"stt_language_auto" = "Автоопределение";
+"stt_models_on_disk" = "Моделей на диске";
+"stt_no_models" = "Нет";
+"stt_footer" = "Транскрипция на устройстве через WhisperKit. Аудио не покидает устройство.";
+"stt_download" = "Загрузить";
+"stt_delete_model" = "Удалить модель";
+"stt_delete_confirm_title" = "Удалить эту модель?";
+"stt_transcribe_button" = "Транскрибировать";
+"stt_transcribing" = "Транскрипция…";
+"account_discard_changes_title" = "Отменить изменения?";
+"account_discard_changes_message" = "Есть несохранённые изменения профиля. Выйти без сохранения?";
+"account_discard_changes_discard" = "Не сохранять";
+"account_discard_changes_keep_editing" = "Продолжить редактирование";
+"account_editing_profile" = "> Режим редактирования профиля. Нажмите ✓ для сохранения или x для отмены.";

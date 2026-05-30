@@ -26,6 +26,19 @@ class NetworkReachabilityManager {
         case unknown
     }
 
+    /// Describes the nature of a network path change so consumers can choose
+    /// how aggressively to reset connection state.
+    enum NetworkChangeKind {
+        /// The high-level interface type switched (e.g. WiFi → cellular).
+        /// All relay blacklists should be cleared; relays reachable on one
+        /// interface may be unreachable on the other and vice-versa.
+        case newInterface
+        /// The topology changed without switching interface type (VPN toggle,
+        /// IP rotation, interface added/removed). Relay DPI-block status is
+        /// likely unchanged; keep blacklist, skip expensive relay rediscovery.
+        case pathTopology
+    }
+
     private var monitor: NWPathMonitor?
     private var queue: DispatchQueue?
     /// Tracks the previous connection type to detect interface changes (e.g. WiFi → cellular).
@@ -51,13 +64,13 @@ class NetworkReachabilityManager {
     func startMonitoring() {
         // Skip in preview mode
         if PreviewDetector.isRunningInPreview {
-            Log.info("🌐 NetworkReachabilityManager: Skipping monitoring in preview mode", category: "NetworkReachability")
+            Log.info("NetworkReachabilityManager: Skipping monitoring in preview mode", category: "NetworkReachability")
             return
         }
         
         // Check if Network framework is available (should always be on iOS, but safety check)
         #if !os(iOS)
-        Log.info("🌐 Network framework may not be available on this platform", category: "NetworkReachability")
+        Log.info("Network framework may not be available on this platform", category: "NetworkReachability")
         #endif
         
         // Create monitor and queue only when needed (not in preview)
@@ -104,7 +117,7 @@ class NetworkReachabilityManager {
                 let interfaceSwitched = interfaceTypeSwitched || pathTopologyChanged
                 self.prevConnectionType = self.connectionType
                 if wasReachable != self.isReachable || interfaceSwitched {
-                    Log.info("🌐 Network reachability changed: \(self.isReachable ? "ONLINE" : "OFFLINE") (\(self.connectionType))", category: "NetworkReachability")
+                    Log.info("Network reachability changed: \(self.isReachable ? "ONLINE" : "OFFLINE") (\(self.connectionType))", category: "NetworkReachability")
 
                     // Post notification for other components
                     let notification = Notification(
@@ -117,10 +130,11 @@ class NetworkReachabilityManager {
                     // Also post a path-changed notification so subscribers can restart ICE /
                     // cancel stale TCP connections even when reachability stays .satisfied.
                     if interfaceSwitched {
+                        let changeKind: NetworkChangeKind = interfaceTypeSwitched ? .newInterface : .pathTopology
                         NotificationCenter.default.post(
                             name: .networkPathChanged,
                             object: nil,
-                            userInfo: ["connectionType": self.connectionType]
+                            userInfo: ["connectionType": self.connectionType, "changeKind": changeKind]
                         )
                     }
                 }
@@ -130,14 +144,14 @@ class NetworkReachabilityManager {
         newMonitor.start(queue: newQueue)
         self.monitor = newMonitor
         self.queue = newQueue
-        Log.info("🌐 Network reachability monitoring started", category: "NetworkReachability")
+        Log.info("Network reachability monitoring started", category: "NetworkReachability")
     }
     
     func stopMonitoring() {
         monitor?.cancel()
         monitor = nil
         queue = nil
-        Log.info("🌐 Network reachability monitoring stopped", category: "NetworkReachability")
+        Log.info("Network reachability monitoring stopped", category: "NetworkReachability")
     }
     
     /// Check if network is currently reachable
@@ -157,4 +171,8 @@ extension Notification.Name {
     /// Fired when network interface switches (e.g. VPN on/off, cellular ↔ WiFi) while remaining reachable.
     /// Stale TCP connections bound to the old interface must be closed and reopened.
     static let networkPathChanged = Notification.Name("networkPathChanged")
+    /// Fired when ICE proxy starts or stops. Payload: `userInfo["isRunning"]` = Bool.
+    /// Used by ConnectionStatusManager to proactively degrade status when proxy dies
+    /// before the stream heartbeat watchdog detects the failure.
+    static let veilProxyStateChanged = Notification.Name("veilProxyStateChanged")
 }

@@ -46,14 +46,22 @@ struct Construct_MessengerApp: App {
                 StorageMigrationService.shared.migrateIfNeeded(
                     context: PersistenceController.shared.container.viewContext
                 )
-                // Start ICE proxy if user has it enabled — async to allow .well-known cert fetch
-                await IceProxyManager.shared.startIfEnabled()
+                // Start VEIL proxy if user has it enabled — async to allow .well-known cert fetch
+                await VeilProxyManager.shared.startIfEnabled()
+                // Kick the TransportRouter FSM into action. If the initial state demands ICE
+                // (mode=.on or censored region), this triggers the first proxy probe.
+                await TransportRouter.shared.bootstrap()
                 // One-time migration: upload Kyber SPK for users registered before PQC launch.
                 // Returns immediately if already done (UserDefaults flag). Remove in a future version.
                 if authViewModel.isAuthenticated,
                    let deviceId = KeychainManager.shared.loadDeviceID() {
                     await PQCKeyManager.migrateIfNeeded(deviceId: deviceId)
                 }
+                // FIXME(masque): iOS blocks raw UDP port 443 (owned by Network.framework).
+                // construct-engine's QUIC handshake times out immediately on iOS —
+                // the engine event loop never starts and every dispatch is a no-op.
+                // Re-enable once the MASQUE-over-TCP bridge is implemented.
+                // do { try EngineAdapter.shared.start() } catch { ... }
             }
         }
     }

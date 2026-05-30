@@ -19,55 +19,38 @@ struct MessageInputTextBar: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(alignment: .bottom, spacing: 0) {
             textField
             charCounter
             sendButton
             voiceButton
         }
+        .fixedSize(horizontal: false, vertical: true)
         .background(Color.CT.outMsgBg)
-        .overlay(Rectangle().stroke(Color.CT.noise, lineWidth: 0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.CT.noise, lineWidth: 0.5))
     }
 
     // MARK: - Text field
 
     @ViewBuilder
     private var textField: some View {
-        #if os(macOS)
-        ZStack(alignment: .topLeading) {
-            if text.isEmpty {
-                Text(LocalizedStringKey("message_placeholder"))
-                    .foregroundStyle(Color.CT.textDim)
-                    .font(CTFont.regular(13))
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 9)
-                    .allowsHitTesting(false)
-            }
-            TextEditor(text: $text)
-                .font(CTFont.regular(13))
-                .foregroundColor(Color.CT.text)
-                .scrollContentBackground(.hidden)
-                .focused($focused)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
-                .onKeyPress(keys: [.return], phases: .down) { press in
-                    guard !press.modifiers.contains(.shift) else { return .ignored }
-                    if canSend { onSend() }
-                    return .handled
-                }
-        }
-        .frame(minHeight: 36, maxHeight: 120)
-        .padding(.trailing, canSend ? 8 : 12)
-        #else
-        TextField("message_placeholder", text: $text, axis: .vertical)
-            .font(CTFont.regular(14))
+        TextField(LocalizedStringKey("message_placeholder"), text: $text, axis: .vertical)
+            .font(CTFont.regular(13))
             .foregroundColor(Color.CT.text)
-            .lineLimit(1...5)
-            .padding(.leading, 12)
-            .padding(.trailing, canSend ? 8 : 12)
-            .padding(.vertical, 10)
+            .textFieldStyle(.plain)
+            .lineLimit(1...8)
             .focused($focused)
-        #endif
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .padding(.trailing, canSend ? 4 : 0)
+            #if os(macOS)
+            .onKeyPress(keys: [.return], phases: .down) { press in
+                guard !press.modifiers.contains(.shift) else { return .ignored }
+                if canSend { onSend() }
+                return .handled
+            }
+            #endif
     }
 
     // MARK: - Character counter
@@ -100,29 +83,29 @@ struct MessageInputTextBar: View {
     private var sendButton: some View {
         if canSend {
             Button(action: onSend) {
-                Text(CTSymbol.upload)
-                    .font(CTFont.bold(15))
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 22, weight: .regular))
                     .foregroundColor(Color.CT.accent)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 10)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 7)
                     #if os(macOS)
                     .help("Send (⏎) · New line (⇧⏎)")
                     #endif
             }
+            .buttonStyle(.plain)
             .disabled(isSending)
             .transition(.scale.combined(with: .opacity))
         }
     }
 
-    // MARK: - Voice button (iOS only, shown when input is empty)
+    // MARK: - Voice button (shown when input is empty and voice is available)
 
     @ViewBuilder
     private var voiceButton: some View {
-        #if os(iOS)
         if !canSend, let onStartVoice {
             Button(action: onStartVoice) {
-                Text(CTSymbol.mic)
-                    .font(CTFont.regular(13))
+                Image(systemName: "mic.fill")
+                    .font(.system(size: CTLayout.navIconSize))
                     .foregroundColor(Color.CT.textDim)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 10)
@@ -130,7 +113,6 @@ struct MessageInputTextBar: View {
             .buttonStyle(.plain)
             .transition(.scale.combined(with: .opacity))
         }
-        #endif
     }
 }
 

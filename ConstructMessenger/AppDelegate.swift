@@ -79,7 +79,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFailToRegisterForRemoteNotificationsWithError error: Error
     ) {
-        Log.error("📱 Failed to register for remote notifications: \(error)", category: "Push")
+        Log.error("Failed to register for remote notifications: \(error)", category: "Push")
         PushNotificationManager.shared.handleRegistrationError(error)
     }
 
@@ -96,7 +96,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     ) {
         let construct = userInfo["construct"] as? [AnyHashable: Any]
         let activityType = construct?["type"] as? String
-        Log.info("📱 Silent push received — activity_type: \(activityType ?? "nil")", category: "Push")
+        Log.info("Silent push received — activity_type: \(activityType ?? "nil")", category: "Push")
         PushNotificationManager.shared.signalSilentPush()
 
         if activityType == "replenish_prekeys" {
@@ -104,7 +104,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
                 await withTaskGroup(of: Void.self) { group in
                     group.addTask {
                         guard let deviceId = KeychainManager.shared.loadDeviceID() else {
-                            Log.error("📱 OTPK push: no deviceId in Keychain", category: "Push")
+                            Log.error("OTPK push: no deviceId in Keychain", category: "Push")
                             return
                         }
                         await OtpkReplenishmentService.replenishForPush(deviceId: deviceId)
@@ -120,19 +120,26 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 
         if activityType == "contact_request_accepted" {
             let requestId = construct?["conversation_id"] as? String
-            Log.info("📱 contact_request_accepted push — requestId: \(requestId ?? "nil")", category: "Push")
-            NotificationCenter.default.post(
-                name: .contactRequestAccepted,
-                object: nil,
-                userInfo: requestId.map { ["requestId": $0] } ?? [:]
-            )
-            completionHandler(.newData)
+            Log.info("contact_request_accepted push — requestId: \(requestId ?? "nil")", category: "Push")
+            Task {
+                await withTaskGroup(of: Void.self) { group in
+                    group.addTask {
+                        // Creates CoreData contact and appends to pendingNavigationUserIds.
+                        // SynapsView picks up navigation on next foreground appearance.
+                        await ContactRequestService.shared.checkAndCreateContacts()
+                    }
+                    group.addTask { try? await Task.sleep(nanoseconds: 27_000_000_000) }
+                    await group.next()
+                    group.cancelAll()
+                }
+                completionHandler(.newData)
+            }
             return
         }
 
-        // Race the fetch against a 27-second safety timeout so we always call
-        // the completion handler before iOS's 30-second hard deadline.
-        // fetchPendingMessages → processOfflineMessages → showNewMessageNotification.
+        // FIXME(masque): When MASQUE-over-TCP is implemented, the engine path replaces this.
+        // For now the engine never starts on iOS (UDP 443 blocked by OS), so use the
+        // legacy BackgroundFetchManager path directly.
         Task {
             await withTaskGroup(of: Void.self) { group in
                 group.addTask {
@@ -229,6 +236,10 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 
     func applicationDidEnterBackground(_ application: UIApplication) {
         Log.debug("Application did enter background")
+
+        // Persist orchestrator coordination state (ACK cache, session archive index, etc.)
+        // so it survives memory eviction. No-op if the crypto core hasn't been loaded yet.
+        CryptoManager.shared.saveOrchestratorStateCFE()
 
         // Ensure background fetch is scheduled if enabled
         if BackgroundFetchConfig.shouldBeEnabled {

@@ -2,9 +2,9 @@ import Foundation
 import GRPCCore
 import GRPCNIOTransportHTTP2
 
-/// Executes gRPC RPCs with retry, auth refresh, client-side timeout, and ICE failover.
+/// Executes gRPC RPCs with retry, auth refresh, client-side timeout, and VEIL failover.
 ///
-/// Transport concerns (channel lifecycle, routing, ICE health) remain in `GRPCChannelManager`.
+/// Transport concerns (channel lifecycle, routing, VEIL health) remain in `GRPCChannelManager`.
 /// This class owns the *policy*: how many attempts, what errors are retryable, when to rotate
 /// relays, and when to invalidate the persistent connection vs. leaving it alive.
 ///
@@ -25,14 +25,20 @@ final class GRPCCallExecutor: Sendable {
         var lastError: Error?
 
         for attempt in 0..<3 {
-            let usingICE = cm.iceProxyPort() != nil
-            let iceRelayVerified = usingICE ? await IceProxyManager.shared.isCurrentRelayVerified : true
+            let usingVEIL = cm.veilProxyPort() != nil
+            let routerSnapshot = await TransportRouter.shared.snapshot()
+            let veilRelayVerified: Bool = {
+                if !usingVEIL { return true }
+                if case .veilActive = routerSnapshot.state { return true }
+                return false
+            }()
+            let capturedRelayAddr = usingVEIL ? routerSnapshot.state.currentRelay : nil
             let effectiveTimeout: TimeInterval? = {
                 guard let timeout else { return nil }
-                // Unverified ICE relay: use a short timeout so DPI-blocked obfs4 tunnels
+                // Unverified VEIL relay: use a short timeout so DPI-blocked obfs4 tunnels
                 // are detected in ~5s instead of 15–30s, enabling fast relay rotation.
-                if usingICE, !iceRelayVerified {
-                    return min(timeout, NetworkTiming.ICE.unverifiedRelayTimeout)
+                if usingVEIL, !veilRelayVerified {
+                    return min(timeout, NetworkTiming.VEIL.unverifiedRelayTimeout)
                 }
                 return timeout
             }()
@@ -55,6 +61,7 @@ final class GRPCCallExecutor: Sendable {
                 usingPersistent = false
             }
 
+            let rpcStart = Date()
             do {
                 let result = try await executeWithTimeout(
                     client: client,
@@ -63,9 +70,14 @@ final class GRPCCallExecutor: Sendable {
                     operation: operation
                 )
                 PerformanceMetrics.shared.end(.grpcConnectStart, endEvent: .grpcConnectEnd, label: cm.currentRoutingKey)
-                if usingICE, !iceRelayVerified {
-                    await IceProxyManager.shared.markCurrentRelayVerified()
+                let latencyMs = Int(Date().timeIntervalSince(rpcStart) * 1000)
+                let target: TransportTarget
+                if let port = cm.veilProxyPort(), let addr = capturedRelayAddr {
+                    target = .ice(port: port, relay: addr)
+                } else {
+                    target = .direct(.h2)
                 }
+                await TransportRouter.shared.send(.rpcSucceeded(via: target, latencyMs: latencyMs))
                 return result
             } catch {
                 lastError = error
@@ -77,27 +89,53 @@ final class GRPCCallExecutor: Sendable {
                     client: client
                 )
 
-                // Auth retry on first attempt.
+                // Classify the failure and feed it into the TransportRouter FSM.
+                // The router decides on rotation / probe restart / cooldown via effects;
+                // here we only decide whether to retry the local for-loop.
+                let kind = RPCFailureClassifier.classify(error)
+                let target: TransportTarget
+                if usingVEIL, let port = cm.veilProxyPort(), let addr = capturedRelayAddr {
+                    target = .ice(port: port, relay: addr)
+                } else {
+                    target = .direct(.h2)
+                }
+                await TransportRouter.shared.send(.rpcFailed(kind: kind, via: target, foreground: true))
+
+                // On staleLocalProxy the FSM emits effects to rebuild VEIL; let the next
+                // for-iteration use the freshly set port (or fall back to direct if rebuild failed).
+                if kind == .staleLocalProxy {
+                    continue
+                }
+
+                // Auth retry on first attempt — only if no transport failure was already handled.
+                var authRetryResult: AuthRetryResult = .networkOffline
                 if let rpc = error as? RPCError,
                    rpc.code == .unauthenticated,
                    allowAuthRetry,
                    attempt == 0 {
-                    let shouldContinue = await handleAuthRetry(rpcError: rpc)
-                    if shouldContinue { continue }
+                    authRetryResult = await handleAuthRetry(
+                        rpcError: rpc,
+                        usingVEIL: usingVEIL,
+                        capturedRelayAddr: capturedRelayAddr
+                    )
+                    if case .retry = authRetryResult { continue }
                 }
 
-                // ICE failover.
-                if usingICE {
-                    let action = await handleICEFailure(
-                        error: error,
-                        invalidatesConnectionOnFailure: invalidatesConnectionOnFailure
+                // If the auth retry's own refresh RPC hit a transport failure, push it to the FSM
+                // so the router can rotate the relay. We then propagate the original error.
+                if usingVEIL, case .transportFailure(let reason) = authRetryResult {
+                    let refreshKind = RPCFailureClassifier.classifyIceReason(reason)
+                    await TransportRouter.shared.send(
+                        .rpcFailed(kind: refreshKind, via: target, foreground: true)
                     )
-                    switch action {
-                    case .retry:
-                        continue
-                    case .propagate:
-                        break
-                    }
+                }
+
+                // Auth rejection through an untrusted VEIL relay: rotate via FSM; tokens NOT wiped.
+                if case .suspectRejection = authRetryResult {
+                    await TransportRouter.shared.send(
+                        .rpcFailed(kind: .tlsFingerprintBlocked, via: target, foreground: true)
+                    )
+                    continue
                 }
 
                 throw error
@@ -168,7 +206,7 @@ final class GRPCCallExecutor: Sendable {
                 } catch is CancellationError {
                     return nil
                 } catch {
-                    Log.error("⚠️ gRPC transport error: \(error)", category: "GRPCChannel")
+                    Log.error("gRPC transport error: \(error)", category: "GRPCChannel")
                     throw error
                 }
             }
@@ -231,97 +269,74 @@ final class GRPCCallExecutor: Sendable {
 
     // MARK: - Auth Retry
 
-    /// Returns `true` if the RPC should be retried after a token refresh.
-    private func handleAuthRetry(rpcError: RPCError) async -> Bool {
+    /// Result of an auth retry attempt.
+    enum AuthRetryResult: Sendable {
+        /// Refresh succeeded — caller should retry the original RPC.
+        case retry
+        /// Server rejected the refresh token — trigger re-auth.
+        case serverRejected
+        /// Refresh RPC failed due to transport failure — caller should handle ICE first.
+        case transportFailure(VeilFailureReason)
+        /// Network offline (unavailable, deadline) — keep tokens for retry when online.
+        case networkOffline
+        /// Rejection looks permanent at the protocol layer, but the response came through
+        /// an ICE relay that cannot be trusted to forward auth responses unmodified.
+        /// Caller should rotate the relay and retry — DO NOT wipe tokens yet.
+        case suspectRejection
+    }
+
+    /// Returns whether the RPC should be retried after a token refresh.
+    /// - Parameter usingVEIL: whether the original RPC was routed through an ICE relay.
+    /// - Parameter capturedRelayAddr: the relay address active when the original RPC started.
+    private func handleAuthRetry(
+        rpcError: RPCError,
+        usingVEIL: Bool,
+        capturedRelayAddr: String?
+    ) async -> AuthRetryResult {
         var refreshError: Error?
         do {
             let refreshed = try await TokenRefreshCoordinator.shared.refreshIfPossible()
-            if refreshed { return true }
+            if refreshed { return .retry }
         } catch {
             refreshError = error
-            Log.error("⚠️ Token refresh failed during RPC retry: \(error)", category: "GRPCChannel")
+            Log.error("Token refresh failed during RPC retry: \(error)", category: "GRPCChannel")
         }
+
+        // Classify the refresh error — transport failures must bubble up.
+        if let refreshErr = refreshError, let reason = VeilFailurePolicy.classify(refreshErr) {
+            return .transportFailure(reason)
+        }
+
         // Wipe tokens only when the server explicitly rejected them.
         // Network errors (unavailable, deadline) mean the endpoint was unreachable —
         // keep the existing token so the user can retry when connectivity returns.
         let serverRejected: Bool
-        if let rpcErr = refreshError as? RPCError {
-            serverRejected = rpcErr.code == .unauthenticated || rpcErr.code == .permissionDenied
+        if let rpcErr = refreshError {
+            serverRejected = TokenRefreshCoordinator.isRefreshTokenPermanentlyInvalid(rpcErr)
         } else {
             serverRejected = refreshError == nil   // refreshIfPossible() returned false
         }
         if serverRejected {
-            Log.info("🔑 Refresh rejected by server — triggering device re-auth", category: "GRPCChannel")
-            SessionManager.shared.invalidateTokensForReauth()
-        } else {
-            Log.info("🔑 Refresh failed (network error) — keeping tokens for retry when online", category: "GRPCChannel")
-        }
-        return false
-    }
-
-    // MARK: - ICE Failover
-
-    private enum ICEAction { case retry, propagate }
-
-    private func handleICEFailure(error: Error, invalidatesConnectionOnFailure: Bool) async -> ICEAction {
-        let cm = GRPCChannelManager.shared
-
-        if isStaleLocalProxy(error) {
-            // ECONNREFUSED on 127.0.0.1 — local proxy died.
-            // Restart immediately; do NOT enter cooldown (process crash, not relay failure).
-            Log.info("🧊 ICE proxy port dead (ECONNREFUSED) — restarting proxy", category: "gRPC")
-            await IceProxyManager.shared.restartAfterCrash()
-            await cm.waitForProxyReady()
-            if cm.iceProxyPort() != nil { return .retry }
-            return .propagate
-        }
-
-        guard shouldRecordIceFailure(error) else { return .propagate }
-
-        let failedAddr = await IceProxyManager.shared.activeRelay?.address
-
-        if invalidatesConnectionOnFailure {
-            // Relay tunnel broken. Check for WebTunnel-specific failure first:
-            // obfs4 is a binary protocol that carrier transparent proxies can't inspect —
-            // try the same relay in obfs4 mode before rotating.
-            let webTunnelActive = await IceProxyManager.shared.isWebTunnelActive
-            if isWebTunnelBlocked(error), webTunnelActive {
-                Log.info("🧊 WebTunnel blocked (non-200) — retrying relay via obfs4", category: "gRPC")
-                let obfs4OK = await IceProxyManager.shared.retryCurrentRelayAsObfs4(hintAddress: failedAddr)
-                if obfs4OK {
-                    cm.invalidatePersistentClient()
-                    await cm.waitForProxyReady()
-                    Log.info("🧊 ICE obfs4 fallback active — retrying via same relay", category: "gRPC")
-                    return .retry
-                }
-                if let addr = failedAddr { await IceProxyManager.shared.recordRelayFailure(address: addr) }
-            } else {
-                if let addr = failedAddr { await IceProxyManager.shared.recordRelayFailure(address: addr) }
+            // A hostile or broken ICE relay can synthesise an UNAUTHENTICATED / PERMISSION_DENIED
+            // response that is indistinguishable from a real server rejection at the gRPC layer.
+            // On the direct path the response is end-to-end TLS to our server, so trust it.
+            // On the ICE path we cannot tell — rotate the relay and retry; if the rejection is
+            // real it will surface again on a clean relay (or, eventually, on the direct path)
+            // and be honored at that point.
+            if usingVEIL {
+                Log.info("Refresh rejected over ICE relay \(capturedRelayAddr ?? "?") — not wiping tokens, will rotate", category: "GRPCChannel")
+                // Router rotation is requested by the caller of handleAuthRetry on .suspectRejection.
+                return .suspectRejection
             }
-
-            let rotated = await IceProxyManager.shared.rotateToNextRelay()
-            if rotated {
-                // If all relays were recently blacklisted, we just restarted the least-bad one.
-                // Wait 30 s so old TCP connections drain before we create new ones.
-                if await IceProxyManager.shared.allRelaysRecentlyFailed {
-                    Log.info("🧊 All relays blacklisted — waiting 30s to let connections drain", category: "gRPC")
-                    try? await Task.sleep(for: .seconds(30))
-                }
-                cm.invalidatePersistentClient()
-                await cm.waitForProxyReady()
-                Log.info("🧊 Relay rotated inline — retrying via new relay", category: "gRPC")
-                return .retry
-            }
-            // All relays exhausted — enter cooldown for direct fallback.
-            cm.recordICEFailure(failedAddress: failedAddr)
+            Log.info("Refresh rejected by server — triggering device re-auth", category: "GRPCChannel")
+            await MainActor.run { AuthSessionManager.shared.invalidateTokensForReauth() }
+            return .serverRejected
         } else {
-            // Background RPC: record relay failure so future connections avoid it,
-            // but do NOT rotate or invalidate — that would kill any live stream.
-            if let addr = failedAddr { await IceProxyManager.shared.recordRelayFailure(address: addr) }
+            Log.info("Refresh failed (network error) — keeping tokens for retry when online", category: "GRPCChannel")
+            return .networkOffline
         }
-        return .propagate
     }
-
+    
     // MARK: - Error Classification
 
     /// True for errors that should NOT invalidate the persistent connection
@@ -331,48 +346,5 @@ final class GRPCCallExecutor: Sendable {
         if error is GRPCClientError   { return true }
         if let rpc = error as? RPCError, rpc.code == .cancelled { return true }
         return false
-    }
-
-    /// True for errors that represent a relay or transport failure worth recording.
-    /// Application-level errors (auth, validation, not found) return false — the relay
-    /// delivered the response correctly and should not be penalised.
-    private func shouldRecordIceFailure(_ error: Error) -> Bool {
-        if error is CancellationError { return false }
-        if error is GRPCClientError   { return false }
-        guard let rpc = error as? RPCError else { return true }
-        switch rpc.code {
-        case .unauthenticated, .permissionDenied, .invalidArgument, .notFound,
-             .alreadyExists, .resourceExhausted, .cancelled, .internalError:
-            return false
-        case .unimplemented:
-            // "Unexpected non-200 HTTP Status Code" → relay→upstream HTTP path broken.
-            return isWebTunnelBlocked(error)
-        case .unavailable, .deadlineExceeded, .unknown:
-            let msg = rpc.message.lowercased()
-            if msg.contains(GRPCMessages.streamClosed) && msg.contains("closed") { return false }
-            if msg.contains(GRPCMessages.channelClosed)                          { return false }
-            if msg.contains("cancellation") || msg.contains("cancelled")         { return false }
-            if msg.contains(GRPCMessages.requestTimedOut)                        { return false }
-            return true
-        default:
-            return true
-        }
-    }
-
-    /// True when the error is ECONNREFUSED on the local ICE proxy port (127.0.0.1).
-    /// Distinct from a relay failure — no cooldown needed, just restart the process.
-    private func isStaleLocalProxy(_ error: Error) -> Bool {
-        guard let rpc = error as? RPCError, rpc.code == .unavailable else { return false }
-        return rpc.message.contains(GRPCMessages.localProxyAddr)
-    }
-
-    /// True when a transparent HTTP proxy intercepted the WebSocket UPGRADE and returned
-    /// a non-101/non-200 response instead of forwarding it to the relay.
-    private func isWebTunnelBlocked(_ error: Error) -> Bool {
-        guard let rpc = error as? RPCError, rpc.code == .unimplemented else { return false }
-        let msg = rpc.message.lowercased()
-        return msg.contains(GRPCMessages.nonHttpUpgrade)
-            || msg.contains(GRPCMessages.httpStatusCode)
-            || (msg.contains(GRPCMessages.unexpectedHttp) && msg.contains("http"))
     }
 }

@@ -15,7 +15,6 @@
 //    Text("hello").ctMessageBlock(outgoing: false)
 //    myView.ctBackground()    → dark bg + noise layer
 //
-//  Design doc: /Documents/Konstruct/ASCII_style_design.md
 //
 
 import SwiftUI
@@ -31,21 +30,21 @@ extension Color {
         /// Main background. Dark: #090909 / Light: #F2F2F2
         static let bg         = Color(dark: 0x090909, light: 0xF2F2F2)
         /// Message bubble background (incoming). Dark: #333333 / Light: #E2E2E2
-        static let bgMsg      = Color(dark: 0x333333, light: 0xE2E2E2)
+        static let bgMsg      = Color(dark: 0x202020, light: 0xE2E2E2)
         /// Outgoing message background. Dark: #111111 / Light: #CECECE
-        static let outMsgBg   = Color(dark: 0x111111, light: 0xCECECE)
+        static let outMsgBg   = Color(dark: 0x111111, light: 0xE9E9E9)
 
         // MARK: Accent (brand blue — unchanged across themes)
         /// Primary accent: #1A3FFF
-        static let accent     = Color(hex: 0x1A3FFF)
+        static let accent     = Color(hex: 0x0062FF)
         /// Secondary accent: #4A6AFF
-        static let accentDim  = Color(hex: 0x4A6AFF)
+        static let accentDim  = Color(hex: 0x1E68DF)
 
         // MARK: Text
         /// Primary text. Dark: #E8E8E8 / Light: #111111
         static let text       = Color(dark: 0xE8E8E8, light: 0x111111)
-        /// Timestamps, metadata, inactive. Dark: #555555 / Light: #777777
-        static let textDim    = Color(dark: 0x555555, light: 0x777777)
+        /// Timestamps, metadata, inactive.
+        static let textDim    = Color(dark: 0x818181, light: 0x333333)
 
         // MARK: Structure
         /// ASCII noise chars, dividers. Dark: #1E1E1E / Light: #C8C8C8
@@ -120,6 +119,34 @@ enum CTFont {
     static func regular(_ size: CGFloat) -> Font { ConstructFont.mono(size, weight: .regular) }
     static func medium(_ size: CGFloat)  -> Font { ConstructFont.mono(size, weight: .medium)  }
     static func bold(_ size: CGFloat)    -> Font { ConstructFont.mono(size, weight: .bold)    }
+}
+
+// MARK: - Layout Constants
+
+/// Canonical sizing tokens for nav bars, action icons, and content rows.
+///
+/// All icon sizes are derived from `CTFont.bold(13)` line height (~16 pt) so that
+/// a nav bar containing only an SF Symbol is the same height as one containing text.
+enum CTLayout {
+    /// Horizontal edge inset shared by nav bars, section headers, and content rows.
+    static let edgePad: CGFloat = 12
+
+    /// Vertical padding for navigation bar rows.
+    static let navVPad: CGFloat = 11
+
+    /// Fixed height for every navigation bar. Using frame(height:) instead of
+    /// padding ensures the title sits at the same absolute vertical position
+    /// regardless of whether the bar has a back button, trailing icon, or text only.
+    static let navBarHeight: CGFloat = 44
+
+    /// SF Symbol size for standard nav-bar action buttons (QR scan, search, dismiss).
+    static let navIconSize: CGFloat = 20
+
+    /// Slightly larger icon for elevated primary-action buttons (e.g., phone call in chat).
+    static let navIconSizeLg: CGFloat = 22
+
+    /// Large icon for full-screen call UI (accept / decline / mute buttons).
+    static let callIconSize: CGFloat = 24
 }
 
 // MARK: - Cross-platform helpers
@@ -219,24 +246,47 @@ enum CTSymbol {
 /// Usage:
 ///   CTRowIcon(CTSymbol.biometric)
 ///   CTRowIcon(CTSymbol.key, color: .CT.accent)
+///   CTRowIcon(sf: "moon.fill", color: .CT.accent)   // SF Symbol variant
 struct CTRowIcon: View {
-    let symbol: String
+    private enum Content {
+        case ascii(String)
+        case sfSymbol(String)
+    }
+
+    private let content: Content
     var color: Color  = Color.CT.textDim
     var size: CGFloat = 14
 
+    // ASCII / CTSymbol init
     init(_ symbol: String, color: Color = Color.CT.textDim, size: CGFloat = 14) {
-        self.symbol = symbol
-        self.color  = color
-        self.size   = size
+        self.content = .ascii(symbol)
+        self.color   = color
+        self.size    = size
+    }
+
+    // SF Symbol init
+    init(sf symbolName: String, color: Color = Color.CT.textDim, size: CGFloat = 16) {
+        self.content = .sfSymbol(symbolName)
+        self.color   = color
+        self.size    = size
     }
 
     var body: some View {
-        Text(symbol)
-            .font(CTFont.bold(size))
-            .foregroundStyle(color)
-            .lineLimit(1)
-            .fixedSize()                     // measure natural width — never truncate
-            .frame(minWidth: 36, alignment: .leading)
+        Group {
+            switch content {
+            case .ascii(let symbol):
+                Text(symbol)
+                    .font(CTFont.bold(size))
+                    .foregroundStyle(color)
+                    .lineLimit(1)
+                    .fixedSize()
+            case .sfSymbol(let name):
+                Image(systemName: name)
+                    .font(.system(size: size, weight: .medium))
+                    .foregroundStyle(color)
+            }
+        }
+        .frame(minWidth: 36, alignment: .leading)
     }
 }
 
@@ -284,13 +334,13 @@ struct CTHexAvatar: View {
                     .resizable()
                     .scaledToFill()
                     .frame(width: size.rawValue, height: size.rawValue)
-                    .clipShape(CTHexShape())
-                CTHexShape()
+                    .clipShape(Circle())
+                Circle()
                     .stroke(accentColor, lineWidth: 1)
             } else {
-                CTHexShape()
+                Circle()
                     .fill(accentColor.opacity(0.18))
-                CTHexShape()
+                Circle()
                     .stroke(accentColor, lineWidth: 1)
                 Text(String(initials.prefix(2)).uppercased())
                     .font(CTFont.bold(size.rawValue * 0.28))
@@ -404,7 +454,76 @@ struct CTSep: View {
     }
 }
 
+// MARK: - Section Group
+
+/// Rounded card container for settings sections that use the flat CTSettingsRow pattern.
+/// Wraps rows in a subtle elevated background with cornerRadius 8.
+/// Usage: wrap the rows of one section (not the CTSettingsSectionHeader) in CTSectionGroup { ... }
+/// Remove CTSep(style: .thick) between sections — CTSettingsSectionHeader's .padding(.top, 16) provides the gap.
+struct CTSectionGroup<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(spacing: 0) {
+            content
+        }
+        .background(Color.CT.outMsgBg)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.CT.noise, lineWidth: 0.5))
+        .padding(.horizontal, 12)
+    }
+}
+
 // MARK: - System Message  (> text)
+
+// MARK: - Search Bar
+
+/// Unified terminal-style search bar. Used in ChatsListView and SynapsView.
+/// Renders as a full-width row with bottom border (same visual weight as nav bars).
+///
+/// Usage:
+///   CTSearchBar(text: $searchQuery)
+///   CTSearchBar(text: $searchText, placeholder: LocalizedStringKey("search_prompt"))
+struct CTSearchBar: View {
+    @Binding var text: String
+    var placeholder: LocalizedStringKey = "search_prompt"
+    var focused: FocusState<Bool>.Binding? = nil
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 13, weight: .regular))
+                .foregroundColor(Color.CT.textDim)
+
+            TextField("", text: $text,
+                      prompt: Text(placeholder)
+                        .font(CTFont.regular(13))
+                        .foregroundColor(Color.CT.textDim))
+                .font(CTFont.regular(13))
+                .foregroundColor(Color.CT.text)
+                .autocorrectionDisabled()
+                #if os(iOS)
+                .textInputAutocapitalization(.never)
+                .submitLabel(.search)
+                #endif
+                .tint(Color.CT.accent)
+
+            if !text.isEmpty {
+                Button { text = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 13))
+                        .foregroundColor(Color.CT.textDim)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(Color.CT.bgMsg)
+        .ctBorderBottom()
+    }
+}
+
 
 struct CTSystemMessage: View {
     let text: String
@@ -428,35 +547,67 @@ struct CTSystemMessage: View {
 struct CTNavBar: View {
     let title: String
     var showBack: Bool      = false
+    /// On macOS sheet/modal contexts pass true — renders xmark.circle (close) instead of chevron (back).
+    var isModal: Bool       = false
     var trailingSymbol: String? = nil
+    var trailingSystemImage: String? = nil
+    var trailingSecondarySystemImage: String? = nil
     var trailingColor: Color    = Color.CT.accent
     var backAction: (() -> Void)?     = nil
     var trailingAction: (() -> Void)? = nil
+    var trailingSecondaryAction: (() -> Void)? = nil
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(alignment: .center, spacing: 10) {
             if showBack {
                 Button(action: { backAction?() }) {
-                    Text(CTSymbol.back)
-                        .font(CTFont.bold(14))
+                    #if os(macOS)
+                    Image(systemName: isModal ? "xmark.circle" : "chevron.backward.circle")
+                        .font(.system(size: 18))
                         .foregroundColor(Color.CT.accent)
+                    #else
+                    Image(systemName: "chevron.backward.circle.fill")
+                        .font(.system(size: 22))
+                        .foregroundColor(Color.CT.accent)
+                    #endif
                 }
+                .buttonStyle(.plain)
             }
             Text(title.uppercased())
-                .font(CTFont.bold(13))
+                .font(CTFont.bold(14))
                 .foregroundColor(Color.CT.text)
                 .tracking(4)
             Spacer()
-            if let sym = trailingSymbol {
+            if trailingSystemImage != nil || trailingSecondarySystemImage != nil {
+                HStack(spacing: 10) {
+                    if let secondaryImageName = trailingSecondarySystemImage {
+                        Button(action: { trailingSecondaryAction?() }) {
+                            Image(systemName: secondaryImageName)
+                                .font(.system(size: 18))
+                                .foregroundColor(trailingColor)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if let imageName = trailingSystemImage {
+                        Button(action: { trailingAction?() }) {
+                            Image(systemName: imageName)
+                                .font(.system(size: 18))
+                                .foregroundColor(trailingColor)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            } else if let sym = trailingSymbol {
                 Button(action: { trailingAction?() }) {
                     Text(sym)
                         .font(CTFont.regular(13))
                         .foregroundColor(trailingColor)
                 }
+                .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 11)
+        .padding(.horizontal, CTLayout.edgePad)
+        .frame(height: CTLayout.navBarHeight)
         .ctBorderBottom()
     }
 }
@@ -465,7 +616,7 @@ struct CTNavBar: View {
 
 struct CTTabItem {
     let symbol: String
-    let label: String
+    var sfName: String
 }
 
 struct CTTabBar: View {
@@ -480,9 +631,9 @@ struct CTTabBar: View {
 
     static var defaultItems: [CTTabItem] {
         [
-            CTTabItem(symbol: CTSymbol.tabChats,    label: NSLocalizedString("tab_chats",    comment: "")),
-            CTTabItem(symbol: CTSymbol.tabSynaps,   label: NSLocalizedString("tab_synaps",   comment: "")),
-            CTTabItem(symbol: CTSymbol.tabSettings, label: NSLocalizedString("tab_settings", comment: "")),
+            CTTabItem(symbol: CTSymbol.tabChats, sfName: "message"),
+            CTTabItem(symbol: CTSymbol.tabSynaps, sfName: "circle.grid.cross"),
+            CTTabItem(symbol: CTSymbol.tabSettings, sfName: "gearshape"),
         ]
     }
 
@@ -491,14 +642,11 @@ struct CTTabBar: View {
             ForEach(items.indices, id: \.self) { i in
                 Spacer()
                 Button(action: { selected = i }) {
-                    VStack(spacing: 2) {
-                        Text(items[i].symbol)
-                            .font(selected == i ? CTFont.bold(13) : CTFont.regular(13))
-                            .foregroundColor(selected == i ? Color.CT.accent : Color.CT.textDim)
-                        Text(selected == i ? "> \(items[i].label)" : items[i].label)
-                            .font(selected == i ? CTFont.bold(9) : CTFont.regular(9))
-                            .foregroundColor(selected == i ? Color.CT.accent : Color.CT.textDim)
-                    }
+                    let sf = items[i].sfName
+                    Image(systemName: selected == i && !sf.hasSuffix(".fill") ? sf + ".fill" : sf)
+                        .font(.system(size: 20))
+                        .foregroundColor(selected == i ? Color.CT.accent : Color.CT.textDim)
+                    
                 }
                 Spacer()
             }
@@ -533,17 +681,25 @@ struct CTSettingsSectionHeader: View {
 struct CTSettingsRow: View {
     let label: String
     let value: String
-    var labelColor: Color   = Color.CT.textDim
+    var icon: String?       = nil
+    var labelColor: Color   = Color.CT.text
     var valueColor: Color   = Color.CT.text
     var isAction: Bool      = false
     var isDestructive: Bool = false
 
     var body: some View {
         HStack(spacing: 0) {
+            if let icon {
+                Image(systemName: icon)
+                    .font(.system(size: 15, weight: .regular))
+                    .foregroundColor(isDestructive ? Color.CT.danger : labelColor)
+                    .frame(width: 28, alignment: .center)
+                    .padding(.trailing, 4)
+            }
             Text(label)
                 .font(CTFont.regular(13))
                 .foregroundColor(isDestructive ? Color.CT.danger : labelColor)
-                .frame(width: 150, alignment: .leading)
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: 8)
             Text(value)
                 .font(isAction ? CTFont.bold(13) : CTFont.regular(13))
@@ -580,7 +736,8 @@ struct CTTextField: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 11)
         .background(Color.CT.bgMsg)
-        .overlay(Rectangle().stroke(Color.CT.noise, lineWidth: 0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.CT.noise, lineWidth: 0.5))
         #if os(macOS)
         .textFieldStyle(.plain)
         #endif
@@ -613,8 +770,9 @@ struct CTButton: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
                 .background(bgColor)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
                 .overlay(
-                    Rectangle()
+                    RoundedRectangle(cornerRadius: 8)
                         .stroke(isEnabled ? Color.clear : Color.CT.noise, lineWidth: 0.5)
                 )
         }

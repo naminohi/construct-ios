@@ -1,0 +1,161 @@
+//
+//  NativeVeilRuntime.swift
+//  Construct Messenger
+//
+//  Production `VeilProxyRuntime` backed by the `libconstruct_core` C FFI.
+//
+//  Production path uses `veil_start` — the unified coordinator FFI that runs
+//  parallel happy-eyeballs probing of obfs4 + WebTunnel inside Rust and returns
+//  the winning method. The legacy per-method calls (`veil_proxy_start_*`) are
+//  preserved for the test mock surface but no longer invoked from the app.
+//
+
+import Foundation
+
+/// Production implementation of `VeilProxyRuntime` via `libconstruct_core` C FFI.
+final class NativeVeilRuntime: VeilProxyRuntime {
+
+    // MARK: - Unified coordinator path
+
+    func startUnified(
+        relay: VeilRelay,
+        fingerprint: Data,
+        scoresPath: String?
+    ) -> Result<VeilStartOutcome, VeilProxyRuntimeError> {
+        let address    = relay.address
+        let bundle     = relay.bridgeLine
+        let sni        = relay.tlsServerName ?? ""
+        let spki       = relay.pinnedSpki ?? ""
+        let hostHeader = relay.wtHostHeader ?? ""
+        let wtPath     = relay.wtPath ?? ""
+
+        var out = VeilStartResult(port: 0, method: 0, latency_ms: 0)
+        let rc = address.withCString { addrPtr in
+            bundle.withCString { bundlePtr in
+                sni.withCString { sniPtr in
+                    spki.withCString { spkiPtr in
+                        hostHeader.withCString { hostPtr in
+                            wtPath.withCString { wtPathPtr in
+                                withScoresPath(scoresPath) { scoresPtr in
+                                    fingerprint.withUnsafeBytes { fpBuf -> Int32 in
+                                        let fpBase = fpBuf.bindMemory(to: UInt8.self).baseAddress
+                                        let req = VeilStartRequest(
+                                            relay_addr: addrPtr,
+                                            bundle: bundlePtr,
+                                            tls_sni: sniPtr,
+                                            spki_hex: spkiPtr,
+                                            host_header: hostPtr,
+                                            wt_base_path: wtPathPtr,
+                                            network_fingerprint: fpBase,
+                                            network_fingerprint_len: fingerprint.count,
+                                            allowed_methods: 0,         // 0 = all methods
+                                            scores_path: scoresPtr
+                                        )
+                                        return veil_start(req, &out)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        guard rc == 0, out.port > 0 else {
+            return .failure(rc == 2 ? .networkUnreachable : .startFailed(code: rc))
+        }
+        let method = VeilMethod(rawValue: out.method) ?? .obfs4
+        return .success(VeilStartOutcome(port: out.port, method: method, latencyMs: out.latency_ms))
+    }
+
+    // MARK: - Lifecycle
+
+    func stop() {
+        // Coordinator FFI: stops both the unified path and any legacy proxy.
+        _ = veil_stop()
+    }
+
+    func isAlive() -> Bool {
+        veil_is_alive() != 0
+    }
+
+    // MARK: - Legacy per-method API (mock surface only)
+
+    func start(_ request: VeilTransportRequest) -> Result<UInt16, VeilProxyRuntimeError> {
+        var port: UInt16 = 0
+        let result: Int32
+
+        switch request {
+        case .webTunnel(let address, let sni, let spki, let hostHeader, let bridgeCert, let wtBasePath):
+            result = address.withCString { addrPtr in
+                sni.withCString { sniPtr in
+                    spki.withCString { spkiPtr in
+                        hostHeader.withCString { hostPtr in
+                            bridgeCert.withCString { bridgeCertPtr in
+                                wtBasePath.withCString { basePathPtr in
+                                    veil_proxy_start_webtunnel(addrPtr, sniPtr, spkiPtr, hostPtr, bridgeCertPtr, basePathPtr, &port)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+        case .tlsPinned(let bridgeLine, let address, let sni, let spki, let profile):
+            result = bridgeLine.withCString { blPtr in
+                address.withCString { addrPtr in
+                    sni.withCString { sniPtr in
+                        spki.withCString { spkiPtr in
+                            profile.withCString { profPtr in
+                                veil_proxy_start_tls_profiled(blPtr, addrPtr, sniPtr, spkiPtr, profPtr, &port)
+                            }
+                        }
+                    }
+                }
+            }
+
+        case .tlsUnpinned(let bridgeLine, let address, let sni):
+            result = bridgeLine.withCString { blPtr in
+                address.withCString { addrPtr in
+                    sni.withCString { sniPtr in
+                        veil_proxy_start_tls(blPtr, addrPtr, sniPtr, &port)
+                    }
+                }
+            }
+
+        case .plainObfs4(let bridgeLine, let address):
+            result = bridgeLine.withCString { blPtr in
+                address.withCString { addrPtr in
+                    veil_proxy_start(blPtr, addrPtr, &port)
+                }
+            }
+        }
+
+        guard result == 0, port > 0 else {
+            return .failure(result == 2 ? .networkUnreachable : .startFailed(code: result))
+        }
+        return .success(port)
+    }
+
+    func startSecondary(bridgeLine: String, address: String) -> Result<UInt16, VeilProxyRuntimeError> {
+        var port: UInt16 = 0
+        let result = bridgeLine.withCString { blPtr in
+            address.withCString { addrPtr in
+                veil_proxy_start(blPtr, addrPtr, &port)
+            }
+        }
+        guard result == 0, port > 0 else {
+            return .failure(result == 2 ? .networkUnreachable : .startFailed(code: result))
+        }
+        return .success(port)
+    }
+
+    // MARK: - Helpers
+
+    /// Bridges an optional Swift String into a `UnsafePointer<CChar>?` for the C FFI.
+    /// Passing NULL for `scores_path` makes Rust use an in-memory SQLite (no persistence).
+    private func withScoresPath<R>(_ path: String?, _ body: (UnsafePointer<CChar>?) -> R) -> R {
+        guard let path else { return body(nil) }
+        return path.withCString { body($0) }
+    }
+}

@@ -22,7 +22,7 @@ class KeychainManager {
         if !success {
             Log.error("Failed to save session token to Keychain", category: "Keychain")
         } else {
-            Log.info("✅ Session token saved to Keychain (length: \(token.count))", category: "Keychain")
+            Log.info("Session token saved to Keychain (length: \(token.count))", category: "Keychain")
         }
     }
 
@@ -35,7 +35,7 @@ class KeychainManager {
             Log.error("Failed to convert Keychain data to UTF-8 string", category: "Keychain")
             return nil
         }
-        Log.debug("✅ Session token loaded from Keychain (length: \(token.count), prefix: \(token.prefix(30))...)", category: "Keychain")
+        Log.debug("Session token loaded from Keychain (length: \(token.count), prefix: \(token.prefix(30))...)", category: "Keychain")
         return token
     }
 
@@ -53,7 +53,7 @@ class KeychainManager {
         }
         let success = save(data, forKey: "deviceId", accessible: kSecAttrAccessibleAfterFirstUnlock)
         if success {
-            Log.info("✅ Device ID saved to Keychain", category: "Keychain")
+            Log.info("Device ID saved to Keychain", category: "Keychain")
         }
     }
     
@@ -69,7 +69,7 @@ class KeychainManager {
     func saveDeviceSigningKey(_ key: Data) {
         let success = save(key, forKey: "deviceSigningKey", accessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly)
         if success {
-            Log.info("✅ Device signing key saved to Keychain", category: "Keychain")
+            Log.info("Device signing key saved to Keychain", category: "Keychain")
         }
     }
     
@@ -82,7 +82,7 @@ class KeychainManager {
     func saveDeviceIdentityKey(_ key: Data) {
         let success = save(key, forKey: "deviceIdentityKey", accessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly)
         if success {
-            Log.info("✅ Device identity key saved to Keychain", category: "Keychain")
+            Log.info("Device identity key saved to Keychain", category: "Keychain")
         }
     }
     
@@ -100,15 +100,15 @@ class KeychainManager {
         let hasKeys = deviceId != nil && signingKey != nil && identityKey != nil
         
         if hasKeys {
-            Log.debug("✅ Device keys found in Keychain", category: "Keychain")
-            Log.debug("   deviceId: \(deviceId?.prefix(16) ?? "<nil>")...", category: "Keychain")
-            Log.debug("   signingKey: \(signingKey?.count ?? 0) bytes", category: "Keychain")
-            Log.debug("   identityKey: \(identityKey?.count ?? 0) bytes", category: "Keychain")
+            Log.debug("Device keys found in Keychain", category: "Keychain")
+            Log.debug("deviceId: \(deviceId?.prefix(16) ?? "<nil>")...", category: "Keychain")
+            Log.debug("signingKey: \(signingKey?.count ?? 0) bytes", category: "Keychain")
+            Log.debug("identityKey: \(identityKey?.count ?? 0) bytes", category: "Keychain")
         } else {
-            Log.debug("❌ No device keys in Keychain", category: "Keychain")
-            Log.debug("   deviceId: \(deviceId != nil ? "✓" : "✗")", category: "Keychain")
-            Log.debug("   signingKey: \(signingKey != nil ? "✓" : "✗")", category: "Keychain")
-            Log.debug("   identityKey: \(identityKey != nil ? "✓" : "✗")", category: "Keychain")
+            Log.debug("No device keys in Keychain", category: "Keychain")
+            Log.debug("deviceId: \(deviceId != nil ? "✓" : "✗")", category: "Keychain")
+            Log.debug("signingKey: \(signingKey != nil ? "✓" : "✗")", category: "Keychain")
+            Log.debug("identityKey: \(identityKey != nil ? "✓" : "✗")", category: "Keychain")
         }
         
         return hasKeys
@@ -119,7 +119,7 @@ class KeychainManager {
         delete(forKey: "deviceId")
         delete(forKey: "deviceSigningKey")
         delete(forKey: "deviceIdentityKey")
-        Log.info("🗑️ Device keys deleted from Keychain", category: "Keychain")
+        Log.info("Device keys deleted from Keychain", category: "Keychain")
     }
     
     // MARK: - User ID (from server)
@@ -134,7 +134,7 @@ class KeychainManager {
         if !success {
             Log.error("Failed to save userId to Keychain", category: "Keychain")
         } else {
-            Log.info("✅ User ID saved to Keychain: \(userId.prefix(8))...", category: "Keychain")
+            Log.info("User ID saved to Keychain: \(userId.prefix(8))...", category: "Keychain")
         }
     }
     
@@ -148,14 +148,14 @@ class KeychainManager {
             Log.error("Failed to convert userId data to string", category: "Keychain")
             return nil
         }
-        Log.debug("✅ User ID loaded from Keychain: \(userId.prefix(8))...", category: "Keychain")
+        Log.debug("User ID loaded from Keychain: \(userId.prefix(8))...", category: "Keychain")
         return userId
     }
     
     /// Delete user ID from Keychain
     func deleteUserID() {
         delete(forKey: "userId")
-        Log.info("🗑️ User ID deleted from Keychain", category: "Keychain")
+        Log.info("User ID deleted from Keychain", category: "Keychain")
     }
     
     // MARK: - Refresh Token
@@ -169,7 +169,7 @@ class KeychainManager {
         if !success {
             Log.error("Failed to save refresh token to Keychain", category: "Keychain")
         } else {
-            Log.info("✅ Refresh token saved to Keychain (length: \(token.count))", category: "Keychain")
+            Log.info("Refresh token saved to Keychain (length: \(token.count))", category: "Keychain")
         }
     }
     
@@ -182,13 +182,13 @@ class KeychainManager {
             Log.error("Failed to convert refresh token Keychain data to UTF-8 string", category: "Keychain")
             return nil
         }
-        Log.debug("✅ Refresh token loaded from Keychain (length: \(token.count))", category: "Keychain")
+        Log.debug("Refresh token loaded from Keychain (length: \(token.count))", category: "Keychain")
         return token
     }
     
     func deleteRefreshToken() {
         delete(forKey: "com.construct.refreshToken")
-        Log.info("🗑️ Refresh token deleted from Keychain", category: "Keychain")
+        Log.info("Refresh token deleted from Keychain", category: "Keychain")
     }
 
     // MARK: - Private Key
@@ -312,7 +312,7 @@ class KeychainManager {
         delete(forKey: "userId")
         deletePrivateKeys()
         deleteAllSessions()
-        Log.info("🗑️ All cryptographic keys and sessions deleted", category: "Keychain")
+        Log.info("All cryptographic keys and sessions deleted", category: "Keychain")
     }
     
     /// Delete all saved sessions (sessions are stored with keys like "session_<contactId>")
@@ -345,7 +345,7 @@ class KeychainManager {
                 }
             }
             if deletedCount > 0 {
-                Log.info("🗑️ Deleted \(deletedCount) session(s) from Keychain", category: "Keychain")
+                Log.info("Deleted \(deletedCount) session(s) from Keychain", category: "Keychain")
             }
         }
     }
@@ -454,6 +454,76 @@ class KeychainManager {
 
     func deleteSpkEpoch(for userId: String) {
         delete(forKey: spkEpochKey(for: userId))
+    }
+
+    // MARK: - PQXDH Downgrade Flag (per-peer)
+    // Tracks whether PQXDH key agreement was degraded to classical-only for a contact.
+    // Security-relevant: stored in Keychain (not UserDefaults) so it survives reinstall.
+    // An attacker who can clear UserDefaults before app launch could otherwise force
+    // a re-attempt of PQ strengthening that already failed, leaking that it failed.
+
+    private func pqxdhDowngradedKey(for userId: String) -> String {
+        "construct.pqxdh.downgraded.\(userId)"
+    }
+
+    func savePQXDHDowngradeFlag(for userId: String) {
+        var value: UInt8 = 1
+        let data = Data(bytes: &value, count: 1)
+        _ = save(data, forKey: pqxdhDowngradedKey(for: userId), accessible: kSecAttrAccessibleAfterFirstUnlock)
+    }
+
+    func loadPQXDHDowngradeFlag(for userId: String) -> Bool {
+        guard let data = load(forKey: pqxdhDowngradedKey(for: userId)),
+              data.count == 1 else { return false }
+        return data[0] != 0
+    }
+
+    func deletePQXDHDowngradeFlag(for userId: String) {
+        delete(forKey: pqxdhDowngradedKey(for: userId))
+    }
+
+    // MARK: - Contact Request Mappings
+    //
+    // Stores requestId → toUserId so User A can create a contact after acceptance.
+    // Lives in Keychain (not UserDefaults) to survive app reinstall.
+    // All entries stored as a single JSON-encoded [String: String] dict for easy bulk delete.
+
+    private static let contactRequestMappingsKey = "cr_request_mappings"
+
+    func saveContactRequestMapping(requestId: String, toUserId: String) {
+        var mappings = loadAllContactRequestMappings()
+        mappings[requestId] = toUserId
+        persistContactRequestMappings(mappings)
+    }
+
+    func loadContactRequestMapping(requestId: String) -> String? {
+        loadAllContactRequestMappings()[requestId]
+    }
+
+    func deleteContactRequestMapping(requestId: String) {
+        var mappings = loadAllContactRequestMappings()
+        mappings.removeValue(forKey: requestId)
+        persistContactRequestMappings(mappings)
+    }
+
+    func deleteAllContactRequestMappings() {
+        delete(forKey: Self.contactRequestMappingsKey)
+    }
+
+    private func loadAllContactRequestMappings() -> [String: String] {
+        guard let data = loadRawData(forKey: Self.contactRequestMappingsKey),
+              let dict = try? JSONDecoder().decode([String: String].self, from: data)
+        else { return [:] }
+        return dict
+    }
+
+    private func persistContactRequestMappings(_ mappings: [String: String]) {
+        if mappings.isEmpty {
+            delete(forKey: Self.contactRequestMappingsKey)
+            return
+        }
+        guard let data = try? JSONEncoder().encode(mappings) else { return }
+        saveRawData(data, forKey: Self.contactRequestMappingsKey)
     }
 
     // MARK: - Generic Data Storage (for non-crypto app data that needs Keychain protection)

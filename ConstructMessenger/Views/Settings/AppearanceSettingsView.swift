@@ -10,62 +10,69 @@ import SwiftUI
 struct AppearanceSettingsView: View {
     @AppStorage("appTheme") private var appTheme: AppTheme = .dark
     @Environment(\.dismiss) private var dismiss
+    private let allThemes = AppTheme.allCases
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 20) {
+            LazyVStack(spacing: SettingsLayout.sectionSpacing) {
                 CTNavBar(
                     title: NSLocalizedString("appearance", comment: ""),
                     showBack: true,
                     backAction: { dismiss() }
                 )
                 
-                VStack(alignment: .leading, spacing: 6) {
-                    ConstructSection(header: NSLocalizedString("theme", comment: "")) {
-                        ForEach(Array(AppTheme.allCases.enumerated()), id: \.element) { index, theme in
-                            if index > 0 { ConstructRowDivider(indent: 52) }
-                            Button {
-                                guard theme.isAvailable else { return }
-                                appTheme = theme
-                            } label: {
-                                HStack(spacing: 14) {
-                                    CTRowIcon(theme.asciiIcon,
-                                              color: theme.isAvailable ? theme.color : Color.CT.textDim)
-                                    Text(theme.displayName)
-                                        .font(CTFont.bold(16))
-                                        .foregroundStyle(theme.isAvailable ? Color.CT.text : Color.CT.textDim)
-                                    Spacer()
-                                    if !theme.isAvailable {
-                                        Text("soon")
-                                            .font(CTFont.regular(10))
-                                            .foregroundStyle(Color.CT.textDim)
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 2)
-                                            .overlay(
-                                                Rectangle()
-                                                    .strokeBorder(Color.CT.noise, lineWidth: 1)
-                                            )
-                                    } else if appTheme == theme {
-                                        Text("[✓]")
-                                            .font(CTFont.bold(14))
-                                            .foregroundStyle(Color.CT.accent)
+                VStack(alignment: .leading, spacing: SettingsLayout.sectionHeaderSpacing) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        CTSettingsSectionHeader(title: NSLocalizedString("theme", comment: ""))
+                        CTSectionGroup {
+                            ForEach(allThemes.indices, id: \.self) { index in
+                                let theme = allThemes[index]
+                                if index > 0 { ConstructRowDivider(indent: SettingsLayout.rowDividerIndent) }
+                                Button {
+                                    guard theme.isAvailable else { return }
+                                    appTheme = theme
+                                } label: {
+                                    HStack(spacing: AppearanceSettingsLayout.themeRowContentSpacing) {
+                                        CTRowIcon(
+                                            sf: theme.iconName,
+                                            color: theme.isAvailable ? theme.color : Color.CT.textDim
+                                        )
+                                        Text(theme.displayName)
+                                            .font(CTFont.bold(16))
+                                            .foregroundStyle(theme.isAvailable ? Color.CT.text : Color.CT.textDim)
+                                        Spacer()
+                                        if !theme.isAvailable {
+                                            Text(LocalizedStringKey("settings_coming_soon"))
+                                                .font(CTFont.regular(10))
+                                                .foregroundStyle(Color.CT.textDim)
+                                                .padding(.horizontal, AppearanceSettingsConfig.availabilityBadgeHorizontalPadding)
+                                                .padding(.vertical, AppearanceSettingsConfig.availabilityBadgeVerticalPadding)
+                                                .overlay(
+                                                    Rectangle()
+                                                        .strokeBorder(Color.CT.noise, lineWidth: AppearanceSettingsConfig.availabilityBadgeStrokeWidth)
+                                                )
+                                        } else if appTheme == theme {
+                                            Text("[✓]")
+                                                .font(CTFont.bold(14))
+                                                .foregroundStyle(Color.CT.accent)
+                                        }
                                     }
+                                    .padding(.horizontal, AppearanceSettingsLayout.themeRowHorizontalPadding)
+                                    .padding(.vertical, AppearanceSettingsLayout.themeRowVerticalPadding)
+                                    .contentShape(Rectangle())
                                 }
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 14)
-                                .contentShape(Rectangle())
+                                .buttonStyle(.plain)
+                                .disabled(!theme.isAvailable)
                             }
-                            .buttonStyle(.plain)
-                            .disabled(!theme.isAvailable)
                         }
                     }
                     Text(LocalizedStringKey("theme_footer"))
                         .font(CTFont.regular(11))
                         .foregroundStyle(Color.CT.textDim)
-                        .padding(.horizontal, 20)
+                        .padding(.horizontal, SettingsLayout.footerHorizontalPadding)
                 }
             }
-            .padding(.vertical, 20)
+            .padding(.vertical, SettingsLayout.screenVerticalPadding)
         }
         .background(Color.CT.bg.ignoresSafeArea())
         #if os(iOS)
@@ -92,14 +99,6 @@ enum AppTheme: String, CaseIterable {
         case .automatic: return "automatic"
         case .light: return "light"
         case .dark: return "dark"
-        }
-    }
-
-    var asciiIcon: String {
-        switch self {
-        case .automatic: return "[◐]"
-        case .light:     return "[□]"
-        case .dark:      return "[■]"
         }
     }
 

@@ -16,6 +16,7 @@ struct ContactQRCodeView: View {
     let username: String
     
     @State private var qrPayload: String?
+    @State private var qrImage: UIImage?
     @State private var timeRemaining: TimeInterval = InviteConfig.ttlSeconds
     @State private var generationError: String?
     @State private var generatedAt: Date?
@@ -36,7 +37,7 @@ struct ContactQRCodeView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: ContactQRCodeLayout.contentSpacing) {
             // Nav bar
             CTNavBar(
                 title: NSLocalizedString("invite", comment: ""),
@@ -46,10 +47,10 @@ struct ContactQRCodeView: View {
             Rectangle().fill(Color.CT.noise).frame(height: 1)
 
             ScrollView(showsIndicators: false) {
-                VStack(spacing: 0) {
+                VStack(spacing: ContactQRCodeLayout.contentSpacing) {
 
                     // Identity header
-                    VStack(spacing: 6) {
+                    VStack(spacing: ContactQRCodeLayout.identityHeaderSpacing) {
                         Text(displayName)
                             .font(CTFont.bold(15))
                             .foregroundStyle(Color.CT.text)
@@ -58,16 +59,16 @@ struct ContactQRCodeView: View {
                             .foregroundStyle(Color.CT.accent.opacity(0.5))
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 20)
+                    .padding(.vertical, ContactQRCodeLayout.identityVerticalPadding)
 
                     Rectangle().fill(Color.CT.noise).frame(height: 1)
 
                     // QR block
-                    VStack(spacing: 20) {
+                    VStack(spacing: ContactQRCodeLayout.qrBlockSpacing) {
                         qrBlock
                         timerBlock
                     }
-                    .padding(.vertical, 28)
+                    .padding(.vertical, ContactQRCodeLayout.qrBlockVerticalPadding)
                     .frame(maxWidth: .infinity)
 
                     Rectangle().fill(Color.CT.noise).frame(height: 1)
@@ -77,16 +78,21 @@ struct ContactQRCodeView: View {
                         .font(CTFont.regular(11))
                         .foregroundStyle(Color.CT.textDim)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 14)
+                        .padding(.horizontal, ContactQRCodeLayout.footerHorizontalPadding)
+                        .padding(.vertical, ContactQRCodeLayout.footerVerticalPadding)
                 }
             }
         }
         .background(Color.CT.bg.ignoresSafeArea())
-        .frame(idealWidth: 400, idealHeight: 520)
+        .frame(
+            idealWidth: ContactQRCodeLayout.idealWidth,
+            idealHeight: ContactQRCodeLayout.idealHeight
+        )
         .onAppear {
             if let preview = previewPayload {
                 qrPayload = preview
+                qrImage = generateQRCode(from: preview)
+                timeRemaining = InviteConfig.ttlSeconds
                 generatedAt = Date()
             } else {
                 generateInitialQRCode()
@@ -101,7 +107,7 @@ struct ContactQRCodeView: View {
     private var qrBlock: some View {
         let size = QRCodeSize.standard(in: containerWidth)
 
-        if let payload = qrPayload, let qrImage = generateQRCode(from: payload) {
+        if qrPayload != nil, let qrImage {
             // White bg required for camera readability; bordered with CT noise
             Image(uiImage: qrImage)
                 .interpolation(.none)
@@ -110,14 +116,14 @@ struct ContactQRCodeView: View {
                 .frame(width: size, height: size)
                 .padding(QRCodeSize.padding)
                 .background(Color.white)
-                .overlay(Rectangle().strokeBorder(Color.CT.noise, lineWidth: 1))
+                .overlay(Rectangle().strokeBorder(Color.CT.noise, lineWidth: ContactQRCodeLayout.qrCodeBorderWidth))
         } else if let error = generationError {
             Rectangle()
                 .fill(Color.CT.bgMsg)
                 .frame(width: size, height: size)
-                .overlay(Rectangle().strokeBorder(Color.CT.noise, lineWidth: 1))
+                .overlay(Rectangle().strokeBorder(Color.CT.noise, lineWidth: ContactQRCodeLayout.qrCodeBorderWidth))
                 .overlay {
-                    VStack(spacing: 10) {
+                    VStack(spacing: ContactQRCodeLayout.qrCodeErrorSpacing) {
                         Text("[!]")
                             .font(CTFont.bold(20))
                             .foregroundStyle(Color.CT.danger)
@@ -125,14 +131,14 @@ struct ContactQRCodeView: View {
                             .font(CTFont.regular(11))
                             .foregroundStyle(Color.CT.textDim)
                             .multilineTextAlignment(.center)
-                            .padding(.horizontal, 16)
+                            .padding(.horizontal, ContactQRCodeLayout.qrCodeErrorHorizontalPadding)
                     }
                 }
         } else {
             Rectangle()
                 .fill(Color.CT.bgMsg)
                 .frame(width: size, height: size)
-                .overlay(Rectangle().strokeBorder(Color.CT.noise, lineWidth: 1))
+                .overlay(Rectangle().strokeBorder(Color.CT.noise, lineWidth: ContactQRCodeLayout.qrCodeBorderWidth))
                 .overlay {
                     Text(CTSymbol.loading)
                         .font(CTFont.regular(16))
@@ -147,7 +153,7 @@ struct ContactQRCodeView: View {
     private var timerBlock: some View {
         if timeRemaining > 0 {
             let isWarning = timeRemaining < InviteConfig.qrWarningThresholdSeconds
-            HStack(spacing: 6) {
+            HStack(spacing: ContactQRCodeLayout.timerRowSpacing) {
                 Text(CTSymbol.ttl)
                     .font(CTFont.regular(11))
                     .foregroundStyle(isWarning ? Color.CT.danger : Color.CT.textDim)
@@ -157,7 +163,7 @@ struct ContactQRCodeView: View {
                     .monospacedDigit()
             }
         } else {
-            VStack(spacing: 14) {
+            VStack(spacing: ContactQRCodeLayout.expiredBlockSpacing) {
                 Text("[ \(NSLocalizedString("code_expired", comment: "").lowercased()) ]")
                     .font(CTFont.regular(14))
                     .foregroundStyle(Color.CT.danger)
@@ -166,12 +172,17 @@ struct ContactQRCodeView: View {
                     Text("[\(NSLocalizedString("generate_new_code", comment: "").lowercased())]")
                         .font(CTFont.regular(13))
                         .foregroundStyle(Color.CT.accent)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 10)
+                        .padding(.horizontal, ContactQRCodeLayout.refreshButtonHorizontalPadding)
+                        .padding(.vertical, ContactQRCodeLayout.refreshButtonVerticalPadding)
                         .background(
                             Rectangle()
                                 .fill(Color.CT.bgMsg)
-                                .overlay(Rectangle().strokeBorder(Color.CT.accent.opacity(0.4), lineWidth: 1))
+                                .overlay(
+                                    Rectangle().strokeBorder(
+                                        Color.CT.accent.opacity(ContactQRCodeLayout.refreshButtonStrokeOpacity),
+                                        lineWidth: ContactQRCodeLayout.refreshButtonStrokeWidth
+                                    )
+                                )
                         )
                 }
                 .buttonStyle(.plain)
@@ -205,6 +216,7 @@ struct ContactQRCodeView: View {
                 useHTTPS: false
             )
             qrPayload = deepLink
+            qrImage = generateQRCode(from: deepLink)
             generatedAt = Date()
             timeRemaining = InviteConfig.ttlSeconds
             generationError = nil
@@ -215,6 +227,7 @@ struct ContactQRCodeView: View {
 
     private func regenerateQRCode() {
         qrPayload = nil
+        qrImage = nil
         generationError = nil
         generatedAt = nil
         generateInitialQRCode()

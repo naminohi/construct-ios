@@ -43,6 +43,9 @@ public class Message: NSManagedObject {
     /// on a supported device, but keeps the message visible in any case).
     func applyStoredEncryption(plaintext: String, contactId: String) {
         guard !plaintext.isEmpty else {
+            // encryptedContent must always be non-null (Core Data required attribute).
+            // Empty content is valid — use empty Data() as sentinel.
+            encryptedContent = Data()
             decryptedContent = nil
             return
         }
@@ -56,7 +59,8 @@ public class Message: NSManagedObject {
               let plainData = plaintext.data(using: .utf8),
               let encrypted = try? MessageStorageCrypto.encrypt(plaintext: plainData, key: keyBytes)
         else {
-            Log.error("❌ applyStoredEncryption failed for \(msgId.prefix(8))… — falling back to plaintext", category: "Storage")
+            Log.error("applyStoredEncryption failed for \(msgId.prefix(8))… — falling back to plaintext", category: "Storage")
+            encryptedContent = Data()
             decryptedContent = plaintext
             return
         }

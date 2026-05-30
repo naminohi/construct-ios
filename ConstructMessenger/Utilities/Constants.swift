@@ -248,6 +248,36 @@ struct FeatureFlags {
     static let enableOfflineQueue = true
     static let enablePushNotifications = false // Пока не реализовано
     static let maxMessageRetryAttempts = 3
+
+    // Parallel-run flag: when true, outgoing messages are routed through ConstructEngine
+    // instead of (and not in addition to) the legacy OutboundMessagePipeline path.
+    // iOS: always false — UDP 443 blocked by OS until MASQUE is implemented.
+    // macOS Desktop: true — QUIC works, use engine as primary send path.
+    #if os(iOS)
+    static let useEngineForSend = false
+    #else
+    static let useEngineForSend = true
+    #endif
+
+    /// HTTP/3 (QUIC) for gRPC streams on the direct path.
+    ///
+    /// **Disabled 2026-05-29** after device validation surfaced a silent failure mode:
+    /// bidi MessageStream over H3 sends `subscribe` successfully but the server's
+    /// initial response headers never reach the client — `onAccepted` never fires,
+    /// stream hangs until heartbeat-watchdog tears it down ~75s later. Unary RPCs
+    /// over H3 work fine; only bidi streaming is broken.
+    ///
+    /// Likely cause: Traefik 3.x QUIC↔h2c bridge mishandles bidi streaming response
+    /// frames OR the custom `HTTP3ClientTransport.swift` doesn't surface initial
+    /// response headers to the gRPC layer for bidi calls (it does for unary).
+    ///
+    /// Re-enable only after both ends have been verified end-to-end with a bidi
+    /// streaming test. The H3 code paths in `MessageStreamTransport.swift`,
+    /// `GRPCStreamTransport.open`, and `GRPCChannelManager.acquireH3Channel`
+    /// remain intact for that future work.
+    ///
+    /// See `wiki/decisions/h3-disabled-on-ios.md` for the full context.
+    static let h3Enabled: Bool = false
 }
 
 // MARK: - Traffic Protection Configuration
@@ -353,8 +383,8 @@ enum UserDefaultsKey: String {
     case trafficProtectionEnabled = "trafficProtection_enabled"
 
     // ICE — traffic obfuscation (Intrusion Countermeasures Electronics)
-    case iceEnabled = "ice_enabled"
-    case iceMode = "ice_mode"
+    case veilEnabled = "ice_enabled"
+    case veilMode = "ice_mode"
 
     // Background Fetch
     case backgroundFetchEnabled = "backgroundFetch_enabled"
@@ -373,13 +403,13 @@ enum UserDefaultsKey: String {
     var key: String { rawValue }
 }
 
-// MARK: - ICE Relay Region
+// MARK: - VEIL Relay Region
 
 /// Maps a UTC timezone offset range to a preferred relay ordering.
-/// Used by IceProxyManager to geo-prefer the closest relay without IP lookup or GPS.
+/// Used by VeilProxyManager to geo-prefer the closest relay without IP lookup or GPS.
 /// Fetched from `.well-known/construct-server` and cached in UserDefaults;
 /// falls back to `ICEConfig.hardcodedRelayRegions` when server config is unavailable.
-struct ICERelayRegion: Codable {
+struct VEILRelayRegion: Codable {
     /// Minimum UTC offset in hours (inclusive).
     let tzOffsetMin: Int
     /// Maximum UTC offset in hours (inclusive).
@@ -394,14 +424,14 @@ struct ICERelayRegion: Codable {
     }
 }
 
-// MARK: - ICE Bridge Configuration
-struct ICEConfig {
+// MARK: - VEIL Bridge Configuration
+struct VEILConfig {
     /// Hardcoded fallback bridge cert used when Keychain is empty (first launch before login).
     /// This is the server's public obfs4 identity — not a secret, safe to embed in binary.
     /// Update this when the production server rotates its ICE identity keypair.
     static let hardcodedBridgeCert = "3J8A3lAtPb3R4+td9UVLuzggZeva+o8TDNVw4aHx8HWdvdYpS4gV6t8gmxbGMIQTB5eGJA"
 
-    /// Primary ICE endpoint: TLS 1.3 → obfs4 → gRPC (Amsterdam, via Traefik).
+    /// Primary VEIL endpoint: TLS 1.3 → obfs4 → gRPC (Amsterdam, via Traefik).
     /// Uses `ice.<grpcHost>:443` derived at runtime from GRPCChannelManager.currentHost.
 
     // ── Relay 1: Moscow (Yandex Cloud) — REMOVED ────────────────────────────────
@@ -427,16 +457,18 @@ struct ICEConfig {
     /// Update when the relay container is recreated (new keypair in /data/relay.obfs4).
     static let amsRelayBridgeCert = "voFt3ilLSKx2xYuZsjxOnXtHTktUE4EaExIYRG+Bh89frHzI5QVrBNvT41zdS7Maiu6gPA"
 
-    // ── Relay 2: Saint Petersburg, MT Finance (45.135.233.5) ─────────────────
-    /// obfs4 relay, port 52143. No WebTunnel (bare IP — CDN fronting not set up yet).
-    /// SNI: s3.vkcs.cloud (VK Cloud S3, plausible for SPb-area IPs).
-    static let spbRelayIP          = "45.135.233.5"
-    static let spbRelayAddress     = "\(spbRelayIP):52143"
-    static let spbRelaySNI         = "s3.vkcs.cloud"
-    static let spbRelayPinnedSPKI  = "bd2da0c781a0fc98d85640bd87d2d4709c709a50b6bee06f90282ca6237f3410"
-    static let spbRelayBridgeCert  = "vkHsS7HOg1e8D9UPfLCQ4G8oLFfy6t/6oBXdAU4oUvPTMWTWZo0kiw6dq28cssjE24OUOw"
+    // ── SPB relay removed 2026-05-16 ─────────────────────────────────────────
+    // 45.135.233.5:52143 (VKCS SPb, s3.vkcs.cloud SNI) — IP blocked by RU DPI (TCP RST at TLS handshake).
+    // VPS deleted. Replaced by ruRelay below (2026-05-16).
 
-    // ── Relay 3: Amsterdam co-located (ice.ams.konstruct.cc) ─────────────────
+    // ── Relay 3: RU relay (194.87.232.51 / api.divany-kresla.uk) ─────────────
+    /// construct-relay on VKCS, SNI-camouflaged behind Nginx, anti-probe → Apple CDN.
+    /// Upstream: ams.konstruct.cc:443. Provisioned 2026-05-16.
+    static let ruRelayAddress    = "api.divany-kresla.uk:443"
+    static let ruRelaySNI        = "api.divany-kresla.uk"
+    static let ruRelayPinnedSPKI = "bb42af0f12a95779fb45dcbe3039746616b51aacf8c7cc954ba6cbb048055943"
+    /// Update when relay container is recreated (new keypair in /data/relay.obfs4).
+    static let ruRelayBridgeCert = "zdfEJKLpy4nVo09zbd/5q3Yx02FyL7Tlr+5Aurww51IbYacIWIqbcTndB1UL+n2g68XBQw"
 
     /// Ed25519 public key used to verify `.well-known/construct-server` signature.
     /// This is the ONLY value hardcoded permanently — everything else is OTA-updatable.
@@ -447,15 +479,15 @@ struct ICEConfig {
     /// Used by makeRelay() to override the AMS cert for relays with their own obfs4 keypair.
     static let hardcodedRelayCerts: [String: String] = [
         amsRelayAddress: amsRelayBridgeCert,
-        spbRelayAddress: spbRelayBridgeCert,
-        // mskRelayAddress: mskRelayBridgeCert,    // MSK relay removed — IP blocked by RU DPI
+        ruRelayAddress:  ruRelayBridgeCert,
+        // mskRelayAddress: mskRelayBridgeCert,  // MSK relay removed — IP blocked by RU DPI
     ]
 
     /// Hardcoded relay list used as a last resort when discovery is unavailable.
     /// Order matters: relays are probed concurrently but this sets tie-break priority.
     static let hardcodedRelayAddresses: [String] = [
         amsRelayAddress,
-        spbRelayAddress,
+        ruRelayAddress,
         // mskRelayAddress,  // MSK relay removed — 158.160.140.67 blocked by RU DPI (TLS RST)
     ]
 
@@ -464,25 +496,25 @@ struct ICEConfig {
     /// Also used for domain-based relays that need explicit SPKI pinning.
     static let hardcodedRelaySNIs: [String: String] = [
         amsRelayAddress: amsRelaySNI,
-        spbRelayAddress: spbRelaySNI,
-        // mskRelayAddress:      mskRelaySNI,       // MSK removed
-        // mskRelayObfs4Address: mskRelaySNI,       // MSK removed
+        ruRelayAddress:  ruRelaySNI,
+        // mskRelayAddress:      mskRelaySNI,    // MSK removed
+        // mskRelayObfs4Address: mskRelaySNI,    // MSK removed
     ]
 
     /// SPKI pins keyed by relay address. Looked up by makeRelay() for any relay
     /// that appears in hardcodedRelaySNIs.
     static let hardcodedRelaySPKIs: [String: String] = [
         amsRelayAddress: amsRelayPinnedSPKI,
-        spbRelayAddress: spbRelayPinnedSPKI,
-        // mskRelayAddress:      mskRelayPinnedSPKI,  // MSK removed
-        // mskRelayObfs4Address: mskRelayPinnedSPKI,  // MSK removed
+        ruRelayAddress:  ruRelayPinnedSPKI,
+        // mskRelayAddress:      mskRelayPinnedSPKI,    // MSK removed
+        // mskRelayObfs4Address: mskRelayPinnedSPKI,    // MSK removed
     ]
 
     /// UserDefaults key where the relay list fetched from the server is cached.
     static let cachedRelayListKey = "construct.ice_relays"
 
     /// UserDefaults key where the relay-region config fetched from the server is cached.
-    /// Value is JSON-encoded array of `ICERelayRegion` (see IceCertFetcher).
+    /// Value is JSON-encoded array of `ICERelayRegion` (see VeilCertFetcher).
     static let cachedRelayRegionsKey = "construct.ice_relay_regions"
 
     /// WebTunnel (ICE v2) WebSocket resource paths, keyed by relay address.
@@ -490,13 +522,19 @@ struct ICEConfig {
     /// Override via `.well-known/construct-server` `ice.relays[].wt_path` without a new build.
     static let hardcodedRelayWTPaths: [String: String] = [
         amsRelayAddress: "/construct-ice",
-        // spbRelayAddress: no WebTunnel — bare IP, no CDN fronting
+        ruRelayAddress:  "/api/stream",
         // mskRelayAddress: "/construct-ice",   // MSK removed
     ]
 
     /// Companion obfs4-only ports for CDN-fronted relays.
     // MSK relay removed — 9443 also RST by DPI
     static let hardcodedRelayObfs4Companions: [String: String] = [:]
+
+    /// Alternative TLS SNI values per relay address for WebTunnel domain-fronting rotation.
+    /// When WebTunnel is blocked by SNI-based DPI, these are tried in order before obfs4 fallback.
+    /// Override (and extend) via `.well-known/construct-server` `ice.relays[].alternative_snis`
+    /// without a binary update.
+    static let hardcodedRelayAlternativeSNIs: [String: [String]] = [:]
 
     /// Fallback relay-region rules used when the server config has not been fetched yet.
     /// Each rule maps a UTC offset range (hours, inclusive) to a preferred relay ordering.
@@ -507,8 +545,8 @@ struct ICEConfig {
     /// RU-specific routing (SPb primary) is handled by the server OTA config via IP geolocation,
     /// not by timezone heuristics — timezone is a poor proxy for DPI presence.
     /// Override via `.well-known/construct-server` `ice.relay_regions` without a new build.
-    static let hardcodedRelayRegions: [ICERelayRegion] = [
-        ICERelayRegion(tzOffsetMin: -12, tzOffsetMax: 12, preferredRelays: [amsRelayAddress, spbRelayAddress]),
+    static let hardcodedRelayRegions: [VEILRelayRegion] = [
+        VEILRelayRegion(tzOffsetMin: -12, tzOffsetMax: 12, preferredRelays: [amsRelayAddress]),
     ]
 }
 
@@ -534,7 +572,7 @@ extension APIConstants {
         KeychainManager.shared.saveCustomServerURL(url)
         UserDefaults.standard.set(url, forKey: customServerURLKey)
         NotificationCenter.default.post(name: .serverURLChanged, object: nil)
-        print("⚠️ Using custom server: \(url)")
+        Log.info("Using custom server: \(url)")
     }
 
     static func resetToDefault() {
@@ -542,7 +580,7 @@ extension APIConstants {
         KeychainManager.shared.deleteCustomServerURL()
         UserDefaults.standard.removeObject(forKey: customServerURLKey)
         NotificationCenter.default.post(name: .serverURLChanged, object: nil)
-        print("✅ Reset to default server: \(websocketURL)")
+        Log.info("Reset to default server: \(websocketURL)")
     }
     
     // Save custom server URL (used by settings views)
